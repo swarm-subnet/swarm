@@ -45,6 +45,7 @@ from swarm.domain_model import get_family_benchmark_seed_count
 from swarm.protocol import FailureReason
 from swarm.validator import forward as forward_mod
 from swarm.validator.docker import docker_evaluator as de
+from swarm.validator.utils_parts import heartbeat as heartbeat_module
 from swarm.validator.utils_parts import run_task as run_task_module
 from validator.tests.test_docker_evaluator import _ScriptedContext
 
@@ -150,6 +151,18 @@ from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
 for line in sys.stdin:
     seed = int(line)
     keep(Verdict(seed=seed, passed=seed % 2 == 1, reason="" if seed % 2 else "even", end_reason=str(os.getpid())))
+'''
+
+_SLOW_PILOT_S = 2.0
+_SLOW_PILOT = f'''"""A reference pilot that spends {_SLOW_PILOT_S} s on every seed it reads, then passes it."""
+import sys
+import time
+
+from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
+
+for line in sys.stdin:
+    time.sleep({_SLOW_PILOT_S})
+    keep(Verdict(seed=int(line), passed=True))
 '''
 
 
@@ -356,9 +369,22 @@ def _solar_task(seed):
     return SimpleNamespace(family_id=FAMILY_ID, map_seed=seed, challenge_type=4, horizon=60.0)
 
 
-def _dispatch(monkeypatch, tmp_path, tasks, *, workers, feeder=None):
+class _Arrivals:
+    """A backend client that notes when each heartbeat reaches it."""
+
+    def __init__(self, times):
+        """Note arrival times in that list."""
+        self.times = times
+
+    async def post_heartbeat(self, **kwargs):
+        """Note this heartbeat's arrival."""
+        self.times.append(time.monotonic())
+
+
+def _dispatch(monkeypatch, tmp_path, tasks, *, workers, feeder=None, heartbeats=None):
     """Run tasks through the validator's dispatcher against workers that fly each seed at once; returns the results,
-    the requests the workers were handed, and the warnings logged."""
+    the requests the workers were handed, and the warnings logged. Given a heartbeats list, the validator's heartbeat
+    session runs on the same event loop and the time each heartbeat reaches the backend is added to it."""
     model_path = tmp_path / "model.zip"
     model_path.write_bytes(b"x")
     context = _ScriptedContext(bench_engine, {index: [{"results": [(42, True, 1.0, 1.0)]}] for index in range(len(tasks))})
@@ -366,18 +392,31 @@ def _dispatch(monkeypatch, tmp_path, tasks, *, workers, feeder=None):
     monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_engine)
     monkeypatch.setattr(bench_engine, "_benchmark_mp_context", lambda: context)
     monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: warnings.append(str(msg)))
-    results = asyncio.run(de.parallel._run_process_parallel(
-        all_tasks=list(tasks),
-        task_meta=[{"group": "type4_village", "seed": task.map_seed, "index": index, "challenge_type": 4,
-                    "horizon": 60.0} for index, task in enumerate(tasks)],
-        batch_plan=[[index] for index in range(len(tasks))],
-        uid=42,
-        model_path=model_path,
-        effective_workers=workers,
-        phase_label="eval",
-        seed_feeder=feeder,
-        initial_pending=list(range(len(tasks))) if feeder else None,
-    ))
+
+    async def run():
+        """The dispatcher's run, inside a heartbeat session when one is asked for."""
+        session = None
+        if heartbeats is not None:
+            session = heartbeat_module.HeartbeatManager(_Arrivals(heartbeats), asyncio.get_running_loop())
+            session.start("evaluating", uid=42, total=len(tasks))
+        try:
+            return await de.parallel._run_process_parallel(
+                all_tasks=list(tasks),
+                task_meta=[{"group": "type4_village", "seed": task.map_seed, "index": index, "challenge_type": 4,
+                            "horizon": 60.0} for index, task in enumerate(tasks)],
+                batch_plan=[[index] for index in range(len(tasks))],
+                uid=42,
+                model_path=model_path,
+                effective_workers=workers,
+                phase_label="eval",
+                seed_feeder=feeder,
+                initial_pending=list(range(len(tasks))) if feeder else None,
+            )
+        finally:
+            if session is not None:
+                session._stop_timer()
+
+    results = asyncio.run(run())
     return results, context.requests, warnings
 
 
@@ -632,6 +671,39 @@ def test_a_seed_that_cannot_be_checked_is_left_unscored(monkeypatch, tmp_path, s
     assert results[1].success
     assert results[0] is None if seed_flow else results[0].failure_reason == FailureReason.INFRA.value
     assert any("seed check failed for UID 42" in line for line in warnings)
+
+
+def test_a_deleted_check_is_flown_again_while_heartbeats_keep_going(kept, monkeypatch, tmp_path):
+    """With one seed's kept verdict deleted, a real flight process judges it again before it flies, the other seed
+    flies first, and the validator's heartbeats keep reaching the backend the whole time that flight runs."""
+    (tmp_path / "slow_pilot.py").write_text(_SLOW_PILOT)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "slow_pilot")
+    monkeypatch.setattr(heartbeat_module, "_TIMER_INTERVAL_SECONDS", 0.05)
+    for seed in (11, 12):
+        seed_checks.keep(Verdict(seed=seed, passed=True))
+    (seed_checks.cache_dir() / "11.json").unlink()
+    runtime = require_runtime_family(FAMILY_ID)
+    check_seed, spans = runtime.check_seed, []
+
+    def timed_check_seed(task):
+        """The real check, with when it started and ended noted."""
+        started = time.monotonic()
+        try:
+            return check_seed(task)
+        finally:
+            spans.append((started, time.monotonic()))
+
+    monkeypatch.setattr(runtime, "check_seed", timed_check_seed)
+    heartbeats = []
+    results, requests, _ = _dispatch(monkeypatch, tmp_path, [_solar_task(11), _solar_task(12)], workers=2,
+                                     heartbeats=heartbeats)
+    assert [request.tasks[0].map_seed for request in requests] == [12, 11]
+    assert all(result.success for result in results) and seed_checks.cached(11).passed
+    [(started, ended)] = spans
+    assert ended - started >= _SLOW_PILOT_S
+    arrivals = [started, *(t for t in heartbeats if started < t < ended), ended]
+    assert max(later - earlier for earlier, later in zip(arrivals, arrivals[1:])) < _SLOW_PILOT_S / 2
 
 
 @pytest.mark.timeout(600)
