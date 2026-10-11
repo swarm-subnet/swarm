@@ -179,6 +179,75 @@ def test_a_report_on_the_zoom_frame_reads_the_zoom_frame(park):
     assert _report(park, park.inside, image="feed") == "repeat"
 
 
+@pytest.fixture
+def reads(park, monkeypatch):
+    """The views whose object map the report check read, one entry per read."""
+    read, seen = reports.object_boxes, []
+
+    def counted(view, owners):
+        """Read the object map as the check does, and note which frame it was."""
+        seen.append(view)
+        return read(view, owners)
+
+    monkeypatch.setattr(reports, "object_boxes", counted)
+    return seen
+
+
+def test_a_frame_is_read_once_for_every_report_on_it(park, reads):
+    """Several reports on one frame, on different objects, read its object map once and keep their own verdicts."""
+    assert [_report(park, park.inside), _report(park, park.dog), _report(park, park.outside),
+            _report(park, park.inside, grow=1.05)] == ["valid", "wrong_class", "not_threat", "repeat"]
+    assert reads == [park.view]
+
+
+def test_a_new_frame_is_read_again(park, reads):
+    """A report on the next frame reads that frame's map, and the zoom image keeps a read of its own."""
+    _report(park, park.dog)
+    park.shown["feed"] = replace(park.view)
+    _report(park, park.dog)
+    park.shown["zoom"] = park.view
+    _report(park, park.dog, image="zoom")
+    _report(park, park.dog, image="feed")
+    assert reads == [park.view, park.shown["feed"], park.view]
+    assert reads[0] is not reads[1]
+
+
+def test_a_thief_who_shows_up_on_a_frame_already_read_is_not_missed(park, monkeypatch):
+    """When the thieves' bodies change after a frame was read, the next report on it reads the frame again."""
+    known = theft.bodies(park.ep)
+    monkeypatch.setattr(theft, "bodies", lambda ep: {})
+    assert _report(park, park.inside) == "no_object"
+    monkeypatch.setattr(theft, "bodies", lambda ep: known)
+    assert _report(park, park.inside) == "valid"
+
+
+def test_a_press_past_the_report_limit_does_nothing(park, reads):
+    """Once a patrol has made MAX_REPORTS, a report on a thief is not judged, and no count or log moves."""
+    for _ in range(reports.MAX_REPORTS):
+        _report(park, park.dog)
+    outcome = park.ep.outcome
+    assert outcome.reports_made == reports.MAX_REPORTS and outcome.false_alarms == reports.MAX_REPORTS
+    reports.submit(None, park.ep, Report("person", "feed", _box_of(park.view, park.inside)))
+    assert outcome.reports_made == reports.MAX_REPORTS and outcome.false_alarms == reports.MAX_REPORTS
+    assert outcome.valid_reports == 0 and not park.ep.reports["reported"]
+    assert len(park.ep.reports["log"]) == reports.MAX_REPORTS and len(reads) == 1
+
+
+def test_a_model_pressing_on_every_chance_is_judged_at_most_the_limit(park, monkeypatch, reads):
+    """A patrol's worth of presses, one every other decision and a new frame every five, is judged MAX_REPORTS
+    times and reads no more frames than that."""
+    judged = []
+    judge = reports.judge
+    monkeypatch.setattr(reports, "judge", lambda ep, report: judged.append(report) or judge(ep, report))
+    report = Report("person", "feed", _box_of(park.view, park.dog))
+    for decision in range(0, 3900, 2):
+        if decision % 5 < 2:
+            park.shown["feed"] = replace(park.view)
+        reports.submit(None, park.ep, report)
+    assert len(judged) == reports.MAX_REPORTS and len(reads) <= reports.MAX_REPORTS
+    assert park.ep.outcome.reports_made == reports.MAX_REPORTS
+
+
 def test_the_object_map_leaves_the_frame_untouched(monkeypatch):
     """Asking the engine for the object map changes no pixel of the colour frame."""
     cli = p.connect(p.DIRECT)

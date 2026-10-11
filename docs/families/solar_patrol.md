@@ -181,7 +181,7 @@ One `act()` returns 24 values. The same action is held for the five physics step
 | 8 | `zoom` | Button: ask for a close-up, with the lens and box below |
 | 9 | `zoom_lens` | Below 0.5 the 3× lens, above it the 7× lens |
 | 10–13 | `zoom_cx`, `zoom_cy`, `zoom_w`, `zoom_h` | Box on the current main frame, as shares of its width and height. Only the centre counts: the zoom centres on it, and the lens alone sets how close |
-| 14 | `report` | Button: report an intruder with the class, image and box below |
+| 14 | `report` | Button: report an intruder with the class, image and box below. Up to 20 per patrol |
 | 15 | `report_class` | Below 0.5 a person. Above it a vehicle, which is never a threat in this version: always a false alarm |
 | 16 | `report_image` | Below 0.5 the box is on the main frame, above it on the zoom image |
 | 17–20 | `report_cx`, `report_cy`, `report_w`, `report_h` | The box on that image, as shares of its width and height |
@@ -287,7 +287,7 @@ seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 4. That person was inside the fence when the frame was taken.
 5. It is the first valid report of that person, on either image.
 
-Any report that fails is a false alarm, and a report never ends the patrol. Counting who you have already reported is the model's job.
+Any report that fails is a false alarm, and a report never ends the patrol. Counting who you have already reported is the model's job. Up to **20 reports per patrol**; a press past that does nothing.
 
 Every row below lands after its own `return_home` and never climbs above 22 m:
 
