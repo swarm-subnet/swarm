@@ -38,7 +38,8 @@ DECISION_HZ = 10
 # Physics and the flight controller keep the shared 50 Hz; one decision holds for this many of their steps.
 DECISION_STEPS = int(round(1.0 / (DECISION_HZ * SIM_DT)))
 PATROL_HEIGHT_M = 20.0
-HEIGHT_LIMIT_M = 30.0                # the dock's height limit over the take-off point: the aircraft stops rising there
+HEIGHT_LIMIT_M = 45.0                # the dock's height limit over the take-off point: the aircraft stops rising there
+# The park's ground stands at most 17 m over the dock inside the stop line (300 seeds), so 45 m leaves 22 m over it.
 TIME_BUDGET_S = {"take_off": 40.0, "sweep": 248.0, "zoom_stops": 62.0, "landing": 40.0}
 HORIZON_S = sum(TIME_BUDGET_S.values())
 

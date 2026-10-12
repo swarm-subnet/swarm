@@ -18,15 +18,15 @@
 """The reference pilot the seed checks (task 24) fly every seed with, and the verdict it brings back.
 
 It flies through the patrol's own environment: the real park, the seed's own dock spot, wind and thieves, with no
-pictures drawn. It takes off, searches the whole park lane by lane at the patrol height over the ground, never higher
-than the patrol height over the dock, presses return home and lands. Its lanes lie as far apart as the ground the
+pictures drawn. It takes off, searches the whole park lane by lane at the patrol height over the ground under it,
+inside the dock's height limit, presses return home and lands. Its lanes lie as far apart as the ground the
 wide camera sees, which searches by night too with night mode on. Twice a second, as the camera would, it looks at
 every thief inside the fence the way a pilot who knows where he stands would, turning and tilting towards him, and
 counts his pixels in the object map of that exact view, so panels, trees and the ground hide him as they would: in
 the colour camera by day, in the thermal camera by night.
 
 The seed passes when every thief who stepped inside the fence showed at least PIXELS_ACROSS pixels across his narrow
-side, from the patrol height or lower above the dock and at least MIN_DISTANCE_M away (check 1), and the pilot landed
+side, from the patrol height or lower above the ground and at least MIN_DISTANCE_M away (check 1), and the pilot landed
 back in the dock before the patrol's time ran out (check 2).
 
 Run as a module it judges the seeds given on the command line, or else those read from its standard input, and keeps
@@ -56,6 +56,7 @@ from .contract import (
     ACTION_DIM,
     ACTION_INDEX,
     DECISION_STEPS,
+    HEIGHT_LIMIT_M,
     MAX_CLIMB_MPS,
     MAX_DESCENT_MPS,
     MAX_HORIZONTAL_MPS,
@@ -84,19 +85,17 @@ CELL_STEP_M = 0.5                      # the park is read across the lanes at th
 GAP_GRID_M = 2.0                       # the ground a route leaves out is looked for on a grid this fine
 GAP_SLACK_M = 0.5                      # how much further than half a lane the furthest ground may lie
 SAMPLE_M = 2.0                         # the route is followed, and the ground under it read, at this spacing
-LOOKAHEAD_M = 16.0                     # the pilot climbs for ground this far ahead before it reaches it
 CARROT_M = 6.0                         # the pilot steers at the point this far ahead of it on the route
 SEARCH_M = 40.0                        # its place on the route is looked for this far ahead of the last one
 CORNER_DEG = 45.0                      # a turn sharper than this is taken slowly
 CORNER_MPS = 1.0
 BRAKE_MPS2 = 1.2                       # inside the outputs' own 2 m/s2 easing
-CEILING_MARGIN_M = 0.5                 # the pilot's height over the dock stays this far under the patrol height
+CEILING_MARGIN_M = 0.5                 # the pilot's height over the ground stays this far under the patrol height
 HEIGHT_GAIN_PER_S = 1.0
 TURN_GAIN_PER_S = 2.0
 TURNING_MPS = 1.0                      # the pilot faces where it flies only once it flies faster than this
 RETURN_CLEAR_M = 1.0                   # return home is pressed once the straight flight home stays this far inside
 RAY_REACH_M = 1000.0
-RAY_BATCH = 512
 GROUND_RAYS = 16                       # a ray looking for the ground passes at most this many bodies standing on it
 
 _FRAME_DECISIONS = camera.FRAME_STEPS // DECISION_STEPS
@@ -352,19 +351,6 @@ def _resample(path: np.ndarray, step: float) -> np.ndarray:
     return np.column_stack([np.interp(at, along, path[:, 0]), np.interp(at, along, path[:, 1])])
 
 
-def _tops(cli: int, xy: np.ndarray, fallback: float) -> np.ndarray:
-    """The height of the first thing under each point, ground, panel or roof, or the fallback where there is none."""
-    tops = np.full(len(xy), float(fallback))
-    for start in range(0, len(xy), RAY_BATCH):
-        chunk = xy[start:start + RAY_BATCH]
-        hits = p.rayTestBatch([[x, y, RAY_REACH_M] for x, y in chunk], [[x, y, -RAY_REACH_M] for x, y in chunk],
-                              physicsClientId=cli)
-        for i, hit in enumerate(hits):
-            if hit[0] >= 0:
-                tops[start + i] = float(hit[3][2])
-    return tops
-
-
 def _ground_z(cli: int, x: float, y: float, terrain_uids: frozenset, fallback: float) -> float:
     """The ground's height at a point, under anything standing on it."""
     top = RAY_REACH_M
@@ -404,10 +390,8 @@ class _Pilot:
         self.length_m = path_length(path)
         self.search_end = min(len(self.points) - 1, int(math.ceil(search_m / SAMPLE_M)))
         dock_z = float(ep.dock_position[2])
-        tops = _tops(env.CLIENT, self.points, dock_z)
-        ahead = int(round(LOOKAHEAD_M / SAMPLE_M))
-        highest = np.array([tops[i:i + ahead + 1].max() for i in range(len(tops))])
-        self.heights = np.minimum(dock_z + PATROL_HEIGHT_M - CEILING_MARGIN_M, highest + PATROL_HEIGHT_M)
+        ground = np.array([_ground_z(env.CLIENT, x, y, ep.terrain_uids, dock_z) for x, y in self.points])
+        self.heights = np.minimum(ground + PATROL_HEIGHT_M, dock_z + HEIGHT_LIMIT_M) - CEILING_MARGIN_M
         self.speeds = _corner_speeds(self.points)
         self.home_area = Polygon(ep.fence).buffer(-RETURN_CLEAR_M)
         self.index = 0
@@ -434,7 +418,9 @@ class _Pilot:
         distance = float(np.hypot(*heading))
         speed = min(float(self.speeds[self.index]), distance)
         vx, vy = (heading / distance * speed) if distance > 1e-6 else (0.0, 0.0)
-        vz = float(np.clip(HEIGHT_GAIN_PER_S * (self.heights[self.index] - pos[2]), -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
+        # Aimed as far ahead as the height lags behind at this speed, so the drone holds its height over a slope.
+        lead = min(last, self.index + int(round(float(np.hypot(*self.env.vel[0][:2])) / HEIGHT_GAIN_PER_S / SAMPLE_M)))
+        vz = float(np.clip(HEIGHT_GAIN_PER_S * (self.heights[lead] - pos[2]), -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
         yaw = float(self.env.rpy[0, 2])
         c, s = math.cos(yaw), math.sin(yaw)
         a[ACTION_INDEX["move_forward"]] = (vx * c + vy * s) / MAX_HORIZONTAL_MPS
@@ -474,7 +460,8 @@ class _Sightings:
         for person in people:
             self.best.setdefault(index.get(int(person["bodies"][0]), -1), 0.0)
         eye, _forward, drone_forward = airframe.camera_pose(env, -90.0)
-        if eye[2] - ep.dock_position[2] > PATROL_HEIGHT_M:
+        below = _ground_z(env.CLIENT, eye[0], eye[1], ep.terrain_uids, float(ep.dock_position[2]))
+        if eye[2] - below > PATROL_HEIGHT_M:
             return
         for person in people:
             n = index.get(int(person["bodies"][0]), -1)

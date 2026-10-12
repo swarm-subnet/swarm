@@ -60,15 +60,21 @@ def _slab(cli, half, centre):
 
 
 @pytest.fixture
-def ground():
-    """Flat ground at 0 m under the square fence, a table top 2 m over one corner, and a patrol with its grid laid."""
+def env():
+    """A physics world of its own, as the patrol's environment hands it to coverage."""
     cli = p.connect(p.DIRECT)
-    terrain = _slab(cli, [80.0, 80.0, 0.5], [50.0, 50.0, -0.5])
-    _slab(cli, [5.0, 5.0, 0.05], [10.0, 10.0, 2.0])
-    ep = SolarEpisode(seed=4, fence=_SQUARE, terrain_uids=frozenset({terrain}), dock_position=np.array([50.0, 50.0, 0.4]))
-    coverage.reset(SimpleNamespace(CLIENT=cli), ep)
-    yield ep
+    yield SimpleNamespace(CLIENT=cli)
     p.disconnect(cli)
+
+
+@pytest.fixture
+def ground(env):
+    """Flat ground at 0 m under the square fence, a table top 2 m over one corner, and a patrol with its grid laid."""
+    terrain = _slab(env.CLIENT, [80.0, 80.0, 0.5], [50.0, 50.0, -0.5])
+    _slab(env.CLIENT, [5.0, 5.0, 0.05], [10.0, 10.0, 2.0])
+    ep = SolarEpisode(seed=4, fence=_SQUARE, terrain_uids=frozenset({terrain}), dock_position=np.array([50.0, 50.0, 0.4]))
+    coverage.reset(env, ep)
+    return ep
 
 
 def _down(east, north, up, feed="colour", sees=True, step=0):
@@ -87,14 +93,14 @@ def _looking(east, north, up, pitch_deg):
 
 
 def _marked(ep, shot):
-    """The cells one frame marks in this patrol."""
-    return coverage.seen_closely(shot, ep.coverage["cells"], ep.coverage["normals"], ep.dock_position)
+    """The cells one frame marks in this patrol, its ground flat at 0 m."""
+    return coverage.seen_closely(shot, ep.coverage["cells"], ep.coverage["normals"], shot.eye[2])
 
 
-def _show(ep, shot):
+def _show(env, ep, shot):
     """Show the model a frame as the link delivers it, then let coverage read it."""
     ep.sensor_noise = {"shown": {"feed": shot, "zoom": None}}
-    coverage.update(None, ep)
+    coverage.update(env, ep)
 
 
 # ---------------------------------------------------------------- the grid
@@ -164,11 +170,11 @@ def test_the_ground_follows_a_slope():
 
 
 def test_a_frame_straight_down_from_twenty_metres_marks_its_footprint(ground):
-    """From 20 m above the dock the wide lens covers 28.4 x 21.3 m of the flat ground 20.4 m below, about 150 cells,
-    every cell centre in it seen closely enough."""
-    marked = _marked(ground, _down(50.0, 50.0, 20.4))
+    """From 20 m above the ground the wide lens covers 27.8 x 20.9 m of it, about 145 cells, every cell centre in it
+    seen closely enough."""
+    marked = _marked(ground, _down(50.0, 50.0, 20.0))
     cells = ground.coverage["cells"]
-    half_up = 20.4 * math.tan(math.radians(_WIDE_VFOV) / 2.0)
+    half_up = 20.0 * math.tan(math.radians(_WIDE_VFOV) / 2.0)
     half_across = half_up * 640 / 480
     in_footprint = (np.abs(cells[:, 0] - 50.0) <= half_across) & (np.abs(cells[:, 1] - 50.0) <= half_up)
     assert np.array_equal(marked, in_footprint)
@@ -176,19 +182,52 @@ def test_a_frame_straight_down_from_twenty_metres_marks_its_footprint(ground):
 
 
 def test_a_frame_above_the_twenty_metre_line_marks_nothing(ground):
-    """20 m above the dock is the highest a frame may be taken from; a centimetre higher marks nothing."""
-    dock_z = float(ground.dock_position[2])
-    assert _marked(ground, _down(50.0, 50.0, dock_z + 19.999)).any()
-    assert not _marked(ground, _down(50.0, 50.0, dock_z + 20.01)).any()
+    """20 m above the ground under the camera is the highest a frame may be taken from; a centimetre higher marks
+    nothing."""
+    assert _marked(ground, _down(50.0, 50.0, 19.999)).any()
+    assert not _marked(ground, _down(50.0, 50.0, 20.01)).any()
+
+
+def test_the_height_is_read_on_the_terrain_under_a_table(env, ground):
+    """Over a table the frame's height counts from the terrain under it, never from the table top."""
+    _show(env, ground, _down(10.0, 10.0, 19.99, step=25))
+    assert ground.coverage["searched"].any()
+    ground.coverage["searched"][:] = False
+    _show(env, ground, _down(10.0, 10.0, 20.01, step=50))
+    assert not ground.coverage["searched"].any()
+
+
+@pytest.mark.parametrize("dock", [(10.0, 50.0, 0.5), (90.0, 50.0, 25.5)], ids=["dock_low", "dock_high"])
+def test_a_frame_twenty_metres_over_the_ground_marks_it_wherever_the_dock_stands(dock):
+    """On a park whose ground steps up 25 m halfway, a frame 19.5 m above the ground under it marks the cells there,
+    on the high side and on the low side alike, whether the dock stands at the bottom or the top of the step."""
+    cli = p.connect(p.DIRECT)
+    try:
+        low = _slab(cli, [37.5, 80.0, 0.5], [12.5, 50.0, -0.5])
+        high = _slab(cli, [25.0, 80.0, 0.5], [75.0, 50.0, 24.5])
+        ep = SolarEpisode(seed=4, fence=_SQUARE, terrain_uids=frozenset({low, high}), dock_position=np.array(dock))
+        env = SimpleNamespace(CLIENT=cli)
+        coverage.reset(env, ep)
+        marked = []
+        for step, (east, ground_z) in enumerate([(75.0, 25.0), (25.0, 0.0)]):
+            ep.coverage["searched"][:] = False
+            ep.sensor_noise = {"shown": {"feed": _down(east, 50.0, ground_z + 19.5, step=25 * (step + 1)), "zoom": None}}
+            coverage.update(env, ep)
+            searched = ep.coverage["searched"]
+            assert np.all(ep.coverage["cells"][searched][:, 2] == pytest.approx(ground_z))
+            marked.append(int(searched.sum()))
+        assert marked[0] > 100 and marked[1] == pytest.approx(marked[0], rel=0.1)
+    finally:
+        p.disconnect(cli)
 
 
 def test_a_drone_in_its_dock_marks_nothing(ground):
-    """A frame taken from inside the dock, below the top of its lids, marks nothing, looking down or out; once over
-    the dock the same look marks the ground around it."""
+    """A frame taken from inside the dock, below the top of its lids over the ground, marks nothing, looking down or
+    out; once over the dock the same look marks the ground around it."""
     dock_z = float(ground.dock_position[2])
     assert not _marked(ground, _down(50.0, 50.0, dock_z - 0.03)).any()
-    assert not _marked(ground, _looking(50.0, 50.0, dock_z + coverage.DOCK_TOP_M - 0.001, -30.0)).any()
-    assert _marked(ground, _looking(50.0, 50.0, dock_z + coverage.DOCK_TOP_M + 0.01, -30.0)).any()
+    assert not _marked(ground, _looking(50.0, 50.0, coverage.DOCK_TOP_M - 0.001, -30.0)).any()
+    assert _marked(ground, _looking(50.0, 50.0, coverage.DOCK_TOP_M + 0.01, -30.0)).any()
 
 
 def test_a_frame_that_cannot_see_marks_nothing(ground):
@@ -204,19 +243,15 @@ def test_a_thermal_frame_marks_its_narrower_view(ground):
     assert not np.any(thermal & ~wide)
 
 
-def test_ground_too_far_below_is_not_seen_closely_enough():
-    """Straight down, flat ground counts while one pixel spans at most MAX_PIXEL_M: 38.4 m under the wide lens."""
-    cli = p.connect(p.DIRECT)
-    try:
-        terrain = _slab(cli, [80.0, 80.0, 0.5], [50.0, 50.0, -0.5])
-        ep = SolarEpisode(seed=4, fence=_SQUARE, terrain_uids=frozenset({terrain}),
-                          dock_position=np.array([50.0, 50.0, 25.0]))
-        coverage.reset(SimpleNamespace(CLIENT=cli), ep)
-        assert _WIDE_LIMIT_M == pytest.approx(38.4, abs=0.1)
-        assert _marked(ep, _down(50.0, 50.0, _WIDE_LIMIT_M - 0.05)).sum() > 400
-        assert not _marked(ep, _down(50.0, 50.0, _WIDE_LIMIT_M + 0.05)).any()
-    finally:
-        p.disconnect(cli)
+def test_ground_too_far_below_is_not_seen_closely_enough(ground):
+    """Straight down, flat ground is sharp enough while one pixel spans at most MAX_PIXEL_M: 38.4 m under the wide
+    lens, far above the 20 m line."""
+    cells, normals = ground.coverage["cells"], ground.coverage["normals"]
+    assert _WIDE_LIMIT_M == pytest.approx(38.4, abs=0.1)
+    assert (coverage.pixel_ground_m(_down(50.0, 50.0, _WIDE_LIMIT_M - 0.05), cells, normals)
+            <= coverage.MAX_PIXEL_M).sum() > 400
+    assert not (coverage.pixel_ground_m(_down(50.0, 50.0, _WIDE_LIMIT_M + 0.05), cells, normals)
+                <= coverage.MAX_PIXEL_M).any()
 
 
 def test_a_far_shallow_view_marks_only_the_ground_near_the_drone(ground):
@@ -232,35 +267,35 @@ def test_a_far_shallow_view_marks_only_the_ground_near_the_drone(ground):
 # ---------------------------------------------------------------- the patrol's share
 
 
-def test_coverage_is_the_share_of_cells_searched_so_far(ground):
+def test_coverage_is_the_share_of_cells_searched_so_far(env, ground):
     """Each frame shown adds its cells, a frame shown again adds nothing, and the outcome carries the share."""
     total = len(ground.coverage["cells"])
     first = _down(30.0, 50.0, 15.0, step=25)
-    _show(ground, first)
+    _show(env, ground, first)
     once = int(ground.coverage["searched"].sum())
     assert once > 0 and ground.outcome.coverage == pytest.approx(once / total)
-    _show(ground, first)
+    _show(env, ground, first)
     assert int(ground.coverage["searched"].sum()) == once
-    _show(ground, _down(70.0, 50.0, 15.0, step=50))
+    _show(env, ground, _down(70.0, 50.0, 15.0, step=50))
     assert ground.outcome.coverage == pytest.approx(2 * once / total, rel=0.1)
 
 
-def test_coverage_reads_the_frame_the_model_was_shown(ground):
+def test_coverage_reads_the_frame_the_model_was_shown(env, ground):
     """The frame the link delivered counts, not a newer one the camera has taken but the model not yet seen; zoom
     close-ups mark nothing."""
     shown = _down(20.0, 50.0, 15.0, step=25)
     newest = _down(80.0, 50.0, 15.0, step=50)
     ground.camera = {"view": newest}
     ground.sensor_noise = {"shown": {"feed": shown, "zoom": replace(newest, feed="colour", step=51)}}
-    coverage.update(None, ground)
+    coverage.update(env, ground)
     assert np.array_equal(ground.coverage["searched"], _marked(ground, shown))
 
 
-def test_nothing_is_searched_before_a_frame_is_shown(ground):
+def test_nothing_is_searched_before_a_frame_is_shown(env, ground):
     """Before the first observation no frame exists and coverage stays 0."""
     ground.camera = {"view": None}
     ground.sensor_noise = {"shown": {"feed": None, "zoom": None}}
-    coverage.update(None, ground)
+    coverage.update(env, ground)
     assert ground.outcome.coverage == 0.0
 
 

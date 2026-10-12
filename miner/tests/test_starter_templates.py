@@ -147,3 +147,21 @@ def test_sentinel_starter_holds_return_home_until_the_straight_line_home_stays_i
     assert far_arm[22] == 0.0 and far_arm[0] < 0.0
     at_bend = np.asarray(controller.act(_sentinel_observation(2, xy=(90.0, 0.0))), dtype=np.float32)
     assert at_bend[22] == 1.0
+
+
+def test_sentinel_starter_holds_its_height_over_the_ground_below_not_the_dock():
+    """It climbs over ground the laser finds standing 15 m above the dock and comes down over ground level with it,
+    holding CRUISE_HEIGHT_M over what lies below, and the downward sensors raise it over anything nearer."""
+    controller = _load("sentinel_drone_agent.py")
+    controller.act(_sentinel_observation(0, fence=SQUARE_FENCE))
+    cruise = type(controller).act.__globals__["CRUISE_HEIGHT_M"]
+    high = _sentinel_observation(2)
+    high["state"][17] = 15.0
+    assert controller._height_target(high["state"]) == pytest.approx(15.0 + cruise)
+    assert np.asarray(controller.act(high), dtype=np.float32)[2] > 0.0
+    level = _sentinel_observation(2)
+    assert controller._height_target(level["state"]) == pytest.approx(cruise)
+    assert np.asarray(controller.act(level), dtype=np.float32)[2] < 0.0
+    near = _sentinel_observation(2)
+    near["state"][18], near["state"][19] = 3.0, 6.0
+    assert controller._height_target(near["state"]) == pytest.approx(20.0 - 6.0 + cruise)

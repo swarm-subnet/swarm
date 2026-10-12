@@ -32,7 +32,9 @@ Observation (dict, every array float32 and read-only, decided 10 times a second)
         3     compass heading in degrees, 0 north, clockwise positive, in [-180, 180)
         7     height above the dock in metres
         9     time left in seconds, counting down from 390
-        19    ground distance in metres, 0.5 to 16, reads 60 when nothing is in range
+        17    height above the dock of the point the laser meets, along the camera, once a second
+        18    laser status: 0 normal, 1 too close, 2 too far, 3 no signal
+        19    ground distance in metres, 0.5 to 16 by day, 0.1 to 8 at night, reads 60 when nothing is in range
         23    flight phase: 0 docked, 1 taking off, 2 flying, 3 returning, 4 landing, 5 landed
     - "site_map": (660,), sent on the FIRST observation only and all zeros after it, so
       keep it. [0] is the fence point count, [1:129] the fence as (east, north) pairs in
@@ -53,8 +55,10 @@ Scoring:
     Every miss and every false alarm then turns 10 of your best seeds to 0.
 
 Constraints:
-    - Heights count from the dock: above 22 m the height half of the flight score drops, to 0
-      at 30 m, and the drone cannot climb past 30 m; a report from a frame taken above 24 m is a false alarm.
+    - The rules count heights from the ground straight under the drone: a frame shows the park closely enough
+      only from 20 m or lower, a report from a frame taken above 24 m is a false alarm, and above 22 m the height
+      half of the flight score drops, to 0 at 30 m. The state counts heights from the dock, so this agent points
+      the camera straight down and holds its height over what the laser meets there.
     - 5 m before the flight limit the patrol ends on the spot, without the landing score.
     - 400 ms of compute per camera frame, shared by the five decisions of that frame.
 """
@@ -67,9 +71,7 @@ ACTION_DIM = 24
 MAX_HORIZONTAL_MPS = 5.0
 MAX_CLIMB_MPS = 3.0
 MAX_DESCENT_MPS = 2.0
-CRUISE_HEIGHT_M = 19.5        # above the dock: under the 20 m coverage line and the 22 m score line
-TOP_HEIGHT_M = 21.5           # the highest it climbs to clear raised ground
-GROUND_CLEARANCE_M = 8.0      # climb when the ground comes closer than this
+CRUISE_HEIGHT_M = 17.0        # over what lies below: a panel top or a stale reading on a slope keeps it under 20 m
 LANE_SPACING_M = 25.0         # the wide camera covers about 28 m across from 20 m
 FENCE_INSET_M = 4.0           # lanes stay this far inside the fence
 LEG_MARGIN_M = 1.5            # legs between lanes stay this far inside the fence
@@ -80,7 +82,8 @@ BRAKE_MPS2 = 1.5
 HOME_MARGIN_S = 30.0          # the climb, the landing and some slack after the flight home
 
 # State and site map indices, as listed in the docstring above.
-POSITION, HEADING, HEIGHT, TIME_LEFT, GROUND, PHASE = slice(0, 2), 3, 7, 9, 19, 23
+POSITION, HEADING, HEIGHT, TIME_LEFT, LASER_UP, LASER_STATUS, GROUND, PHASE = slice(0, 2), 3, 7, 9, 17, 18, 19, 23
+LASER_NORMAL, OUT_OF_RANGE_M = 0, 60.0
 DOCKED, FLYING = 0, 2
 GIMBAL, NIGHT_MODE, TAKE_OFF, RETURN_HOME = 4, 6, 21, 22
 
@@ -219,7 +222,7 @@ def plan_route(fence):
 
 
 class DroneFlightController:
-    """Patrol baseline: takes off, sweeps the park in lanes at 19.5 m above the dock, returns home and lands."""
+    """Patrol baseline: takes off, sweeps the park in lanes 17 m above what lies under it, returns home and lands."""
 
     def __init__(self):
         """Construction hook for your policy; the baseline loads nothing."""
@@ -227,11 +230,12 @@ class DroneFlightController:
         self.reset()
 
     def reset(self):
-        """Forget the last patrol: its route, where it got to, and the buttons it held."""
+        """Forget the last patrol: its route, where it got to, what it last saw below, and the buttons it held."""
         self.fence = None
         self.route = None
         self.waypoint = 0
         self.homing = False
+        self.below = 0.0              # height above the dock of what lies under the drone, the dock's level at first
         self.held = np.zeros(ACTION_DIM, dtype=np.float32)
 
     def act(self, observation):
@@ -288,8 +292,15 @@ class DroneFlightController:
         h = math.radians(state[HEADING])
         action[0] = np.clip((east * math.sin(h) + north * math.cos(h)) / MAX_HORIZONTAL_MPS, -1.0, 1.0)
         action[1] = np.clip((east * math.cos(h) - north * math.sin(h)) / MAX_HORIZONTAL_MPS, -1.0, 1.0)
-        target = CRUISE_HEIGHT_M
-        if state[GROUND] < GROUND_CLEARANCE_M:
-            target = min(TOP_HEIGHT_M, state[HEIGHT] + GROUND_CLEARANCE_M - state[GROUND])
-        rise = target - state[HEIGHT]
+        rise = self._height_target(state) - state[HEIGHT]
         action[2] = np.clip(rise / (MAX_CLIMB_MPS if rise >= 0.0 else MAX_DESCENT_MPS), -1.0, 1.0)
+
+    def _height_target(self, state):
+        """CRUISE_HEIGHT_M over what lies under the drone: the laser's last point straight down, raised to anything
+        the downward sensors find higher."""
+        if int(round(state[LASER_STATUS])) == LASER_NORMAL:
+            self.below = float(state[LASER_UP])
+        below = self.below
+        if state[GROUND] < OUT_OF_RANGE_M:
+            below = max(below, float(state[HEIGHT] - state[GROUND]))
+        return below + CRUISE_HEIGHT_M
