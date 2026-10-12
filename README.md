@@ -183,7 +183,7 @@ The standard score from 0 to 1 uses three things:
 
 A drone's rank is its **average across every world of the epoch**, so steady skill beats a few lucky runs. (Swarm Sentinel scores detection, coverage and flight instead, and every missed intruder or false alarm turns 10 of its best worlds to 0; see [its guide](docs/families/solar_patrol.md#scoring).)
 
-Rewards run on **King of the Hill**. Each mission pays its **last five champions**, not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
+Rewards run on **King of the Hill**. Each mission pays its **last champions** (10 in Swarm Sentinel, 5 in the others), not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

@@ -154,6 +154,7 @@ def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
     if _clamp_unit(king.score) <= _clamp_unit(king.prev_score):
         return 0.0
     gain = headroom_gain(king.score, king.prev_score, eps=eps)
+    # The window follows the row's own family_id, which the backend's sync schema requires on every king.
     return rank_weight(rank, king_window(king.family_id)) * (1.0 + GAIN_BONUS * min(gain, GAIN_BONUS_CAP))
 
 

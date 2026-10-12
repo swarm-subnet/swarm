@@ -428,7 +428,7 @@ A new champion is published within minutes of its crowning: see [Private Until C
 
 ## Emissions: King of the Hill
 
-Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last five crowned kings**. A seat's share is set first by its rank in the window — the reigning champion holds the full weight and every step back keeps **70%** of the seat above it — and fine-tuned by how much that king improved on the score it beat. Being dethroned doesn't stop your earnings. Only five newer crownings pushing you out of the window does.
+Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last crowned kings: 10 in Swarm Sentinel, 5 in every other family**. A seat's share is set first by its rank in the window — the reigning champion holds the full weight and every step back keeps **70%** of the seat above it — and fine-tuned by how much that king improved on the score it beat. Being dethroned doesn't stop your earnings. Only a full window of newer crownings (ten in Swarm Sentinel, five elsewhere) pushing you out does.
 
 The practical consequences:
 
