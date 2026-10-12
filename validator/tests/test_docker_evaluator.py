@@ -1048,7 +1048,7 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, spe
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
     monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: family or SimpleNamespace(
         family_id="cf_test", decision_steps=1, observation_ahead=True, slow_step_action=slow_step_action,
-        build_info=lambda _env: {},
+        outcome_fixed=lambda _env: False, build_info=lambda _env: {},
         stalled_rollout_metrics=lambda _task, _info: {"missed_threats": 1, "false_alarms": 0}))
     task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
     return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000, on_seed_complete=on_seed_complete,
@@ -1092,6 +1092,54 @@ def test_observation_ahead_sends_the_next_act_while_the_step_finishes(monkeypatc
     assert agent.act_obs == ["initial", "early1", "early2"]
     assert results[0].success is True
     assert env.closed_mid_step is False
+
+
+class _LandedEnv(_AheadEnv):
+    """Env stand-in whose patrol is decided by its first decision and ends on its third, as a landed dock shuts."""
+
+    def step(self, _action, on_observation=None):
+        """Count the decision and end the patrol on the third."""
+        self.steps += 1
+        k = self.steps
+        return {"marker": f"end{k}"}, 0.0, k == 3, False, {"success": k == 3, "min_clearance": 1.0, "collision": False}
+
+
+def test_a_fixed_outcome_asks_the_model_nothing_more(monkeypatch):
+    """Once the family has fixed the seed's result, act() is not called again, so a model whose link drops while the
+    world finishes still keeps that result."""
+
+    class _Agent:
+        """Miner stand-in logging each observation it is asked to act on; any act after the first finds the link gone."""
+
+        def __init__(self):
+            """Start with no act logged."""
+            self.act_obs = []
+
+        async def ping(self, _msg):
+            """Answer the connect ping."""
+            return SimpleNamespace(response="pong")
+
+        async def reset(self):
+            """Accept the reset."""
+
+        async def act(self, obs):
+            """Log the marker and drop the link on any act after the first."""
+            self.act_obs.append(obs[1])
+            if len(self.act_obs) > 1:
+                raise _KjDisconnected("Peer disconnected.")
+            return _ACT_REPLY
+
+    agent, env = _Agent(), _LandedEnv(lambda k: None)
+    family = SimpleNamespace(
+        family_id="cf_test", decision_steps=1, observation_ahead=False, slow_step_action=lambda _previous: None,
+        outcome_fixed=lambda e: e.steps >= 1, build_info=lambda _env: {},
+        stalled_rollout_metrics=lambda _task, _info: {"missed_threats": 1, "false_alarms": 0})
+
+    results = _fly_ahead(monkeypatch, agent, env, lambda _schema, obs: ("serialized", obs["marker"]), family=family)
+
+    assert agent.act_obs == ["initial"]
+    assert env.steps == 3
+    assert results[0].success is True
 
 
 def test_a_failed_handover_lets_the_step_finish_before_the_env_is_closed(monkeypatch):
@@ -1313,7 +1361,7 @@ def _sentinel_stand_in(at_reset: Outcome) -> SimpleNamespace:
     """A family that reports the given patrol state at reset and judges abandoned seeds as Swarm Sentinel does."""
     return SimpleNamespace(
         family_id=SOLAR_FAMILY_ID, decision_steps=1, observation_ahead=True, slow_step_action=lambda _previous: None,
-        build_info=lambda _env: {"solar_outcome": asdict(at_reset)},
+        outcome_fixed=lambda _env: False, build_info=lambda _env: {"solar_outcome": asdict(at_reset)},
         stalled_rollout_metrics=get_challenge_family(SOLAR_FAMILY_ID).stalled_rollout_metrics)
 
 

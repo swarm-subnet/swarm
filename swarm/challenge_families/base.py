@@ -264,6 +264,12 @@ class ChallengeFamilyRuntime:
         _ = previous
         return None
 
+    def outcome_fixed(self, env: Any) -> bool:
+        """True once nothing the model does can change the seed's result, so the evaluator stops asking it while the
+        world finishes; False by default."""
+        _ = env
+        return False
+
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
         return get_family_screening_policy(self.family_id)

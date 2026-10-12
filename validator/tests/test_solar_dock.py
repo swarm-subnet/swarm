@@ -499,8 +499,8 @@ def test_the_lids_shut_after_the_landing_without_changing_it(flat_park, monkeypa
 
 
 def test_a_clock_running_out_while_the_lids_shut_keeps_the_landing():
-    """While the lids shut over a landed drone the patrol neither terminates nor truncates; when the 390 s pass before
-    they are shut it ends there as the landing it was, with the landing's own time."""
+    """While the lids shut over a landed drone the patrol neither terminates nor truncates and the model is not asked
+    again; when the 390 s pass before they are shut it ends there as the landing it was, with the landing's own time."""
     family = SolarPatrolChallengeFamily()
     ep = SolarEpisode(seed=0, phase="landed", step=int(round(388.0 / SIM_DT)))
     ep.dock = {"model": SimpleNamespace(opening=0.5)}
@@ -509,6 +509,7 @@ def test_a_clock_running_out_while_the_lids_shut_keeps_the_landing():
                           _success=False, _failure_reason="NONE")
     assert not family.compute_terminated(env)
     assert not family.compute_truncated(env, terminal_already=False, roll=0.0, pitch=0.0)
+    assert family.outcome_fixed(env)
     ep.step = int(round(HORIZON_S / SIM_DT)) + 1
     env._time_alive = ep.time_s
     assert family.compute_terminated(env) and env._success

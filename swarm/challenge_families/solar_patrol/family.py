@@ -245,6 +245,10 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         """A late decision hovers and holds everything else as it was; with nothing flown yet it is all zeros."""
         return None if previous is None else slow_step_action(previous)
 
+    def outcome_fixed(self, env: Any) -> bool:
+        """True while the lids shut over a landed aircraft: the landing is counted and the model is not asked again."""
+        return dock.closing(env, env._solar)
+
     def post_step_update(self, env: Any) -> None:
         """Bookkeeping after one control step of physics: flight phase, limit, sensors, reports, coverage, score."""
         ep = env._solar
