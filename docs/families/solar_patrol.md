@@ -229,10 +229,16 @@ docked ──take_off──► taking off ──(dock lifts it to 20 m)──►
                                                                 └─────cancel_return──────┴────────────┘
 ```
 
-- **Take-off**: press `take_off` in the dock. The lids open (about 4 s), the drone climbs straight up to 20 m above the dock, and the model takes over: about 12 s in all.
+- **Take-off**: press `take_off` in the dock. The lids open (about 4 s), the drone climbs straight up to 20 m above the dock, and the model takes over: about 12 s in all. The lids close behind it and stay closed while the model flies.
 - **Flying**: the model has the drone. Movement and turns do nothing while the dock flies it (take-off, the flight home, landing); the cameras, zoom and reports keep working.
-- **Return home**: press `return_home` while flying. The return height is fixed at the press: 20 m above the dock, or the current height if that is higher and the drone is within 5.5 m of the dock. The drone climbs or descends to it, flies straight to the dock and lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
-- **Cancel**: `cancel_return` during the return or the landing hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
+- **Return home**: press `return_home` while flying. The lids start to open, and the drone stops and hovers. It then follows the Dock 3's own return, by its horizontal distance to the dock at the press:
+  - **over 50 m**: it turns to face the dock; if it is lower than 20 m above the dock it climbs there first, otherwise it keeps its height; then it flies straight home at that height.
+  - **5 to 50 m**: it turns to face the dock and flies straight home at its current height.
+  - **under 5 m**: it flies straight over the dock at its current height, without turning.
+
+  It never comes home lower than 1 m above the pad, and if the lids are not fully open when it arrives over the pad, it waits 1 m above it until they are. Then it lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
+- **Landed**: once the drone rests on the pad the lids close (about 4 s) and the patrol ends with them shut. The landing counts on the step the drone settles, so the clock running out while the lids close changes nothing; meanwhile your actions do nothing and no new frame is drawn.
+- **Cancel**: `cancel_return` during the return or the landing closes the lids again and hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
 - **Height ceiling**: the drone cannot climb past 30 m above the dock.
 
 The patrol ends on the first of:

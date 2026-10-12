@@ -232,7 +232,9 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         command = sensor_noise.delay(env, ep, decoded)
         ep.previous_action = a
         ep.command = command
-        outputs.apply(env, ep, command)
+        # A landed aircraft only waits for the lids to shut, so the model's camera, zoom and report values do nothing.
+        if ep.phase != "landed":
+            outputs.apply(env, ep, command)
         dock.command(env, ep, command)
         setpoint = dock.autopilot(env, ep)
         if setpoint is None:
@@ -247,17 +249,20 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         """Bookkeeping after one control step of physics: flight phase, limit, sensors, reports, coverage, score."""
         ep = env._solar
         ep.step += 1
+        landed = ep.phase == "landed"
         dock.update(env, ep)
         airframe.update(env, ep)
         drone_state.update(env, ep)
         wind.update(env, ep)
         flight_limit.update(env, ep)
-        camera.update(env, ep)
-        zoom.update(env, ep)
-        laser.update(env, ep)
-        ground_distance.update(env, ep)
-        reports.update(env, ep)
-        coverage.update(env, ep)
+        # After the landing step the patrol only waits for the lids: nothing is drawn or counted for the model.
+        if not landed:
+            camera.update(env, ep)
+            zoom.update(env, ep)
+            laser.update(env, ep)
+            ground_distance.update(env, ep)
+            reports.update(env, ep)
+            coverage.update(env, ep)
         score.update(env, ep)
         if env._collision:
             ep.end("collision")
@@ -273,18 +278,23 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         return env._solar.view_step > env._solar.step
 
     def compute_terminated(self, env: Any) -> bool:
-        """True once the patrol has ended on landing, a collision or the flight limit's stop line."""
+        """True once the patrol has ended on a collision or the flight limit's stop line, or on a landing once the lids
+        have shut; the landing's time is the step it happened."""
         ep = env._solar
-        if ep.outcome.end_reason:
-            env._success = ep.outcome.end_reason == "landed" and ep.outcome.returned_by_model
-            if env._success and env._t_to_goal is None:
-                env._t_to_goal = env._time_alive
-            env._failure_reason = _FAILURE_BY_END[ep.outcome.end_reason]
-            return True
-        return False
+        if not ep.outcome.end_reason:
+            return False
+        success = ep.outcome.end_reason == "landed" and ep.outcome.returned_by_model
+        if success and env._t_to_goal is None:
+            env._t_to_goal = env._time_alive
+        if dock.closing(env, ep):
+            return False
+        env._success = success
+        env._failure_reason = _FAILURE_BY_END[ep.outcome.end_reason]
+        return True
 
     def compute_truncated(self, env: Any, *, terminal_already: bool, roll: float, pitch: float) -> bool:
-        """End the patrol when the clock runs out, or as a collision when the drone tips past the tilt limit."""
+        """End the patrol when the clock runs out, or as a collision when the drone tips past the tilt limit; a landing
+        ends it only once the lids have shut."""
         ep = env._solar
         if abs(float(roll)) > float(env.MAX_TILT_RAD) or abs(float(pitch)) > float(env.MAX_TILT_RAD):
             ep.end("collision")
@@ -292,7 +302,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
             ep.end("timeout")
         if ep.outcome.end_reason and not terminal_already:
             env._failure_reason = _FAILURE_BY_END[ep.outcome.end_reason]
-        return bool(ep.outcome.end_reason)
+        return bool(ep.outcome.end_reason) and not dock.closing(env, ep)
 
     def protected_body_uids(self, env: Any) -> set[int]:
         """The dock (body, pad and base) and the park's movers, kept out of the clearance metric and the obstacle

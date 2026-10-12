@@ -121,7 +121,8 @@ def check(seed: int) -> Verdict:
             decision += 1
             if decision % _FRAME_DECISIONS == 0:
                 sightings.look()
-            if terminated or truncated:
+            # The outcome is fixed once the patrol ends; the lids shutting after a landing change nothing judged here.
+            if terminated or truncated or ep.outcome.end_reason:
                 break
         outcome = ep.outcome
         landed = outcome.end_reason == "landed" and outcome.landed_in_dock

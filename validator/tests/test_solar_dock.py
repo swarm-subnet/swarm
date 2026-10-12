@@ -26,6 +26,7 @@ import contextlib
 import io
 import math
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pybullet as p
@@ -33,13 +34,14 @@ import pytest
 import swarm_worlds
 
 from swarm.challenge_families import build_benchmark_tasks
-from swarm.challenge_families.solar_patrol import airframe, dock, drone_state, park
+from swarm.challenge_families.solar_patrol import airframe, camera, dock, dock3, drone_state, laser, park, zoom
 from swarm.challenge_families.solar_patrol.contract import (
     ACTION_DIM,
     ACTION_INDEX,
     FAMILY_ID,
     FLIGHT_PHASES,
     HORIZON_S,
+    MAX_YAW_RATE_DEG_S,
     PATROL_HEIGHT_M,
     STATE_SLICES,
     decode_action,
@@ -132,7 +134,7 @@ def _fly(seed, pilot, max_decisions=4000):
             obs, _r, terminated, truncated, info = env.step(action[None, :])
             log.append({"i": i, "t": env._time_alive, "phase": env._solar.phase, "pos": np.array(env.pos[0]),
                         "vel": np.array(env.vel[0]), "yaw": float(p.getEulerFromQuaternion(env.quat[0])[2]),
-                        "action": action})
+                        "action": action, "lids": env._solar.dock["model"].opening, "info": info})
             if terminated or truncated:
                 break
         return log, env._solar, info, getattr(env, "_sun", None)
@@ -197,6 +199,30 @@ def _rows(log, phase):
 def _speed(row):
     """Horizontal speed of one log row."""
     return float(math.hypot(*row["vel"][:2]))
+
+
+def _nose_off(row, home):
+    """How far the drone's nose points away from the home point, in radians."""
+    east, north = home - row["pos"][:2]
+    return abs((math.atan2(north, east) - row["yaw"] + math.pi) % (2.0 * math.pi) - math.pi)
+
+
+def _off_line(rows, start, home):
+    """The furthest the rows stray sideways from the straight line between start and home."""
+    line = (home - start[:2]) / np.linalg.norm(home - start[:2])
+    return max(abs(line[0] * (r["pos"][1] - start[1]) - line[1] * (r["pos"][0] - start[0])) for r in rows)
+
+
+def _counted(monkeypatch, steps, module, name):
+    """Replace a module's function with one that notes the control step of every call before making it."""
+    real = getattr(module, name)
+
+    def counted(env, *args, **kwargs):
+        """Note the step, then do what the real one does."""
+        steps.append(env._solar.step)
+        return real(env, *args, **kwargs)
+
+    monkeypatch.setattr(module, name, counted)
 
 
 # ---------------------------------------------------------------- where the dock stands
@@ -313,8 +339,9 @@ def test_return_home_is_taken_only_in_flight(phase):
 
 @pytest.mark.timeout(300)
 def test_take_off_opens_the_lids_then_climbs_straight_to_20_m(flat_park):
-    """One command flies the whole take-off: the model's moves and turns are ignored, the drone rises straight up
-    and hands over at 20 m, never above it, about 11 s after the press."""
+    """One command flies the whole take-off: the drone waits on the pad until the lids are open, the model's moves
+    and turns are ignored, it rises straight up and hands over at 20 m, never above it, about 11 s after the press,
+    and the lids shut behind it."""
     def pilot(i, phase, env):
         """Press take-off, then push forward and turn on every decision."""
         return _action(take_off=1.0) if i == 0 else _action(move_forward=1.0, turn=1.0, move_up=1.0)
@@ -323,29 +350,64 @@ def test_take_off_opens_the_lids_then_climbs_straight_to_20_m(flat_park):
     rising = [r for r in log if r["phase"] == "taking_off"]
     start = episode.dock_position
     handed = next(r for r in log if r["phase"] == "flying")
+    assert all(r["pos"][2] - start[2] < 0.05 for r in rising if r["lids"] < 1.0)
     assert max(np.hypot(*(r["pos"][:2] - start[:2])) for r in rising) < 0.3
     assert max(abs(r["yaw"] - log[0]["yaw"]) for r in rising) < math.radians(2.0)
     assert max(r["pos"][2] - start[2] for r in rising) <= PATROL_HEIGHT_M + 0.5
     assert handed["pos"][2] - start[2] == pytest.approx(PATROL_HEIGHT_M, abs=dock.ARRIVE_M)
     assert 9.0 <= handed["t"] <= 14.0
+    shut = [r for r in log if r["t"] > handed["t"] + dock3.LID_TRAVEL_S + 0.1]
+    assert shut and all(r["lids"] == 0.0 for r in shut)
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.parametrize("height", [14.0, 26.0])
-def test_a_far_return_goes_to_20_m_first_then_flies_straight_home(flat_park, height):
-    """Pressed 30 m out, the drone first climbs or descends to 20 m where it is, then flies a straight line at 20 m
-    to the dock and lands in it; the dock itself never takes it past 22 m."""
-    log, episode, info, _sun = _fly(22, _out_and_home(height, 30.0))
+def test_a_return_from_5_to_50_m_turns_to_face_home_then_flies_straight_at_its_own_height(flat_park):
+    """Pressed 30 m out at 10 m facing away, the drone turns where it is to face the dock, no faster than the model's
+    own turn limit, then flies a straight line home at 10 m without climbing first, and lands."""
+    log, episode, info, _sun = _fly(13, _out_and_home(10.0, 30.0))
     back = _rows(log, "returning")
-    start = back[0]["pos"]
+    start, home = back[0]["pos"], episode.dock_position[:2]
+    assert 30.0 < np.hypot(*(start[:2] - home)) < dock.RTH_FAR_M
+    assert _nose_off(back[0], home) > math.radians(90.0)
+    faced = next(k for k, r in enumerate(back) if _nose_off(r, home) < math.radians(dock.FACED_DEG))
+    assert max(np.hypot(*(r["pos"][:2] - start[:2])) for r in back[:faced]) < 1.0
+    turned = np.abs(np.diff(np.unwrap([r["yaw"] for r in back[:faced + 1]])))
+    assert turned.max() <= math.radians(MAX_YAW_RATE_DEG_S) * 0.1 * 1.1
+    assert max(abs(r["pos"][2] - start[2]) for r in back) < 1.0
+    assert _off_line(back[faced:], start, home) < 1.0
+    assert episode.outcome.end_reason == "landed" and info["success"] is True
+
+
+@pytest.mark.timeout(300)
+def test_a_return_from_over_50_m_below_20_m_turns_then_climbs_to_20_m_first(flat_park):
+    """Pressed 60 m out at 10 m, the drone turns to face the dock, then climbs to 20 m where it is, then flies a
+    straight line home at 20 m and lands; the dock itself never takes it past 22 m."""
+    log, episode, info, _sun = _fly(21, _out_and_home(10.0, 60.0))
+    back = _rows(log, "returning")
+    start, home = back[0]["pos"], episode.dock_position[:2]
+    assert np.hypot(*(start[:2] - home)) > dock.RTH_FAR_M
+    faced = next(k for k, r in enumerate(back) if _nose_off(r, home) < math.radians(dock.FACED_DEG))
     level = next(k for k, r in enumerate(back) if abs(r["pos"][2] - episode.dock_position[2] - PATROL_HEIGHT_M) < dock.ARRIVE_M)
+    assert 0 < faced < level
+    assert max(abs(r["pos"][2] - start[2]) for r in back[:faced]) < 0.5
     assert max(np.hypot(*(r["pos"][:2] - start[:2])) for r in back[:level]) < 1.0
-    home = (episode.dock_position[:2] - start[:2]) / np.linalg.norm(episode.dock_position[:2] - start[:2])
-    off_line = [abs(home[0] * (r["pos"][1] - start[1]) - home[1] * (r["pos"][0] - start[0])) for r in back[level:]]
-    assert max(off_line) < 1.0
     assert max(abs(r["pos"][2] - episode.dock_position[2] - PATROL_HEIGHT_M) for r in back[level:]) < 1.0
-    flown = [r["pos"][2] - episode.dock_position[2] for r in back[level:] + _rows(log, "landing")]
-    assert max(flown) <= 22.0
+    assert _off_line(back[level:], start, home) < 1.5
+    assert max(r["pos"][2] - episode.dock_position[2] for r in back + _rows(log, "landing")) <= 22.0
+    assert episode.outcome.end_reason == "landed" and info["success"] is True
+
+
+@pytest.mark.timeout(300)
+def test_a_return_from_over_50_m_above_20_m_keeps_its_height(flat_park):
+    """Pressed 60 m out at 25 m, the drone does not come down to 20 m first: it turns, flies a straight line home at
+    25 m, then lands."""
+    log, episode, info, _sun = _fly(28, _out_and_home(25.0, 60.0))
+    back = _rows(log, "returning")
+    start, home = back[0]["pos"], episode.dock_position[:2]
+    assert np.hypot(*(start[:2] - home)) > dock.RTH_FAR_M
+    assert max(abs(r["pos"][2] - start[2]) for r in back) < 1.0
+    faced = next(k for k, r in enumerate(back) if _nose_off(r, home) < math.radians(dock.FACED_DEG))
+    assert _off_line(back[faced:], start, home) < 1.5
     assert episode.outcome.end_reason == "landed" and info["success"] is True
 
 
@@ -355,29 +417,115 @@ def test_a_near_return_keeps_a_height_above_20_m(flat_park):
     lands."""
     log, episode, info, _sun = _fly(23, _out_and_home(25.0, 3.0, speed=0.2))
     back = _rows(log, "returning")
-    assert np.hypot(*(back[0]["pos"][:2] - episode.dock_position[:2])) <= dock.NEAR_M
+    assert np.hypot(*(back[0]["pos"][:2] - episode.dock_position[:2])) <= dock.RTH_NEAR_M
     assert min(r["pos"][2] - episode.dock_position[2] for r in back) > 24.0
     assert episode.outcome.end_reason == "landed" and info["success"] is True
 
 
 @pytest.mark.timeout(300)
-def test_a_near_return_from_low_climbs_to_20_m_first(flat_park):
-    """Pressed 3 m from the dock at 14 m, the drone climbs to 20 m where it is before it moves across."""
+def test_a_return_under_5_m_crosses_at_its_own_height_without_turning(flat_park):
+    """Pressed 3 m from the dock at 14 m, the drone neither climbs nor turns: it crosses over at 14 m, then lands."""
     log, episode, info, _sun = _fly(24, _out_and_home(14.0, 3.0, speed=0.2))
     back = _rows(log, "returning")
-    start = back[0]["pos"]
-    below = [r for r in back if r["pos"][2] - episode.dock_position[2] < PATROL_HEIGHT_M - dock.ARRIVE_M]
-    assert below and max(np.hypot(*(r["pos"][:2] - start[:2])) for r in below) < 0.5
+    start = back[0]
+    assert np.hypot(*(start["pos"][:2] - episode.dock_position[:2])) < dock.RTH_NEAR_M
+    assert max(abs(r["pos"][2] - start["pos"][2]) for r in back) < 1.0
+    assert _nose_off(start, episode.dock_position[:2]) > math.radians(15.0)
+    assert max(abs(r["yaw"] - start["yaw"]) for r in back) < math.radians(dock.FACED_DEG)
     assert episode.outcome.end_reason == "landed" and info["success"] is True
 
 
 @pytest.mark.timeout(300)
+def test_a_landing_waits_above_the_dock_until_the_lids_are_open(flat_park):
+    """Pressed right over the pad 1.5 m above it, the return reaches the dock before its lids are open: the drone
+    waits WAIT_M above the pad until they are, then lands."""
+    log, episode, info, _sun = _fly(19, _out_and_home(1.5, 0.0, speed=0.2))
+    early = [r for r in log if r["phase"] in ("returning", "landing") and r["lids"] < 1.0]
+    assert any(r["phase"] == "landing" for r in early)
+    assert min(r["pos"][2] - episode.dock_position[2] for r in early) > dock.WAIT_M - 0.15
+    assert episode.outcome.end_reason == "landed" and info["success"] is True
+
+
+def test_the_landing_waits_clear_of_the_dock_and_its_lids(world):
+    """An aircraft waiting WAIT_M above the pad stands over 0.5 m above DJI's closed dock height and above the lids
+    at every point of their swing."""
+    if not _M4TD_SHIPPED:
+        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+    _ground(world)
+    env = SimpleNamespace(CLIENT=world)
+    model = dock3.spawn(env, 50.0, 50.0)
+    rest, _yaw = dock3.rest_pose(model)
+    swing = []
+    for opening in np.linspace(0.0, 1.0, 41):
+        dock3.set_opening(env, model, opening)
+        swing.append(max(p.getAABB(model.uid, link, physicsClientId=world)[1][2] for link in (-1, *dock3.LID_JOINTS)))
+    aircraft = p.loadURDF(os.path.join(swarm_worlds.robots_dir(), airframe.URDF), (rest + [0.0, 0.0, dock.WAIT_M]).tolist(),
+                          physicsClientId=world)
+    lowest = min(p.getAABB(aircraft, link, physicsClientId=world)[0][2]
+                 for link in range(-1, p.getNumJoints(aircraft, physicsClientId=world)))
+    assert lowest - max(swing) > 0.5
+    assert lowest - (model.origin[2] + dock3.CLOSED_SIZE_M[2]) > 0.5
+
+
+@pytest.mark.timeout(300)
+def test_the_lids_shut_after_the_landing_without_changing_it(flat_park, monkeypatch):
+    """After the landing the patrol runs on only while the lids shut, about 4 s, and ends with them closed. The
+    landing keeps its step, end reason and outcome, so its score: sticks, take-off, reports and zooms pressed
+    meanwhile do nothing, and no camera frame, zoom or laser reading is taken after the landing step."""
+    taken = []
+    for module, name in ((camera, "capture"), (zoom, "_draw"), (laser, "read")):
+        _counted(monkeypatch, taken, module, name)
+    home = _out_and_home(20.0, 30.0)
+
+    def pilot(i, phase, env):
+        """Out and home, then once landed push every stick and press take-off, report and zoom every other decision."""
+        if env._solar.phase == "landed":
+            pressed = float(i % 2)
+            return _action(move_forward=1.0, move_up=1.0, turn=1.0, take_off=pressed, report=pressed, zoom=pressed)
+        return home(i, phase, env)
+
+    log, episode, info, _sun = _fly(22, pilot)
+    landed = _rows(log, "landed")
+    first = landed[0]
+    landed_at = first["info"]["t_to_goal"]
+    assert first["t"] - 0.1 < landed_at <= first["t"]
+    assert first["lids"] > 0.9 and episode.dock["model"].opening == 0.0 and log[-1]["phase"] == "landed"
+    assert len(landed) == pytest.approx(dock3.LID_TRAVEL_S / 0.1, abs=1)
+    assert info["t_to_goal"] == landed_at and info["solar_outcome"] == first["info"]["solar_outcome"]
+    assert episode.outcome.end_reason == "landed" and episode.outcome.landed_in_dock
+    assert episode.outcome.returned_by_model and info["success"] is True and info["failure_reason"] == "NONE"
+    assert max(taken) <= round(landed_at / SIM_DT)
+    assert max(np.linalg.norm(r["pos"] - episode.dock_position) for r in landed[1:]) < 0.02
+
+
+def test_a_clock_running_out_while_the_lids_shut_keeps_the_landing():
+    """While the lids shut over a landed drone the patrol neither terminates nor truncates; when the 390 s pass before
+    they are shut it ends there as the landing it was, with the landing's own time."""
+    family = SolarPatrolChallengeFamily()
+    ep = SolarEpisode(seed=0, phase="landed", step=int(round(388.0 / SIM_DT)))
+    ep.dock = {"model": SimpleNamespace(opening=0.5)}
+    ep.outcome.end_reason, ep.outcome.landed_in_dock, ep.outcome.returned_by_model = "landed", True, True
+    env = SimpleNamespace(_solar=ep, EP_LEN_SEC=HORIZON_S, MAX_TILT_RAD=1.0, _time_alive=ep.time_s, _t_to_goal=None,
+                          _success=False, _failure_reason="NONE")
+    assert not family.compute_terminated(env)
+    assert not family.compute_truncated(env, terminal_already=False, roll=0.0, pitch=0.0)
+    ep.step = int(round(HORIZON_S / SIM_DT)) + 1
+    env._time_alive = ep.time_s
+    assert family.compute_terminated(env) and env._success
+    assert family.compute_truncated(env, terminal_already=True, roll=0.0, pitch=0.0)
+    assert ep.outcome.end_reason == "landed" and env._failure_reason == "NONE"
+    assert env._t_to_goal == pytest.approx(388.0)
+
+
+@pytest.mark.timeout(300)
 def test_cancel_hovers_and_hands_back_then_a_second_return_still_lands(flat_park):
-    """Cancel stops the return where it is: the model flies again from a hover, and pressing return home later
-    still lands in the dock and earns the landing."""
+    """Cancel stops the return where it is and shuts the lids again: the model flies again from a hover, and pressing
+    return home later still lands in the dock and earns the landing."""
     log, episode, info, _sun = _fly(25, _out_and_home(20.0, 25.0, cancel_after=20))
     hover = [r for r in log if r["phase"] == "flying" and r["i"] > _rows(log, "returning")[0]["i"]]
     assert hover and _speed(hover[-1]) < 0.3
+    assert max(r["lids"] for r in _rows(log, "returning") if r["i"] < hover[0]["i"]) > 0.0
+    assert hover[-1]["lids"] == 0.0
     assert episode.outcome.returned_by_model and episode.outcome.end_reason == "landed"
     assert info["success"] is True
 
@@ -405,10 +553,11 @@ def test_take_off_and_landing_fly_the_same_at_night(flat_park, monkeypatch):
 @pytest.mark.timeout(300)
 @pytest.mark.parametrize("seed", [20, 22, 23])
 def test_a_strong_wind_landing_enters_the_dock_centred(flat_park, seed):
-    """In a strong seeded wind the dock still lowers the drone into its body within 3 cm of the pad centre, the room
-    the Dock 3 leaves the M4TD at rest, and lands it."""
+    """In a strong seeded wind the dock still lowers the drone into its body about the pad centre, going back up
+    to the gate when a gust pushes it past the 3 cm the Dock 3 leaves the M4TD at rest, and lands it."""
     log, episode, info, _sun = _fly(seed, _out_and_home(20.0, 30.0))
     inside = [r for r in _rows(log, "landing") if r["pos"][2] - episode.dock_position[2] < 0.25]
     assert inside
-    assert max(np.hypot(*(r["pos"][:2] - episode.dock_position[:2])) for r in inside) < 0.03
+    # The climb back starts once the drift passes 3 cm, so the drift itself may run a few millimetres further.
+    assert max(np.hypot(*(r["pos"][:2] - episode.dock_position[:2])) for r in inside) < dock.FINAL_HOLD_M + 0.005
     assert episode.outcome.end_reason == "landed" and info["success"] is True
