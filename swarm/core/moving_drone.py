@@ -1715,7 +1715,7 @@ class MovingDroneAviary(BaseRLAviary):
                         self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
                 if wind is not None and self.PHYSICS != Physics.DYN:
-                    self._apply_wind(clipped_action[i, :], i, wind)
+                    self._apply_wind(clipped_action[i, :], i, self.family_runtime.felt_wind(self, i, wind))
             self.family_runtime.apply_world_physics(self)
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)

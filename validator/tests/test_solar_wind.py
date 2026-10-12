@@ -39,6 +39,7 @@ from swarm.challenge_families.solar_patrol.contract import (
     FAMILY_ID,
     FLIGHT_PHASES,
     HORIZON_S,
+    PATROL_HEIGHT_M,
     STATE_SLICES,
 )
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
@@ -180,6 +181,10 @@ class _Env:
         self._wind = blowing
         self.pos = [np.array([0.0, 0.0, height_m])]
 
+    def _get_altitude_distance(self, nth_drone: int = 0) -> float:
+        """How high the aircraft is above what lies under it: the flat ground the pad stands on."""
+        return float(self.pos[nth_drone][2])
+
 
 def _patrol(seed: int, env: _Env, phase: str, seconds: float) -> tuple[SolarEpisode, list[tuple]]:
     """Run the wind part for a while in one flight phase; every control step's (estimate, sector, gauge)."""
@@ -270,6 +275,55 @@ def test_the_gauge_reads_the_slower_air_near_the_ground(monkeypatch, night):
         wind.reset(_Env(_Blowing(4.0, 3.0), 0.0), ep)
         assert low <= ep.wind["gauge_share"] <= high
         assert ep.wind["dock_mps"] == wind._tenths(ep.wind["gauge_share"] * 5.0)
+
+
+def _felt_share(ep: SolarEpisode, height_m: float) -> float:
+    """The share of a 5 m/s wind the aircraft feels this high above the ground."""
+    return float(np.hypot(*wind.felt(_Env(None, height_m), ep, 0, np.array([4.0, 3.0, 0.0]))[:2])) / 5.0
+
+
+@pytest.mark.parametrize("night", [False, True])
+def test_near_the_ground_the_aircraft_feels_the_air_the_gauge_reads(monkeypatch, night):
+    """At or below the gauge's height the aircraft feels the gauge's share of the 20 m wind, from 20 m up all of it,
+    and in between more the higher it flies, within 7 % of the site's power law through those two points."""
+    monkeypatch.setattr(park, "SEEDED_SUN", night)
+    monkeypatch.setattr(park, "NIGHT_SHARE", 1.0)
+    heights = np.linspace(wind.GAUGE_HEIGHT_M, PATROL_HEIGHT_M, 40)
+    for seed in range(50):
+        ep = SolarEpisode(seed=seed)
+        wind.reset(_Env(_Blowing(4.0, 3.0), 0.0), ep)
+        share = ep.wind["gauge_share"]
+        assert [_felt_share(ep, h) for h in (0.0, 0.3, wind.GAUGE_HEIGHT_M)] == pytest.approx([share] * 3)
+        assert [_felt_share(ep, h) for h in (PATROL_HEIGHT_M, 45.0)] == pytest.approx([1.0, 1.0])
+        rising = [_felt_share(ep, h) for h in heights]
+        assert all(low < high for low, high in zip(rising, rising[1:]))
+        alpha = math.log(share) / math.log(wind.GAUGE_HEIGHT_M / PATROL_HEIGHT_M)
+        assert rising == pytest.approx([(h / PATROL_HEIGHT_M) ** alpha for h in heights], rel=0.07)
+
+
+def test_the_felt_wind_keeps_its_direction():
+    """Slowing the wind near the ground scales it, never turns it."""
+    ep = SolarEpisode(seed=9)
+    wind.reset(_Env(_Blowing(4.0, 3.0), 0.0), ep)
+    felt = wind.felt(_Env(None, 5.0), ep, 0, np.array([4.0, 3.0, -0.5]))
+    assert felt == pytest.approx(np.array([4.0, 3.0, -0.5]) * ep.wind["felt"])
+
+
+def test_low_over_the_ground_the_estimate_reads_the_slower_air_it_feels():
+    """Hovering 3 m over the ground, the aircraft's own estimate settles on the wind it feels there, not the 20 m
+    wind, while the dock's gauge still reads its own share of the 20 m wind."""
+    blowing = _Blowing(-5.0, 0.0)
+    env = _Env(blowing, 3.0)
+    ep = SolarEpisode(seed=4)
+    ep.phase = "flying"
+    wind.reset(env, ep)
+    for step in range(1, int(round(90.0 / SIM_DT)) + 1):
+        ep.step = step
+        wind.felt(env, ep, 0, blowing.current)
+        wind.update(env, ep)
+    assert ep.wind["gauge_share"] < ep.wind["felt"] < 1.0
+    assert ep.wind["estimate_mps"] == pytest.approx(round(5.0 * ep.wind["felt"] * ep.wind["scale"], 1), abs=0.1)
+    assert ep.wind["dock_mps"] == pytest.approx(ep.wind["gauge_share"] * 5.0, abs=0.1)
 
 
 def _action(**values) -> np.ndarray:

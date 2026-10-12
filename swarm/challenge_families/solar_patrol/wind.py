@@ -22,6 +22,11 @@ Each seed is still, light or strong, in the shares measured at a weather station
 cap of Swarm's seeded wind: its steady part is 0.4 to 0.67 of the cap, gusts reach about 1.5 times that, and nothing
 ever passes the cap, so no seed blows past the 12 m/s the M4TD and the Dock 3 are rated for.
 
+That wind is the wind at 20 m. The aircraft feels it slowed near whatever lies under it, on the site's own profile:
+from the gauge's height down it feels what the dock's gauge reads, from 20 m up the full wind, and in between a
+curve straight in the fourth root of the height, which follows the power law through those two points within 2 %
+(7 % on the stillest nights) and, built from square roots alone, rounds alike on every CPU.
+
 The model never sees that wind, only the two values DJI's Cloud API sends, each pushed every 2 s:
 - the aircraft's estimate, which DJI works out from the aircraft's attitude "for reference only": smoothed over
   about 12 s, reading low by up to a third, a little off in direction, in 0.1 m/s steps and one of 8 sectors for
@@ -41,7 +46,7 @@ from swarm.constants import SIM_DT
 from swarm.core.daylight import seeded_sun
 
 from . import park
-from .contract import STATE_SLICES, put
+from .contract import PATROL_HEIGHT_M, STATE_SLICES, put
 from .episode import SolarEpisode
 
 STRENGTHS = ("none", "light", "strong")
@@ -59,6 +64,7 @@ ESTIMATE_TAU_S = 6.0                     # DJI's estimate is smoothed over a 10 
 ESTIMATE_SCALE = (1.0 / 1.5, 1.0)        # and reads low by a factor of 1 to 1.5 (Varentsov et al. 2021)
 ESTIMATE_TURN_TAN = 0.47                 # direction off by up to about 25 degrees, fixed per seed
 GAUGE_TAU_S = 1.0                        # cup anemometer response
+GAUGE_HEIGHT_M = 0.7                     # the cups above the ground, where the felt wind meets the gauge's reading
 DAY_GAUGE_SHARE = (0.55, 0.71)           # 0.7 m wind over 20 m wind, the site's middle half of daytime hours
 NIGHT_GAUGE_SHARE = (0.28, 0.48)         # and of night hours, when the air near the ground is stiller
 
@@ -103,6 +109,7 @@ def reset(env: Any, ep: SolarEpisode) -> None:
         "estimate_offset": int(rng.integers(PUSH_STEPS)),
         "gauge_offset": int(rng.integers(PUSH_STEPS)),
         "smooth": np.zeros(2),
+        "felt": 1.0,
         "cups": float(gauge_share) * _speed(_steady(env)),
         "estimate_mps": 0.0,
         "estimate_sector": 0,
@@ -117,7 +124,7 @@ def update(env: Any, ep: SolarEpisode) -> None:
     now = _current(env)
     airborne = ep.phase not in ("docked", "landed") and float(env.pos[0][2]) - float(ep.dock_position[2]) > AIRBORNE_M
     if airborne:
-        w["smooth"] = w["smooth"] + (now - w["smooth"]) * (SIM_DT / ESTIMATE_TAU_S)
+        w["smooth"] = w["smooth"] + (now * w["felt"] - w["smooth"]) * (SIM_DT / ESTIMATE_TAU_S)
     else:
         w["smooth"] = np.zeros(2)
     w["cups"] += (w["gauge_share"] * _speed(now) - w["cups"]) * (SIM_DT / GAUGE_TAU_S)
@@ -129,6 +136,16 @@ def update(env: Any, ep: SolarEpisode) -> None:
         w["estimate_sector"] = _sector(seen) if w["estimate_mps"] > 0.0 else 0
     if (ep.step + w["gauge_offset"]) % PUSH_STEPS == 0:
         w["dock_mps"] = _tenths(w["cups"])
+
+
+def felt(env: Any, ep: SolarEpisode, nth_drone: int, blowing: np.ndarray) -> np.ndarray:
+    """The wind the aircraft feels: the 20 m wind times the seed's gauge share at or below the gauge's height, times 1
+    at or above 20 m over what lies under it, and in between rising straight with the fourth root of the height."""
+    share = ep.wind["gauge_share"]
+    height = min(PATROL_HEIGHT_M, max(GAUGE_HEIGHT_M, float(env._get_altitude_distance(nth_drone))))
+    span = (_root4(height) - _root4(GAUGE_HEIGHT_M)) / (_root4(PATROL_HEIGHT_M) - _root4(GAUGE_HEIGHT_M))
+    ep.wind["felt"] = share + (1.0 - share) * span
+    return np.asarray(blowing, dtype=float) * ep.wind["felt"]
 
 
 def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
@@ -164,3 +181,8 @@ def _sector(blowing: np.ndarray) -> int:
 def _tenths(value: float) -> float:
     """A speed in DJI's 0.1 m/s steps."""
     return math.floor(value * 10.0 + 0.5) / 10.0
+
+
+def _root4(value: float) -> float:
+    """The fourth root, from two square roots, which every CPU rounds the same way."""
+    return math.sqrt(math.sqrt(value))

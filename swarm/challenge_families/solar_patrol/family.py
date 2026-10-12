@@ -203,6 +203,10 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         theft.advance(env, ep)
         decoys.advance(env, ep)
 
+    def felt_wind(self, env: Any, nth_drone: int, blowing: np.ndarray) -> np.ndarray:
+        """The seed's wind slowed near whatever lies under the aircraft, as the aircraft feels it."""
+        return wind.felt(env, env._solar, nth_drone, blowing)
+
     def action_space(self, env: Any) -> spaces.Box:
         """The contract's action vector, one row per drone."""
         low = np.tile(np.asarray(ACTION_LOW, dtype=np.float32), (env.NUM_DRONES, 1))

@@ -48,6 +48,7 @@ from swarm.challenge_families.solar_patrol.contract import (
 )
 from swarm.challenge_families.solar_patrol.episode import SolarEpisode
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
+from swarm.challenge_families.solar_patrol.task import solar_patrol_task
 from swarm.constants import SIM_DT
 from swarm.core.maps.solar.builder import SOLAR_ASSET_DIR, build_solar_map, solar_manifest, solar_shifts
 from swarm.utils.env_factory import make_env_with_initial_obs
@@ -563,3 +564,23 @@ def test_a_strong_wind_landing_enters_the_dock_centred(flat_park, seed):
     # The climb back starts once the drift passes 3 cm, so the drift itself may run a few millimetres further.
     assert max(np.hypot(*(r["pos"][:2] - episode.dock_position[:2])) for r in inside) < dock.FINAL_HOLD_M + 0.005
     assert episode.outcome.end_reason == "landed" and info["success"] is True
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("seed", [1195, 2056, 2403, 3067])
+def test_a_strong_wind_take_off_lifts_out_of_the_dock_without_touching_it(flat_park, seed):
+    """Seeds whose full 20 m wind once pushed the climbing aircraft into the dock body now reach the patrol height:
+    near the ground it feels the slower air the dock's gauge reads."""
+    if not _M4TD_SHIPPED:
+        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, _obs = make_env_with_initial_obs(solar_patrol_task(seed=seed, sim_dt=SIM_DT))
+    try:
+        for i in range(300):
+            _o, _r, terminated, truncated, _i = env.step(_action(take_off=1.0 if i == 0 else 0.0)[None, :])
+            if env._solar.phase == "flying" or terminated or truncated:
+                break
+        assert env._solar.outcome.end_reason != "collision"
+        assert env._solar.phase == "flying"
+    finally:
+        env.close()

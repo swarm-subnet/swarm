@@ -370,6 +370,12 @@ class ChallengeFamilyRuntime:
         miner drones (e.g. the office VPS drift). No-op by default."""
         _ = env
 
+    def felt_wind(self, env: Any, nth_drone: int, wind: Any) -> Any:
+        """The wind a miner drone feels where it flies, given the map's wind for the control step: the same wind at
+        every height by default."""
+        _ = env, nth_drone
+        return wind
+
     def protected_body_uids(self, env: Any) -> set[int]:
         """PyBullet uids excluded from the fatal-collision check, the obstacle cull and the clearance metric."""
         _ = env
