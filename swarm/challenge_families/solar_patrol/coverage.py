@@ -24,8 +24,8 @@ through the tables, the dock and anything else standing, down to the terrain.
 A cell is searched when the colour or thermal frame the model was shown holds it and saw it closely enough:
 
 - the frame can see: a colour frame in the dark with night mode off shows nothing;
-- it was taken from 20 m or lower above the dock, and above the top of the dock, so a drone that never leaves marks
-  nothing;
+- it was taken from 20 m or lower above the ground straight under the camera, the terrain the cells sit on, and
+  higher over it than the top of a closed dock standing there, so a drone that never leaves marks nothing;
 - the cell's centre falls inside the frame;
 - a person in the cell would be at least PERSON_MIN_PX pixels wide: one pixel of the frame spans no more than
   PERSON_WIDTH_M / PERSON_MIN_PX of ground there, stretched by how far away and how slanted the ground is seen.
@@ -51,8 +51,8 @@ from .episode import SolarEpisode
 
 CELL_M = 2.0
 MAX_TURN_DEG = 10.0                    # the grid turns by up to this much either way each seed
-MAX_HEIGHT_M = PATROL_HEIGHT_M         # seen from 20 m or lower, above the dock
-DOCK_TOP_M = dock3.CLOSED_SIZE_M[2] - dock3.REST_HEIGHT_M   # the closed dock's top over the aircraft's resting point
+MAX_HEIGHT_M = PATROL_HEIGHT_M         # seen from 20 m or lower, above the ground under the camera
+DOCK_TOP_M = dock3.BASE_ABOVE_M + dock3.CLOSED_SIZE_M[2]    # the closed dock's top over the ground it stands on
 PERSON_WIDTH_M = 0.5                   # shoulder width, what a person shows from above
 PERSON_MIN_PX = 6.0                    # Johnson's criterion to recognise an object: 6 pixels across it
 MAX_PIXEL_M = PERSON_WIDTH_M / PERSON_MIN_PX
@@ -134,13 +134,19 @@ def update(env: Any, ep: SolarEpisode) -> None:
     if shot is None or shot is cov["last_view"]:
         return
     cov["last_view"] = shot
-    cov["searched"] |= seen_closely(shot, cov["cells"], cov["normals"], ep.dock_position)
+    cov["searched"] |= seen_closely(shot, cov["cells"], cov["normals"], height_above_ground(env, ep, shot.eye))
     ep.outcome.coverage = float(cov["searched"].mean()) if cov["searched"].size else 0.0
 
 
-def seen_closely(shot: View, cells: np.ndarray, normals: np.ndarray, dock_position: np.ndarray) -> np.ndarray:
-    """Which cells a frame saw closely enough, as a mask over the cells."""
-    height = shot.eye[2] - float(dock_position[2])
+def height_above_ground(env: Any, ep: SolarEpisode, eye: Tuple[float, float, float]) -> float:
+    """How high a camera stands above the terrain straight under it, NaN where no terrain lies below."""
+    point, _normal = ground(env.CLIENT, np.array([eye[:2]], dtype=float), ep.terrain_uids)
+    return float(eye[2]) - float(point[0, 2])
+
+
+def seen_closely(shot: View, cells: np.ndarray, normals: np.ndarray, height: float) -> np.ndarray:
+    """Which cells a frame taken at a height above the ground under its camera saw closely enough, as a mask over
+    the cells."""
     if not shot.sees or not DOCK_TOP_M < height <= MAX_HEIGHT_M:
         return np.zeros(len(cells), bool)
     return pixel_ground_m(shot, cells, normals) <= MAX_PIXEL_M
