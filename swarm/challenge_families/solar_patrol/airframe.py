@@ -312,7 +312,7 @@ def pose(env: Any, ep: Optional[SolarEpisode]) -> None:
         p.resetJointState(uid, joints["rotor%d_spin" % i], state["angles"][i], physicsClientId=cli)
         p.resetJointState(uid, joints["rotor%d_fold0" % i], -fold, physicsClientId=cli)
         p.resetJointState(uid, joints["rotor%d_fold1" % i], fold, physicsClientId=cli)
-    p.resetJointState(uid, joints["gimbal_tilt"], tilt_rad, physicsClientId=cli)
+    p.resetJointState(uid, joints["gimbal_tilt"], _drawn_tilt(p.getMatrixFromQuaternion(orn), tilt_rad), physicsClientId=cli)
     p.resetBasePositionAndOrientation(uid, pos, orn, physicsClientId=cli)
     state["posed"] = True
 
@@ -340,14 +340,26 @@ def laser_pose(env: Any, tilt_deg: float) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def _gimbal_point(env: Any, point: np.ndarray, tilt_deg: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """A point on the camera head swung about the tilt axis, with the head's forward and up, in world axes."""
+    """A point on the drawn camera head swung about the tilt axis, with the head's forward and up, in world axes; DJI's
+    3-axis gimbal holds the view level, facing the heading at the tilt from the horizon, whatever the airframe's lean."""
     t = math.radians(tilt_deg)
     c, s = math.cos(t), math.sin(t)
-    d = point - GIMBAL_PIVOT
-    local = GIMBAL_PIVOT + np.array([d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c])
     rot = p.getMatrixFromQuaternion(env.quat[0])
-    return (np.asarray(env.pos[0], dtype=float) + rotate(rot, local), rotate(rot, (c, 0.0, s)),
-            rotate(rot, (-s, 0.0, c)))
+    # The point stays on the head as drawn, which cannot roll, so the camera never looks out from inside its mesh.
+    drawn = _drawn_tilt(rot, t)
+    dc, ds = math.cos(drawn), math.sin(drawn)
+    d = point - GIMBAL_PIVOT
+    local = GIMBAL_PIVOT + np.array([d[0] * dc - d[2] * ds, d[1], d[0] * ds + d[2] * dc])
+    # The nose flattened onto the ground: DJI's pan is not controllable, so it follows the airframe's heading.
+    length = math.sqrt(rot[0] * rot[0] + rot[3] * rot[3])
+    hx, hy = rot[0] / length, rot[3] / length
+    head = (hx, -hy, 0.0, hy, hx, 0.0, 0.0, 0.0, 1.0)
+    return np.asarray(env.pos[0], dtype=float) + rotate(rot, local), rotate(head, (c, 0.0, s)), rotate(head, (-s, 0.0, c))
+
+
+def _drawn_tilt(rot: Tuple[float, ...], tilt_rad: float) -> float:
+    """The drawn head's tilt joint for a tilt from the horizon: the airframe's pitch taken out, as one joint can."""
+    return tilt_rad - math.asin(min(1.0, max(-1.0, rot[6])))
 
 
 def _docked_rotor_angle(i: int) -> float:

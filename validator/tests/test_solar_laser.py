@@ -106,7 +106,7 @@ def test_distance_and_ground_point_are_right_at_any_tilt(world, yaw_deg, pitch_d
     match the beam's own line to a centimetre, with the aircraft turned and pitched as it is in flight."""
     _ground(world)
     env = _Stub(world, yaw_deg, pitch_deg)
-    for tilt in (-90.0, -75.0, -60.0, -45.0, -30.0, -15.0, -10.0, -5.0, -3.0, -2.0 + pitch_deg):
+    for tilt in (-90.0, -75.0, -60.0, -45.0, -30.0, -15.0, -10.0, -5.0, -3.0, -2.0):
         reading = laser.read(env, tilt)
         distance, point = _ground_hit(env, tilt)
         assert reading["status"] == "normal", tilt

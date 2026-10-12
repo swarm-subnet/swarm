@@ -22,9 +22,11 @@ replaces the model's; once the drone is up, the model flies until it asks to com
 
 Each seed stands the Dock 3 (task 3's model) on its own open spot, found in the built world with rays: inside the
 fence by DJI's take-off margin, clear of everything standing by DJI's installation distance, on ground its concrete
-base can level. Take-off opens the lids, then climbs straight up to the patrol height. Return home is DJI's dock
-return: its height is fixed when it is pressed, the drone reaches it first, flies straight to the point above the
-pad, and descends onto the pad held over its centre against the wind, as RTK and the pad's markers hold the real one.
+base can level. The lids open only for the take-off and the landing, as in DJI's flight procedure: take-off opens
+them, climbs straight up to the patrol height and shuts them behind. Return home is the Dock 3's preset return: the
+lids open, its height is fixed when it is pressed, the drone turns to face home, reaches that height first, flies
+straight to the point above the pad, waits above the dock until the lids are open, and descends onto the pad held over
+its centre against the wind, as RTK and the pad's markers hold the real one. Once it rests there the lids shut.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from .contract import (
     MAX_CLIMB_MPS,
     MAX_DESCENT_MPS,
     MAX_HORIZONTAL_MPS,
+    MAX_YAW_RATE_DEG_S,
     PATROL_HEIGHT_M,
     STATE_SLICES,
     Command,
@@ -51,7 +54,12 @@ from .fixed_order import norm
 
 DRONE_REST_M = 0.0                     # dock_position is the aircraft's own resting point on the pad
 ARRIVE_M = 0.5                         # close enough to a target height, and DJI's landing start above the pad
-NEAR_M = 5.5                           # FlightHub 2: nearer the dock than this, a return keeps any height above its own
+RTH_NEAR_M = 5.0                       # Dock 3 preset RTH: nearer than this the aircraft flies above the dock and lands
+RTH_FAR_M = 50.0                       # Dock 3 preset RTH: further than this, below the RTH altitude it climbs to it first
+FACED_DEG = 5.0                        # the turn to face the home point ends this close to it
+TURN_GAIN_PER_S = 2.0                  # turn rate asked for per radian still to turn, inside the model's own limit
+WAIT_M = 1.0                           # above the resting point, where a landing waits for the lids: 0.6 m over their swing
+LIDS_OPEN = ("taking_off", "returning", "landing")  # DJI's flight procedure: the cover is shut while the aircraft flies
 LANDED_SPEED_MPS = 0.3                 # slower than this on the pad counts as landed
 TOUCHDOWN_MPS = 0.4                    # the slowest descent, so the last centimetres still close
 GAIN_PER_S = 1.0                       # speed asked for per metre still to go
@@ -166,7 +174,8 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     ep.dock_position = pad
     ep.dock_yaw = yaw
     ep.phase = "docked"
-    ep.dock = {"model": model, "return_z": 0.0, "at_height": False, "lean": np.zeros(2), "final": False}
+    ep.dock = {"model": model, "return_z": 0.0, "facing": False, "at_height": False, "lean": np.zeros(2),
+               "final": False}
     drone = int(env.DRONE_IDS[0])
     p.resetBasePositionAndOrientation(drone, (pad + [0.0, 0.0, DRONE_REST_M]).tolist(),
                                       p.getQuaternionFromEuler([0.0, 0.0, ep.dock_yaw]), physicsClientId=cli)
@@ -179,12 +188,13 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 
 def _return_height(ep: SolarEpisode, pos: np.ndarray) -> float:
-    """DJI's return height, fixed when return home is pressed: the patrol height, or nearer than NEAR_M to the dock
-    the current height when that is higher."""
-    patrol_z = float(ep.dock_position[2]) + PATROL_HEIGHT_M
-    if math.hypot(*(ep.dock_position[:2] - pos[:2])) > NEAR_M:
-        return patrol_z
-    return max(patrol_z, float(pos[2]))
+    """The Dock 3's preset return height, fixed when return home is pressed: further than RTH_FAR_M the patrol height
+    when the drone is lower, else its current height; never under WAIT_M over the pad, so the flight home clears the
+    dock."""
+    height = float(pos[2])
+    if math.hypot(*(ep.dock_position[:2] - pos[:2])) > RTH_FAR_M:
+        height = max(height, float(ep.dock_position[2]) + PATROL_HEIGHT_M)
+    return max(height, float(ep.dock_position[2]) + WAIT_M)
 
 
 def command(env: Any, ep: SolarEpisode, cmd: Command) -> None:
@@ -193,9 +203,11 @@ def command(env: Any, ep: SolarEpisode, cmd: Command) -> None:
         ep.phase = "taking_off"
         ep.outcome.took_off = True
     elif cmd.return_home and ep.phase == "flying":
+        pos = np.asarray(env.pos[0], dtype=float)
         ep.phase = "returning"
         ep.outcome.returned_by_model = True
-        ep.dock["return_z"] = _return_height(ep, np.asarray(env.pos[0], dtype=float))
+        ep.dock["return_z"] = _return_height(ep, pos)
+        ep.dock["facing"] = math.hypot(*(ep.dock_position[:2] - pos[:2])) >= RTH_NEAR_M
         ep.dock["at_height"] = False
     elif cmd.cancel_return and ep.phase in ("returning", "landing"):
         ep.phase = "flying"
@@ -215,6 +227,17 @@ def _climb(rise: float) -> float:
     return float(np.clip(GAIN_PER_S * rise, -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
 
 
+def _turn_home(env: Any, ep: SolarEpisode, pos: np.ndarray) -> float:
+    """The turn rate that brings the nose round to face the dock, inside the model's own turn limit; 0 once it
+    faces it within FACED_DEG."""
+    east, north = (float(v) for v in ep.dock_position[:2] - pos[:2])
+    error = (math.atan2(north, east) - float(env.rpy[0, 2]) + math.pi) % (2.0 * math.pi) - math.pi
+    if abs(error) < math.radians(FACED_DEG):
+        return 0.0
+    limit = math.radians(MAX_YAW_RATE_DEG_S)
+    return float(np.clip(TURN_GAIN_PER_S * error, -limit, limit))
+
+
 def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
     """The dock's own setpoint in the phases it flies, or None while the model has the drone."""
     if ep.phase in ("docked", "landed"):
@@ -231,6 +254,10 @@ def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
             ep.phase = "flying"
         return Setpoint((east, north, _climb(rise)))
     if ep.phase == "returning":
+        turn = _turn_home(env, ep, pos) if ep.dock["facing"] else 0.0
+        if turn:
+            return Setpoint((0.0, 0.0, 0.0), turn)
+        ep.dock["facing"] = False
         rise = ep.dock["return_z"] - pos[2]
         if not ep.dock["at_height"] and abs(rise) >= ARRIVE_M:
             return Setpoint((0.0, 0.0, _climb(rise)))
@@ -244,8 +271,9 @@ def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
 
 def _land(env: Any, ep: SolarEpisode, pos: np.ndarray) -> Setpoint:
     """The descent onto the pad as the Dock 3 flies it, RTK and the pad's markers holding the aircraft over the centre
-    against the wind: down to GATE_M above the resting point, a wait there until centred and still, then the last part,
-    which goes back up to the gate whenever the aircraft drifts further off than the dock leaves room for."""
+    against the wind: down to WAIT_M above the resting point until the lids are open, then to GATE_M, a wait there until
+    centred and still, then the last part, which goes back up to the gate whenever the aircraft drifts further off than
+    the dock leaves room for."""
     delta = ep.dock_position[:2] - pos[:2]
     ep.dock["lean"] = _capped(ep.dock["lean"] + LEAN_GAIN_PER_S2 * float(env.CTRL_TIMESTEP) * delta, LEAN_MAX_MPS)
     east, north = (float(v) for v in _towards(delta, MAX_HORIZONTAL_MPS, LAND_GAIN_PER_S) + ep.dock["lean"])
@@ -254,12 +282,14 @@ def _land(env: Any, ep: SolarEpisode, pos: np.ndarray) -> Setpoint:
     if ep.dock["final"] and off > FINAL_HOLD_M:
         ep.dock["final"] = False
     if not ep.dock["final"]:
-        if height - GATE_M > GATE_BAND_M:
-            vz = 0.0 if off > CENTRED_M else -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * (height - GATE_M)))
+        gate = GATE_M if ep.dock["model"].opening >= 1.0 else WAIT_M
+        if height - gate > GATE_BAND_M:
+            vz = 0.0 if off > CENTRED_M else -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * (height - gate)))
             return Setpoint((east, north, vz))
-        ep.dock["final"] = off < FINAL_CENTRED_M and norm(np.asarray(env.vel[0][:2], dtype=float)) < FINAL_STILL_MPS
+        ep.dock["final"] = (gate == GATE_M and off < FINAL_CENTRED_M
+                            and norm(np.asarray(env.vel[0][:2], dtype=float)) < FINAL_STILL_MPS)
         if not ep.dock["final"]:
-            return Setpoint((east, north, _climb(GATE_M - height)))
+            return Setpoint((east, north, _climb(gate - height)))
     return Setpoint((east, north, -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * height))))
 
 
@@ -270,11 +300,11 @@ def _capped(v: np.ndarray, limit: float) -> np.ndarray:
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
-    """Open the lids for the flight, shut them at rest, hold a resting aircraft still on the pad, and close the patrol
-    once a landing drone rests on the pad."""
+    """Open the lids for the take-off and the landing and shut them otherwise, hold a resting aircraft still on the pad,
+    and close the patrol once a landing drone rests on the pad."""
     model = ep.dock["model"]
-    dock3.move_lids(env, model, ep.phase not in ("docked", "landed"), float(env.CTRL_TIMESTEP))
-    if ep.phase == "docked" or (ep.phase == "taking_off" and model.opening < 1.0):
+    dock3.move_lids(env, model, ep.phase in LIDS_OPEN, float(env.CTRL_TIMESTEP))
+    if ep.phase in ("docked", "landed") or (ep.phase == "taking_off" and model.opening < 1.0):
         _hold(env, ep)
     if ep.phase != "landing" or not env._platform_hit:
         return
@@ -282,6 +312,12 @@ def update(env: Any, ep: SolarEpisode) -> None:
         ep.phase = "landed"
         ep.outcome.landed_in_dock = True
         ep.end("landed")
+
+
+def closing(env: Any, ep: SolarEpisode) -> bool:
+    """True while the lids shut over the landed aircraft and the patrol's time has not run out: the patrol waits for
+    them, its outcome already fixed."""
+    return ep.phase == "landed" and ep.dock["model"].opening > 0.0 and ep.time_s < env.EP_LEN_SEC
 
 
 def _hold(env: Any, ep: SolarEpisode) -> None:

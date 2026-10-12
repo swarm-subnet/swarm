@@ -319,7 +319,8 @@ def test_take_off_fly_return_and_land(flat_park):
 @pytest.mark.timeout(300)
 def test_each_observation_is_handed_ahead_as_its_step_returns_it(flat_park):
     """Through a whole patrol every decision's observation is handed over part way through the step before it, at
-    the link's snapshot, and equals the one that step returns; the step that lands hands over at most that one."""
+    the link's snapshot, and equals the one that step returns; the step that ends the patrol hands over at most that
+    one."""
     if not _M4TD_SHIPPED:
         pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
@@ -357,7 +358,7 @@ def test_the_state_counts_from_the_dock_through_a_whole_patrol(flat_park):
                                for k in range(1, len(states) - 1)])
     time_left = states[:, STATE_SLICES["time_left_s"]][:, 0]
     assert time_left[:-1] == pytest.approx(HORIZON_S - seen_s, abs=1e-3)
-    # The landing closes the patrol on the control step it happens, part way through the last decision.
+    # The lids shutting after the landing close the patrol on the control step they do, part way through the last decision.
     assert HORIZON_S - log["time_s"] - 1e-3 <= time_left[-1] < time_left[-2]
     assert states[:, STATE_SLICES["height_above_takeoff_m"]][:, 0] == pytest.approx(position[:, 2])
     assert position[:, 2].max() == pytest.approx(20.0, abs=1.5)

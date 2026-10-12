@@ -126,7 +126,7 @@ Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed 
 | 14 | `laser_range_m` | Laser distance, m; 0 unless the status is normal | 1 Hz |
 | 15–17 | `laser_point_m` | Where the laser hits, east, north, up from the dock, m; 0 unless normal | 1 Hz |
 | 18 | `laser_status` | 0 normal, 1 too close, 2 too far, 3 no signal | 1 Hz |
-| 19 | `ground_distance_m` | Straight down to the first solid thing, 0.5–16 m; **60** when nothing is in range | 10 Hz |
+| 19 | `ground_distance_m` | Straight down to the first solid thing, 0.5–16 m by day, 0.1–8 m at night; **60** when nothing is in range | 10 Hz |
 | 20 | `downward_sensing_ok` | 1 when the downward sensors work | 10 Hz |
 | 21 | `flight_limit_distance_m` | Distance to the flight limit's line, m, never negative | 10 Hz |
 | 22 | `inside_flight_limit` | 1 inside the limit, 0 outside | 10 Hz |
@@ -207,12 +207,12 @@ Values are clipped to their bounds. An action with any NaN or infinite value, or
 | 7× zoom | `zoom`, 640 × 480 | 15° diagonal | on request |
 
 - **Thermal** is drawn the way the drone's live stream shows it: each frame sets its own range, its coldest point black and its hottest white. It carries no temperatures. People are warm with the head brightest; dogs are just as warm, so tell them apart by shape.
-- **The gimbal only tilts.** From +70° up, the drone's own body fills more and more of the view. The camera is fixed to the airframe's lean, so a straight-down view leans a little while the drone speeds up or brakes.
+- **The gimbal only tilts.** From +70° up, the drone's own body fills more and more of the view. The gimbal holds the view level, so a straight-down view stays straight down while the drone speeds up, brakes or leans into the wind.
 - **Zoom** is a request, not a free look: draw a box on the current main frame and pick a lens. The close-up arrives one or two decisions later, centred on the box. Zoom images are always colour, even while the main feed is thermal. Up to **80 zooms per patrol**; a press past that does nothing.
 - **Night mode** changes the colour cameras in the dark: **off** gives a dark picture, **on** a brighter, grainy one like the real camera's Night Scene mode, **auto** turns it on only in the dark. By day it changes nothing.
 - **Night vision** works only through the 7× lens: a black-and-white close-up lit by the drone's infrared beam (5.7° wide, reaching up to 100 m). Send it on with the 7× zoom you want it on, or before it.
 - **Laser rangefinder** measures at the centre of the main camera, wherever it points, once a second: 1 m to 1,800 m, or 600 m on ground slanted 1:5 or shallower to the beam. Readings are off by up to ±(0.2 m + 0.15 % of the distance). Tilt the camera onto a person and read where they stand.
-- **Ground distance** comes from the sensors under the drone, 10 times a second, 0.5 m to 16 m. At the 20 m patrol height it usually reads 60 (out of range); over the park's higher ground it comes into range.
+- **Ground distance** comes from the sensors under the drone, 10 times a second: the downward cameras by day, 0.5 m to 16 m, and the infrared sensor at night, 0.1 m to 8 m. At the 20 m patrol height it usually reads 60 (out of range); over the park's higher ground it comes into range, at night only within 8 m.
 - **Link delay.** Everything the model sees is a snapshot 60 or 80 ms old, drawn per decision. A command reaches the aircraft 20 ms after it is sent. Colour and zoom images carry the look of compressed live video; thermal does not.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
@@ -229,10 +229,16 @@ docked ──take_off──► taking off ──(dock lifts it to 20 m)──►
                                                                 └─────cancel_return──────┴────────────┘
 ```
 
-- **Take-off**: press `take_off` in the dock. The lids open (about 4 s), the drone climbs straight up to 20 m above the dock, and the model takes over: about 12 s in all.
+- **Take-off**: press `take_off` in the dock. The lids open (about 4 s), the drone climbs straight up to 20 m above the dock, and the model takes over: about 12 s in all. The lids close behind it and stay closed while the model flies.
 - **Flying**: the model has the drone. Movement and turns do nothing while the dock flies it (take-off, the flight home, landing); the cameras, zoom and reports keep working.
-- **Return home**: press `return_home` while flying. The return height is fixed at the press: 20 m above the dock, or the current height if that is higher and the drone is within 5.5 m of the dock. The drone climbs or descends to it, flies straight to the dock and lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
-- **Cancel**: `cancel_return` during the return or the landing hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
+- **Return home**: press `return_home` while flying. The lids start to open, and the drone stops and hovers. It then follows the Dock 3's own return, by its horizontal distance to the dock at the press:
+  - **over 50 m**: it turns to face the dock; if it is lower than 20 m above the dock it climbs there first, otherwise it keeps its height; then it flies straight home at that height.
+  - **5 to 50 m**: it turns to face the dock and flies straight home at its current height.
+  - **under 5 m**: it flies straight over the dock at its current height, without turning.
+
+  It never comes home lower than 1 m above the pad, and if the lids are not fully open when it arrives over the pad, it waits 1 m above it until they are. Then it lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
+- **Landed**: once the drone rests on the pad the lids close (about 4 s) and the patrol ends with them shut. The landing counts on the step the drone settles, so the clock running out while the lids close changes nothing; meanwhile `act()` is not called and no new frame is drawn.
+- **Cancel**: `cancel_return` during the return or the landing closes the lids again and hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
 - **Height ceiling**: the drone cannot climb past 30 m above the dock.
 
 The patrol ends on the first of:

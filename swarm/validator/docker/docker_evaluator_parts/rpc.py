@@ -730,7 +730,9 @@ def _run_multi_seed_rpc_sync(
                             if (step_idx - 1) // window_acts != window_idx:
                                 window_idx, window_used_sec = (step_idx - 1) // window_acts, 0.0
                             budget = FIRST_STEP_BUDGET_REF_SEC if is_first_step else _budget_left(step_idx)
-                            for act_attempt in (0, 1):
+                            # A result the family has fixed waits for no answer, so a late or lost model cannot undo it.
+                            attempts = () if sent is None and family.outcome_fixed(env) else (0, 1)
+                            for act_attempt in attempts:
                                 attempt_timeout = (
                                     _first_ask_timeout(budget, step_timeout)
                                     if use_ref and act_attempt == 0
