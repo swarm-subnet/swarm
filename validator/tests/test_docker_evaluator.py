@@ -20,12 +20,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import queue
 import re
 import socket
 import threading
 import time
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,8 +37,14 @@ import pytest
 
 from swarm.benchmark import engine as bench_full_eval
 from swarm.benchmark.engine_parts import workers
+from swarm.challenge_families import build_benchmark_tasks, get_challenge_family, runtime_family_for_task
 from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
+from swarm.challenge_families.solar_patrol import install, theft
+from swarm.challenge_families.solar_patrol.contract import FAMILY_ID as SOLAR_FAMILY_ID
+from swarm.challenge_families.solar_patrol.contract import Outcome
+from swarm.constants import SIM_DT
 from swarm.protocol import FailureReason, ValidationResult
+from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator.calibration import SpeedFactor
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import lifecycle
@@ -996,10 +1005,10 @@ class _AheadEnv:
 
 
 def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, speed_factor=None, on_seed_complete=None,
-               slow_step_action=lambda _previous: None):
+               slow_step_action=lambda _previous: None, family=None):
     """Fly one task through the RPC loop with stand-ins for capnp, the miner, the env and the engine, its family
-    overlapping and answering late decisions with slow_step_action; a speed factor judges each act against the hard
-    cap."""
+    overlapping and answering late decisions with slow_step_action unless a real family is given; a speed factor judges
+    each act against the hard cap."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
     monkeypatch.setattr(rpc_mod, "_ENGINE_RELEASES_GIL", engine_releases_gil)
@@ -1037,8 +1046,9 @@ def _fly_ahead(monkeypatch, agent, env, serialize, engine_releases_gil=True, spe
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _calibrate)
     monkeypatch.setattr(rpc_mod, "_measure_rpc_overhead_via_ping", _no_overhead)
     monkeypatch.setattr(rpc_mod, "make_env_with_initial_obs", lambda task, gui=False: (env, {"marker": "initial"}))
-    monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: SimpleNamespace(
+    monkeypatch.setattr(rpc_mod, "runtime_family_for_task", lambda task: family or SimpleNamespace(
         family_id="cf_test", decision_steps=1, observation_ahead=True, slow_step_action=slow_step_action,
+        build_info=lambda _env: {},
         stalled_rollout_metrics=lambda _task, _info: {"missed_threats": 1, "false_alarms": 0}))
     task = SimpleNamespace(map_seed=77, challenge_type=1, horizon=1.0, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0))
     return ev._run_multi_seed_rpc_sync([task], uid=9, rpc_port=8000, on_seed_complete=on_seed_complete,
@@ -1292,6 +1302,108 @@ def test_a_model_whose_process_dies_mid_seed_is_scored_as_exited(monkeypatch):
     assert results[0].score == 0.0
     assert results[0].metrics == {"missed_threats": 1, "false_alarms": 0}
     assert [p["status"] for p in payloads] == ["seed_rpc_disconnected"]
+
+
+async def _die(_obs):
+    """Raise what capnp raises once the model's process has exited."""
+    raise _KjDisconnected("Peer disconnected.")
+
+
+def _sentinel_stand_in(at_reset: Outcome) -> SimpleNamespace:
+    """A family that reports the given patrol state at reset and judges abandoned seeds as Swarm Sentinel does."""
+    return SimpleNamespace(
+        family_id=SOLAR_FAMILY_ID, decision_steps=1, observation_ahead=True, slow_step_action=lambda _previous: None,
+        build_info=lambda _env: {"solar_outcome": asdict(at_reset)},
+        stalled_rollout_metrics=get_challenge_family(SOLAR_FAMILY_ID).stalled_rollout_metrics)
+
+
+class _PatrolEnv(_AheadEnv):
+    """An env whose steps never end the patrol and carry the given patrol state."""
+
+    def __init__(self, reached: Outcome):
+        """Keep the patrol state every step reports."""
+        super().__init__(lambda k: None)
+        self.reached = {"solar_outcome": asdict(reached)}
+
+    def step(self, action, on_observation=None):
+        """Fly the step, then carry the patrol state it reached."""
+        obs, reward, _terminated, truncated, info = super().step(action, on_observation)
+        return obs, reward, False, truncated, dict(info, **self.reached)
+
+
+def test_a_model_that_exits_on_its_first_act_misses_the_whole_crew(monkeypatch):
+    """A model whose process dies on its very first act, before any step has run, still answers for every intruder
+    the seed staged at reset."""
+    env = _AheadEnv(lambda k: None)
+
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(_die), env, lambda _schema, obs: ("serialized", obs["marker"]),
+                         family=_sentinel_stand_in(Outcome(threats=3)))
+
+    assert env.steps == 0
+    assert results[0].failure_reason == FailureReason.AGENT_EXITED.value
+    assert results[0].score == 0.0
+    assert results[0].metrics["threats"] == results[0].metrics["missed_threats"] == 3
+
+
+def test_a_model_that_stalls_from_its_first_act_misses_the_whole_crew(monkeypatch):
+    """A model that never answers in time fails the seed on slow-act strikes and answers for every intruder, though
+    no step it flew refreshed the misses."""
+    monkeypatch.setattr(de.rpc, "HARD_CAP_REF_SEC", 0.05)
+    monkeypatch.setattr(de.rpc, "FIRST_STEP_HARD_CAP_REF_SEC", 0.05)
+
+    async def stall(_obs):
+        """Sleep far past the hard cap."""
+        await asyncio.sleep(2.0)
+
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(stall), _PatrolEnv(Outcome(threats=3)),
+                         lambda _schema, obs: ("serialized", obs["marker"]), speed_factor=1.0,
+                         family=_sentinel_stand_in(Outcome(threats=3)))
+
+    assert results[0].failure_reason == FailureReason.SLOW_ACT_STRIKES.value
+    assert results[0].score == 0.0
+    assert results[0].metrics["threats"] == results[0].metrics["missed_threats"] == 3
+
+
+def test_a_model_that_leaves_mid_patrol_misses_the_men_it_reported(monkeypatch):
+    """A model that reports the whole crew and then exits still misses every man: the seed is read from the last step
+    it flew, not from the reset."""
+    calls = []
+
+    async def report_then_die(obs):
+        """Answer the first decision, then exit."""
+        calls.append(obs)
+        if len(calls) > 1:
+            raise _KjDisconnected("Peer disconnected.")
+        return _ACT_REPLY
+
+    env = _PatrolEnv(Outcome(threats=2, valid_reports=2, reports_made=3, false_alarms=1))
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(report_then_die), env,
+                         lambda _schema, obs: ("serialized", obs["marker"]),
+                         family=_sentinel_stand_in(Outcome(threats=9)))
+
+    assert env.steps == 1
+    assert results[0].failure_reason == FailureReason.AGENT_EXITED.value
+    assert (results[0].metrics["missed_threats"], results[0].metrics["false_alarms"]) == (2, 1)
+
+
+@pytest.mark.skipif(bool(install.problems()), reason="this install cannot run Swarm Sentinel")
+@pytest.mark.timeout(1200)
+def test_a_model_that_exits_on_its_first_act_on_a_real_theft_seed_misses_every_thief(monkeypatch):
+    """On the real park and a theft seed, a model whose process dies on its first act gets the seed scored as its own
+    exit, with every thief of the crew counted as missed."""
+    seed = next(s for s in range(200) if theft.has_theft(s))
+    task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=SOLAR_FAMILY_ID)[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        env, _ = make_env_with_initial_obs(task)
+    crew = len(env._solar.theft.men)
+
+    results = _fly_ahead(monkeypatch, _AbandoningAgent(_die), env, lambda _schema, _obs: ("serialized", None),
+                         family=runtime_family_for_task(task))
+
+    assert crew > 0
+    assert results[0].failure_reason == FailureReason.AGENT_EXITED.value
+    assert results[0].score == 0.0
+    assert results[0].metrics["threats"] == results[0].metrics["missed_threats"] == crew
 
 
 def test_evaluate_seeds_parallel_uses_process_scheduler(monkeypatch, tmp_path):

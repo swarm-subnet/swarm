@@ -99,6 +99,12 @@ def _strike_action(family, previous: Optional[np.ndarray], n_drones: int, act_di
     return np.zeros(act_dim, dtype=np.float32)
 
 
+def _abandoned_metrics(family, task, env, info: dict) -> dict:
+    """What a seed the model abandoned keeps: the family's stalled outcome, read from the env itself when the model
+    left before its first step had run."""
+    return family.stalled_rollout_metrics(task, info or family.build_info(env))
+
+
 def _link_dropped(exc: BaseException) -> bool:
     """True when the model's process went away; an error the model raised itself arrives as a remote failure."""
     return isinstance(exc, (BrokenPipeError, ConnectionResetError)) or getattr(exc, "type", None) == "DISCONNECTED"
@@ -924,7 +930,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
                                     failure_reason=FailureReason.AGENT_EXITED.value,
-                                    metrics=runtime_family_for_task(task).stalled_rollout_metrics(task, info),
+                                    metrics=_abandoned_metrics(family, task, env, info),
                                 )
                             )
                             _emit_seed_complete(
@@ -952,7 +958,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
                                     failure_reason=FailureReason.SLOW_ACT_STRIKES.value,
-                                    metrics=runtime_family_for_task(task).stalled_rollout_metrics(task, info),
+                                    metrics=_abandoned_metrics(family, task, env, info),
                                 )
                             )
                             _emit_seed_complete(
