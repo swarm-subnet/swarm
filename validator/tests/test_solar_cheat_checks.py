@@ -85,11 +85,11 @@ def test_the_drone_stops_rising_at_the_height_limit(flat_park):  # noqa: F811
     assert log["episode"].phase == "flying" and not log["episode"].outcome.end_reason
 
 
-@pytest.mark.parametrize("eye_m, verdict", [(reports.MAX_REPORT_HEIGHT_M, "valid"),
+@pytest.mark.parametrize("eye_m, verdict", [(reports.MAX_REPORT_HEIGHT_M - 0.001, "valid"),
                                             (reports.MAX_REPORT_HEIGHT_M + 1.0, "too_high")])
 def test_a_report_from_too_high_is_a_false_alarm(park, eye_m, verdict):  # noqa: F811
-    """The same box on the same thief counts when the frame was taken at the report height limit, and is a false
-    alarm when it was taken from higher."""
+    """The same box on the same thief counts when the frame was taken just under the report height limit over the
+    ground, and is a false alarm when it was taken from higher."""
     park.shown["feed"] = replace(park.view, eye=(0.0, 0.0, eye_m))
     assert _report(park, park.inside) == verdict
     assert park.ep.outcome.false_alarms == (verdict != "valid")
@@ -97,6 +97,6 @@ def test_a_report_from_too_high_is_a_false_alarm(park, eye_m, verdict):  # noqa:
 
 def test_a_box_over_the_whole_frame_is_a_false_alarm(park):  # noqa: F811
     """A thief inside the fence somewhere under a box drawn over the whole frame is not boxed: the report fails."""
-    reports.submit(None, park.ep, Report("person", "feed", Box(0.5, 0.5, 1.0, 1.0)))
+    reports.submit(park.env, park.ep, Report("person", "feed", Box(0.5, 0.5, 1.0, 1.0)))
     assert park.ep.reports["log"][-1][2] == "no_object"
     assert park.ep.outcome.false_alarms == 1 and park.ep.outcome.valid_reports == 0

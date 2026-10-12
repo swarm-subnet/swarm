@@ -77,7 +77,8 @@ def park(monkeypatch):
     once from 20 m; the thieves and decoys parts answer for them, and the patrol was shown that frame."""
     cli = p.connect(p.DIRECT)
     ground = p.createVisualShape(p.GEOM_BOX, halfExtents=[60.0, 60.0, 0.05], rgbaColor=[0.3, 0.5, 0.2, 1.0], physicsClientId=cli)
-    p.createMultiBody(0, -1, ground, [0.0, 0.0, -0.05], physicsClientId=cli)
+    solid = p.createCollisionShape(p.GEOM_BOX, halfExtents=[60.0, 60.0, 0.05], physicsClientId=cli)
+    terrain = p.createMultiBody(0, solid, ground, [0.0, 0.0, -0.05], physicsClientId=cli)
     inside_uid, inside = _block(cli, (-3.0, 2.0), _PERSON, (0.6, 0.2, 0.2))
     legs_uid, legs = _block(cli, (3.0, 2.0), (0.25, 0.15, 0.45), (0.2, 0.2, 0.6))
     torso = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.25, 0.15, 0.45], rgbaColor=[0.6, 0.6, 0.2, 1.0], physicsClientId=cli)
@@ -99,15 +100,16 @@ def park(monkeypatch):
     monkeypatch.setattr(theft, "bodies", lambda ep: {inside_uid: 0, legs_uid: 1, torso_uid: 1})
     monkeypatch.setattr(theft, "inside", inside_fence)
     monkeypatch.setattr(decoys, "bodies", lambda ep: {dog_uid: "dog"})
-    ep = SolarEpisode(seed=0, step=50)
+    ep = SolarEpisode(seed=0, step=50, terrain_uids=frozenset({terrain}))
     reports.reset(None, ep)
-    yield SimpleNamespace(ep=ep, view=shown["feed"], shown=shown, inside=inside, outside=outside, dog=dog, asked=asked)
+    yield SimpleNamespace(env=SimpleNamespace(CLIENT=cli), ep=ep, view=shown["feed"], shown=shown, inside=inside,
+                          outside=outside, dog=dog, asked=asked)
     p.disconnect(cli)
 
 
 def _report(park, corners, kind="person", image="feed", **fit):
     """Submit one report boxed on those corners and return its verdict."""
-    reports.submit(None, park.ep, Report(kind, image, _box_of(park.view, corners, **fit)))
+    reports.submit(park.env, park.ep, Report(kind, image, _box_of(park.view, corners, **fit)))
     return park.ep.reports["log"][-1][2]
 
 
@@ -179,6 +181,18 @@ def test_a_report_on_the_zoom_frame_reads_the_zoom_frame(park):
     assert _report(park, park.inside, image="feed") == "repeat"
 
 
+def test_the_report_height_counts_from_the_ground_under_the_camera(park):
+    """Over ground 15 m above the dock, a frame 25 m above that ground is too high and one 20 m above it carries a
+    valid report, though it stands 35 m above the dock."""
+    cli = park.env.CLIENT
+    solid = p.createCollisionShape(p.GEOM_BOX, halfExtents=[60.0, 60.0, 0.05], physicsClientId=cli)
+    park.ep.terrain_uids = frozenset({p.createMultiBody(0, solid, -1, [0.0, 0.0, 15.0 - 0.05], physicsClientId=cli)})
+    park.shown["feed"] = replace(park.view, eye=(0.0, 0.0, 15.0 + 25.0))
+    assert _report(park, park.inside) == "too_high"
+    park.shown["feed"] = replace(park.view, eye=(0.0, 0.0, 15.0 + 20.0))
+    assert _report(park, park.inside) == "valid"
+
+
 @pytest.fixture
 def reads(park, monkeypatch):
     """The views whose object map the report check read, one entry per read."""
@@ -227,7 +241,7 @@ def test_a_press_past_the_report_limit_does_nothing(park, reads):
         _report(park, park.dog)
     outcome = park.ep.outcome
     assert outcome.reports_made == reports.MAX_REPORTS and outcome.false_alarms == reports.MAX_REPORTS
-    reports.submit(None, park.ep, Report("person", "feed", _box_of(park.view, park.inside)))
+    reports.submit(park.env, park.ep, Report("person", "feed", _box_of(park.view, park.inside)))
     assert outcome.reports_made == reports.MAX_REPORTS and outcome.false_alarms == reports.MAX_REPORTS
     assert outcome.valid_reports == 0 and not park.ep.reports["reported"]
     assert len(park.ep.reports["log"]) == reports.MAX_REPORTS and len(reads) == 1
@@ -238,12 +252,12 @@ def test_a_model_pressing_on_every_chance_is_judged_at_most_the_limit(park, monk
     times and reads no more frames than that."""
     judged = []
     judge = reports.judge
-    monkeypatch.setattr(reports, "judge", lambda ep, report: judged.append(report) or judge(ep, report))
+    monkeypatch.setattr(reports, "judge", lambda env, ep, report: judged.append(report) or judge(env, ep, report))
     report = Report("person", "feed", _box_of(park.view, park.dog))
     for decision in range(0, 3900, 2):
         if decision % 5 < 2:
             park.shown["feed"] = replace(park.view)
-        reports.submit(None, park.ep, report)
+        reports.submit(park.env, park.ep, report)
     assert len(judged) == reports.MAX_REPORTS and len(reads) <= reports.MAX_REPORTS
     assert park.ep.outcome.reports_made == reports.MAX_REPORTS
 

@@ -19,9 +19,9 @@
 
 A report names a class and draws a box on the feed or zoom frame the model was shown. That frame's view carries the
 object map from its own draw, which body each pixel shows, so the check reads exactly what the model saw even when
-the thieves have moved since. The frame must have been taken no higher than MAX_REPORT_HEIGHT_M above the dock; then
-four checks, in order: the box sits on a real object, the class is right, the object is a threat (a thief inside the
-fence at that frame's step, never a decoy), and it is the first report of that thief.
+the thieves have moved since. The frame must have been taken no higher than MAX_REPORT_HEIGHT_M above the ground
+straight under its camera; then four checks, in order: the box sits on a real object, the class is right, the object
+is a threat (a thief inside the fence at that frame's step, never a decoy), and it is the first report of that thief.
 
 The box sits on the object it overlaps most, when the overlap with the tight box around that object's visible pixels
 (intersection over union) is at least MIN_OVERLAP. Those tight boxes are read from a frame's object map once, on the
@@ -36,14 +36,14 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import decoys, sensor_noise, theft
+from . import coverage, decoys, sensor_noise, theft
 from .camera import View
 from .contract import Box, Report
 from .episode import SolarEpisode
 
 MIN_OVERLAP = 0.5
 MAX_REPORTS = 20                        # a patrol; a seed holds at most three thieves
-MAX_REPORT_HEIGHT_M = 24.0              # over the dock: a frame taken from higher carries no valid report
+MAX_REPORT_HEIGHT_M = 24.0              # over the ground under the camera: a frame from higher carries no valid report
 BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits, the link above
 THREAT_CLASS = "person"
 VERDICTS = ("valid", "no_frame", "too_high", "no_object", "wrong_class", "not_threat", "repeat")
@@ -59,7 +59,7 @@ def submit(env: Any, ep: SolarEpisode, report: Report) -> None:
     patrol has made MAX_REPORTS, a press is not judged and counts nowhere."""
     if ep.outcome.reports_made >= MAX_REPORTS:
         return
-    verdict = judge(ep, report)
+    verdict = judge(env, ep, report)
     ep.reports["log"].append((ep.step, report, verdict))
     ep.outcome.reports_made += 1
     if verdict == "valid":
@@ -68,12 +68,13 @@ def submit(env: Any, ep: SolarEpisode, report: Report) -> None:
         ep.outcome.false_alarms += 1
 
 
-def judge(ep: SolarEpisode, report: Report) -> str:
+def judge(env: Any, ep: SolarEpisode, report: Report) -> str:
     """The verdict on one report: valid, or the first check it fails. A valid report marks its thief as reported."""
     view = sensor_noise.shown_view(ep, report.image)
     if view is None or view.objects is None:
         return "no_frame"
-    if view.eye[2] - float(ep.dock_position[2]) > MAX_REPORT_HEIGHT_M:
+    # Written so a frame with no terrain under it, a NaN height, is too high.
+    if not coverage.height_above_ground(env, ep, view.eye) <= MAX_REPORT_HEIGHT_M:
         return "too_high"
     owners: dict[int, tuple] = {uid: ("thief", thief) for uid, thief in theft.bodies(ep).items()}
     kinds: dict[tuple, str] = {key: THREAT_CLASS for key in owners.values()}
