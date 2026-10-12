@@ -289,7 +289,7 @@ def test_building_the_park_sinks_the_default_floor_under_its_lowest_valley(monke
     lowest = min(place["position"][2] + manifest["items"][place["item"]]["bounds_min"][2] * place["scale"][2]
                  for place in manifest["placements"] if manifest["items"][place["item"]].get("group") == "terrain")
     monkeypatch.setattr(park, "build_solar_map", lambda seed, cli: {"asset_dir": ASSET_DIR, "bodies": {}})
-    monkeypatch.setattr(park, "build_solar_movers", lambda world, seed, cli: None)
+    monkeypatch.setattr(park, "build_solar_movers", lambda world, seed, cli: SimpleNamespace(truck_parts={}))
     cli = p.connect(p.DIRECT)
     try:
         p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=cli)
@@ -328,6 +328,74 @@ def test_a_low_sun_barely_warms_the_glass_and_a_night_leaves_it_to_the_engine():
     assert park.AIR_NIGHT_C[0] <= night["air_c"] <= park.AIR_NIGHT_C[1]
     assert night["panel_c"] == []
     assert park.heat(_light(40.0), 1, 10) == park.heat(_light(40.0), 1, 10)
+
+
+def test_each_drive_leaves_the_bonnet_and_tyres_hot_and_the_tyres_never_over_the_bonnet():
+    """Every drive leaves the bonnet and the tyres at 31 to 50 C, as task 2 measured, the tyres at or under the
+    bonnet; a seed draws the same heat twice whatever the number of farmers, and the seeds spread it over the range."""
+    drawn = [hot for seed in range(500) for hot in park.truck_heat(seed, 4)]
+    assert all(31.0 <= tyres <= bonnet <= 50.0 for bonnet, tyres in drawn)
+    assert park.truck_heat(7, 4) == park.truck_heat(7, 4)
+    assert park.truck_heat(7, 4)[:2] == park.truck_heat(7, 2)
+    assert park.truck_heat(7, 4) != park.truck_heat(8, 4)
+    bonnets = [bonnet for bonnet, _ in drawn]
+    assert min(bonnets) < 33.0 and max(bonnets) > 48.0
+
+
+def _truck_episode(drives):
+    """An episode on a 15 C night whose truck is, at each step, on the drive the mapping gives."""
+    movers = SimpleNamespace(truck_drive=drives.get)
+    return SimpleNamespace(park={"movers": movers, "air_c": 15.0,
+                                 "truck": {"hot_c": [(45.0, 38.0), (35.0, 32.0)], "shown": None, "heat_map": -1}})
+
+
+def test_the_truck_is_hot_while_it_drives_and_still_warm_minutes_after_it_parks():
+    """A driving truck reads as hot as its own drive left it; parked five minutes it still reads far over the air, an
+    hour later close to it; and a truck that has not driven yet is left to the engine."""
+    ep = _truck_episode({1: (0, 0.0), 2: (1, 0.0), 3: (0, 300.0), 4: (0, 3600.0)})
+    assert park.truck_temperatures(ep, 0) is None
+    assert park.truck_temperatures(ep, 1) == (45.0, 38.0)
+    assert park.truck_temperatures(ep, 2) == (35.0, 32.0)
+    bonnet, tyres = park.truck_temperatures(ep, 3)
+    assert 31.0 < bonnet < 45.0 and 31.0 < tyres < 38.0
+    assert all(15.0 < celsius < 17.0 for celsius in park.truck_temperatures(ep, 4))
+
+
+def _body_triangles(path):
+    """The truck body's triangles: corner positions and texture coordinates."""
+    positions, uvs, faces = [], [], []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("v "):
+                positions.append([float(value) for value in line.split()[1:4]])
+            elif line.startswith("vt "):
+                uvs.append([float(value) for value in line.split()[1:3]])
+            elif line.startswith("f "):
+                faces.append([[int(i) - 1 for i in token.split("/")[:2]] for token in line.split()[1:]])
+    index = np.asarray(faces)
+    return np.asarray(positions)[index[:, :, 0]], np.asarray(uvs)[index[:, :, 1]]
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(ASSET_DIR, "manifest.json")), reason=f"solar map not built at {ASSET_DIR}")
+def test_the_heat_map_warms_the_bonnet_over_the_engine_and_leaves_the_cab_and_bed_cold():
+    """Read where each triangle's middle falls on the body's texture: the top of the bonnet carries heat, more over
+    the engine than at the windscreen, while the cab and the bed behind the windscreen carry none."""
+    item = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
+    corner, uv = _body_triangles(os.path.join(ASSET_DIR, item["folder"], item["obj"]))
+    heat = park.truck_heat_map(os.path.join(ASSET_DIR, item["folder"], item["obj"]))
+    size = heat.shape[0]
+    middle, spot = corner.mean(axis=1), uv.mean(axis=1)
+    read = heat[np.clip(((1.0 - spot[:, 1]) * size).astype(int), 0, size - 1), np.clip((spot[:, 0] * size).astype(int), 0, size - 1)]
+    normal = np.cross(corner[:, 1] - corner[:, 0], corner[:, 2] - corner[:, 0])
+    up = normal[:, 2] / np.maximum(np.linalg.norm(normal, axis=1), 1e-12)
+    bonnet = (middle[:, 0] > 1.0) & (middle[:, 0] < 2.4) & (middle[:, 2] > 0.6) & (up > 0.8)
+    behind = middle[:, 0] < 0.3
+    assert bonnet.sum() > 20 and (read[bonnet] > 0).all()
+    assert np.mean(read[behind] == 0) > 0.99
+    engine = bonnet & (np.hypot(middle[:, 0] - park.ENGINE_XY_M[0], middle[:, 1]) < 0.4)
+    windscreen = bonnet & (middle[:, 0] < 1.2)
+    assert read[engine].mean() > read[windscreen].mean() + 30
+    assert heat.max() == 255 and heat[heat > 0].min() >= round(park.BONNET_EDGE_SHARE * 255) - 1
 
 
 def test_half_the_seeds_fly_at_night_under_the_seed_s_own_light():
