@@ -179,6 +179,16 @@ def get_family_seeds_zeroed_per_mistake(
     return int(family_definition.get("seeds_zeroed_per_mistake", 0))
 
 
+def get_family_king_window(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Crowned kings the family pays at once; 0 when it keeps the shared King of the Hill window."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("king_window", 0))
+
+
 def get_family_visibility(
     family_id: str,
     *,
@@ -312,6 +322,7 @@ __all__ = [
     "filter_challenge_family_definitions",
     "get_family_benchmark_admission_policy",
     "get_family_benchmark_seed_count",
+    "get_family_king_window",
     "get_challenge_family_definition",
     "get_family_screening_policy",
     "get_family_visibility",

@@ -406,7 +406,7 @@ rebuilds anything it finds missing there on its next cycle.
    Per-seed and aggregate scores are submitted to the backend as they are computed.
 
 5. **Apply weights**
-   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last five champions share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
+   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last champions (10 in Swarm Sentinel, 5 in the others) share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
 
 6. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).
