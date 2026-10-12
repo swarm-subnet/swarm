@@ -73,6 +73,7 @@ from .contract import (
     decode_action,
     new_site_map,
     new_state,
+    slow_step_action,
 )
 from .episode import SolarEpisode
 from .task import solar_patrol_task
@@ -237,6 +238,10 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
         if setpoint is None:
             setpoint = outputs.setpoint(env, ep, command)
         return outputs.fly(env, ep, setpoint)
+
+    def slow_step_action(self, previous: Any) -> Optional[np.ndarray]:
+        """A late decision hovers and holds everything else as it was; with nothing flown yet it is all zeros."""
+        return None if previous is None else slow_step_action(previous)
 
     def post_step_update(self, env: Any) -> None:
         """Bookkeeping after one control step of physics: flight phase, limit, sensors, reports, coverage, score."""

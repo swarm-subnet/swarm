@@ -258,6 +258,12 @@ class ChallengeFamilyRuntime:
         _ = task, info
         return {}
 
+    def slow_step_action(self, previous: Any) -> Any | None:
+        """The action flown for a decision the model did not give in time, from the last action flown (None before the
+        first); None flies the all-zero action."""
+        _ = previous
+        return None
+
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
         return get_family_screening_policy(self.family_id)
