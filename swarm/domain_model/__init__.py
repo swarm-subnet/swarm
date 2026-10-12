@@ -169,6 +169,16 @@ def get_family_benchmark_seed_count(
     return int(family_definition.get("benchmark_seed_count", 0))
 
 
+def get_family_seeds_zeroed_per_mistake(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Best seeds the backend zeroes per missed threat or false alarm across the epoch; 0 when the family has no such rule."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("seeds_zeroed_per_mistake", 0))
+
+
 def get_family_visibility(
     family_id: str,
     *,

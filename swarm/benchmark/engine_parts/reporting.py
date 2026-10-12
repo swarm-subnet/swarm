@@ -18,12 +18,15 @@
 """Prints the benchmark run tables and returns the same numbers as a JSON record."""
 from __future__ import annotations
 
+from swarm.domain_model import UnknownChallengeFamilyError, get_family_seeds_zeroed_per_mistake
+
 from ._shared import (
     BENCH_GROUP_ORDER,
     Any,
     Counter,
     Dict,
     List,
+    Optional,
     Tuple,
     _BatchStat,
     asdict,
@@ -50,6 +53,58 @@ def _pctl(values: List[float], fraction: float) -> float:
     sorted_values = sorted(float(value) for value in values)
     idx = max(0, int(round(float(fraction) * len(sorted_values) + 0.5)) - 1)
     return float(sorted_values[min(idx, len(sorted_values) - 1)])
+
+
+_MISTAKE_FIELDS = ("missed_threats", "false_alarms")
+
+
+def _seed_mistake_counts(result: Any) -> Dict[str, Optional[int]]:
+    """A seed's missed threats and false alarms from its result metrics, both None when its family counts neither."""
+    metrics = getattr(result, "metrics", None)
+    counts = [metrics.get(key) if isinstance(metrics, dict) else None for key in _MISTAKE_FIELDS]
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
+        return dict.fromkeys(_MISTAKE_FIELDS)
+    return {key: max(0, value) for key, value in zip(_MISTAKE_FIELDS, counts)}
+
+
+def _count_cell(value: Optional[int]) -> str:
+    """A mistake count for the seed table, a dash for a seed that reported none."""
+    return "-" if value is None else str(value)
+
+
+def _seeds_zeroed_per_mistake(family_id: Optional[str]) -> int:
+    """The family's cross-seed rule from the registry; 0 without a family id or for an id the registry does not know."""
+    if not family_id:
+        return 0
+    try:
+        return get_family_seeds_zeroed_per_mistake(family_id)
+    except UnknownChallengeFamilyError:
+        return 0
+
+
+def _zero_best_seeds(scores: List[float], mistakes: int, seeds_per_mistake: int) -> List[float]:
+    """Scores with the best mistakes × seeds_per_mistake set to 0, ties going to the earliest seed, as the backend does."""
+    zeroed = min(len(scores), max(0, mistakes) * max(0, seeds_per_mistake))
+    penalised = list(scores)
+    for index in sorted(range(len(scores)), key=lambda i: (-scores[i], i))[:zeroed]:
+        penalised[index] = 0.0
+    return penalised
+
+
+def _cross_seed_penalty(rows: List[Dict[str, Any]], seeds_per_mistake: int) -> Dict[str, Any]:
+    """The run's mistakes and its mean score before and after the family's cross-seed rule."""
+    scores = [float(row["score"]) for row in rows]
+    missed = sum(int(row["missed_threats"] or 0) for row in rows)
+    false_alarms = sum(int(row["false_alarms"] or 0) for row in rows)
+    penalised = _zero_best_seeds(scores, missed + false_alarms, seeds_per_mistake)
+    return {
+        "seeds_zeroed_per_mistake": seeds_per_mistake,
+        "missed_threats": missed,
+        "false_alarms": false_alarms,
+        "seeds_zeroed": min(len(scores), (missed + false_alarms) * seeds_per_mistake),
+        "mean_score": _mean(scores),
+        "penalised_score": _mean(penalised),
+    }
 
 
 def _rows_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -106,11 +161,14 @@ def _print_results(
     eval_start: float,
     num_workers: int,
     host_parallelism: str = "process",
+    family_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Print the benchmark tables and return the record that is written as JSON.
 
-    One line per seed, the run summary, the scheduler RAM model, the per-group
-    observations, the slowest seeds and an extrapolation to 1,000 seeds.
+    One line per seed, with its missed threats and false alarms when the family
+    counts them, the cross-seed rule when the family has one, the run summary,
+    the scheduler RAM model, the per-group observations, the slowest seeds and
+    an extrapolation to 1,000 seeds.
     """
     group_order = BENCH_GROUP_ORDER
     seed_wall_queues: Dict[Tuple[int, int], deque[float]] = {
@@ -157,21 +215,33 @@ def _print_results(
                 "timeout_zero": wall < 0.5 and i > 0,
                 "estimated_resource_cost": _resource_cost_dict_for_group(group),
                 "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
+                **_seed_mistake_counts(result),
             }
         )
 
+    show_mistakes = any(
+        row["missed_threats"] is not None for rows in group_results.values() for row in rows
+    )
+    mistake_header = f" {'Missed':>6} {'FalseAlarms':>11}" if show_mistakes else ""
+    mistake_rule = f" {'-'*6} {'-'*11}" if show_mistakes else ""
+
     print()
-    print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}")
-    print(f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*7} {'-'*7}")
+    print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}{mistake_header}")
+    print(f"  {'-'*18} {'-'*8} {'-'*7} {'-'*5} {'-'*7} {'-'*7}{mistake_rule}")
 
     for group in group_order:
         if group not in group_results:
             continue
         for row in group_results[group]:
             ok = "Y" if row["success"] else "N"
+            mistakes = (
+                f" {_count_cell(row['missed_threats']):>6} {_count_cell(row['false_alarms']):>11}"
+                if show_mistakes
+                else ""
+            )
             print(
                 f"  {group:<18} {row['seed']:>8} {row['score']:>7.4f} {ok:>5} "
-                f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s"
+                f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s{mistakes}"
             )
         walls = [float(row["wall_time"]) for row in group_results[group]]
         scores = [float(row["score"]) for row in group_results[group]]
@@ -186,7 +256,20 @@ def _print_results(
         if group in group_results
         for row in group_results[group]
     ]
-    all_seed_walls = [float(row["wall_time"]) for row in all_rows if float(row["wall_time"]) > 0.0]
+
+    seeds_per_mistake = _seeds_zeroed_per_mistake(family_id) if show_mistakes else 0
+    penalty = _cross_seed_penalty(all_rows, seeds_per_mistake) if seeds_per_mistake else None
+    if penalty is not None:
+        print(f"  Cross-seed rule: every missed threat or false alarm sets {seeds_per_mistake} of the best seeds to 0")
+        print(f"    Missed threats:            {penalty['missed_threats']}")
+        print(f"    False alarms:              {penalty['false_alarms']}")
+        print(f"    Seeds set to 0:            {penalty['seeds_zeroed']}/{len(all_rows)}")
+        print(f"    Mean of seed scores:       {penalty['mean_score']:.4f}")
+        print(f"    Score after the rule:      {penalty['penalised_score']:.4f}")
+        print("    The leaderboard applies the same rule across all of the epoch's seeds.")
+        print()
+
+    all_seed_walls =[float(row["wall_time"]) for row in all_rows if float(row["wall_time"]) > 0.0]
     all_sim_times = [float(row["sim_time"]) for row in all_rows]
     success_count = sum(1 for row in all_rows if bool(row["success"]))
     execution_success_count = sum(1 for row in all_rows if bool(row["execution_ok"]))
@@ -387,6 +470,7 @@ def _print_results(
             "avg_startup_overhead_per_container_sec": avg_startup_overhead_sec,
             "total_startup_overhead_sec": total_startup_overhead_sec,
         },
+        "cross_seed_penalty": penalty,
         "execution_status_counts": dict(sorted(execution_status_counts.items())),
         "resource_cost_model_estimate": resource_cost_model,
         "group_summary": group_summary,
