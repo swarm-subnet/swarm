@@ -277,6 +277,45 @@ def test_the_camera_and_laser_swing_about_the_gimbal_axis(world):
     assert origin[2] < airframe.camera_pose(env, 0.0)[0][2]
 
 
+@pytest.mark.parametrize("roll_deg, pitch_deg", [(0.0, 16.0), (0.0, -16.0), (12.0, 0.0), (-10.0, 12.0)])
+def test_the_gimbal_holds_the_view_level_while_the_airframe_leans(world, roll_deg, pitch_deg):
+    """DJI's 3-axis gimbal: however the airframe leans, the camera and laser look along the heading at the tilt from
+    the horizon and never roll, while the camera stays on the head, which swings about the pivot on the airframe."""
+    env = _Stub(world)
+    yaw = math.radians(40.0)
+    env.quat = [np.array(p.getQuaternionFromEuler([math.radians(roll_deg), math.radians(pitch_deg), yaw]))]
+    rot = np.array(p.getMatrixFromQuaternion(env.quat[0])).reshape(3, 3)
+    pivot = env.pos[0] + rot @ airframe.GIMBAL_PIVOT
+    for tilt in (-90.0, -45.0, 0.0, 30.0):
+        c, s = math.cos(math.radians(tilt)), math.sin(math.radians(tilt))
+        pos, forward, up = airframe.camera_pose(env, tilt)
+        assert forward == pytest.approx([c * math.cos(yaw), c * math.sin(yaw), s], abs=1e-9)
+        assert up == pytest.approx([-s * math.cos(yaw), -s * math.sin(yaw), c], abs=1e-9)
+        assert np.linalg.norm(pos - pivot) == pytest.approx(np.linalg.norm(airframe.WIDE_CAMERA - airframe.GIMBAL_PIVOT))
+        assert airframe.laser_pose(env, tilt)[1] == pytest.approx(forward, abs=1e-12)
+
+
+@pytest.mark.parametrize("roll_deg, pitch_deg, yaw_deg", [(0.0, 16.0, 0.0), (0.0, -12.0, 70.0), (-16.0, 8.0, -40.0)])
+def test_the_drawn_head_holds_the_tilt_against_the_airframe_pitch(world, roll_deg, pitch_deg, yaw_deg):
+    """The drawn camera head turns its one tilt joint against the airframe's pitch, so it points where the stabilised
+    camera looks, off only by a roll it cannot show, and the camera's glass stays on it."""
+    uid = p.loadURDF(os.path.join(ROBOTS, airframe.MOVING_URDF), [0, 0, 20], physicsClientId=world)
+    joints = {p.getJointInfo(uid, j, physicsClientId=world)[1].decode(): j for j in range(p.getNumJoints(uid, physicsClientId=world))}
+    env = _Stub(world)
+    env.quat = [np.array(p.getQuaternionFromEuler([math.radians(a) for a in (roll_deg, pitch_deg, yaw_deg)]))]
+    for tilt in (-90.0, -30.0, 0.0, 60.0):
+        state = {"moving": uid, "joints": joints, "angles": [0.0] * 4, "posed": False,
+                 "pose": (True, math.radians(tilt), (env.pos[0].tolist(), env.quat[0].tolist()))}
+        airframe.pose(env, types.SimpleNamespace(airframe=state))
+        origin, orn = p.getLinkState(uid, joints["gimbal_tilt"], computeForwardKinematics=True, physicsClientId=world)[4:6]
+        head = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
+        c, s = math.cos(math.radians(tilt)), math.sin(math.radians(tilt))
+        level = np.array([c * math.cos(math.radians(yaw_deg)), c * math.sin(math.radians(yaw_deg)), s])
+        assert math.degrees(math.acos(min(1.0, float(head[:, 0] @ level)))) <= abs(roll_deg) + 1e-3
+        eye = airframe.camera_pose(env, tilt)[0]
+        assert eye == pytest.approx(origin + head @ (airframe.WIDE_CAMERA - airframe.GIMBAL_PIVOT), abs=1e-6)
+
+
 @pytest.mark.parametrize("tilt, low, high", [(50, 0.0, 0.001), (60, 0.0, 0.03), (70, 0.25, 0.45), (90, 0.99, 1.0)])
 def test_the_body_blocks_the_view_above_plus_70(world, tilt, low, high):
     """DJI: from +70 to +90 of tilt the aircraft's body blocks the wide camera. The share of the frame the body

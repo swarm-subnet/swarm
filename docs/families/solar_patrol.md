@@ -207,7 +207,7 @@ Values are clipped to their bounds. An action with any NaN or infinite value, or
 | 7× zoom | `zoom`, 640 × 480 | 15° diagonal | on request |
 
 - **Thermal** is drawn the way the drone's live stream shows it: each frame sets its own range, its coldest point black and its hottest white. It carries no temperatures. People are warm with the head brightest; dogs are just as warm, so tell them apart by shape.
-- **The gimbal only tilts.** From +70° up, the drone's own body fills more and more of the view. The camera is fixed to the airframe's lean, so a straight-down view leans a little while the drone speeds up or brakes.
+- **The gimbal only tilts.** From +70° up, the drone's own body fills more and more of the view. The gimbal holds the view level, so a straight-down view stays straight down while the drone speeds up, brakes or leans into the wind.
 - **Zoom** is a request, not a free look: draw a box on the current main frame and pick a lens. The close-up arrives one or two decisions later, centred on the box. Zoom images are always colour, even while the main feed is thermal. Up to **80 zooms per patrol**; a press past that does nothing.
 - **Night mode** changes the colour cameras in the dark: **off** gives a dark picture, **on** a brighter, grainy one like the real camera's Night Scene mode, **auto** turns it on only in the dark. By day it changes nothing.
 - **Night vision** works only through the 7× lens: a black-and-white close-up lit by the drone's infrared beam (5.7° wide, reaching up to 100 m). Send it on with the 7× zoom you want it on, or before it.
