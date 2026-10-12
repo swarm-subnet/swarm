@@ -267,10 +267,17 @@ def _way_in(rng: np.random.Generator, site: Site, way: str) -> Tuple[Opening, fl
         if gates:
             return gates[0], 0.0, 0.0
         way = "road"
+    roomy = [o for o in site.openings if o.kind == "panel" and _room(site, o, 0.0)]
+    if way == "forest":
+        side = [o for o in roomy if o.forest] or roomy
+    else:
+        # Beside the road where a panel there has room, else anywhere off the woods.
+        side = [o for o in roomy if o.road] or [o for o in roomy if not o.forest] or roomy
+    # A side whose longest panel cannot take the hole drawn gets the widest hole that panel takes.
+    width = max(HOLE_WIDTH_M[0], min(width, max(2.0 * o.half_width for o in side) - 2.0 * POST_CLEAR_M))
     # Where the fence bends its panels are short, down to 0.65 m: a hole there would be the whole panel, between posts.
-    panels = [o for o in site.openings if o.kind == "panel" and 2.0 * o.half_width >= width + 2.0 * POST_CLEAR_M
-              and _room(site, o, 0.0)]
-    wanted = [o for o in panels if (o.forest if way == "forest" else not o.forest)] or panels
+    wanted = [o for o in side if 2.0 * o.half_width >= width + 2.0 * POST_CLEAR_M] or \
+        [o for o in roomy if 2.0 * o.half_width >= width + 2.0 * POST_CLEAR_M]
     opening = wanted[int(rng.integers(len(wanted)))]
     # Cut in the middle of the panel: a hole beside a post has the man squeezing past the post and the next panel.
     slack = max(0.0, opening.half_width - width / 2.0 - POST_CLEAR_M)
