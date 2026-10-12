@@ -126,7 +126,7 @@ Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed 
 | 14 | `laser_range_m` | Laser distance, m; 0 unless the status is normal | 1 Hz |
 | 15–17 | `laser_point_m` | Where the laser hits, east, north, up from the dock, m; 0 unless normal | 1 Hz |
 | 18 | `laser_status` | 0 normal, 1 too close, 2 too far, 3 no signal | 1 Hz |
-| 19 | `ground_distance_m` | Straight down to the first solid thing, 0.5–16 m; **60** when nothing is in range | 10 Hz |
+| 19 | `ground_distance_m` | Straight down to the first solid thing, 0.5–16 m by day, 0.1–8 m at night; **60** when nothing is in range | 10 Hz |
 | 20 | `downward_sensing_ok` | 1 when the downward sensors work | 10 Hz |
 | 21 | `flight_limit_distance_m` | Distance to the flight limit's line, m, never negative | 10 Hz |
 | 22 | `inside_flight_limit` | 1 inside the limit, 0 outside | 10 Hz |
@@ -212,7 +212,7 @@ Values are clipped to their bounds. An action with any NaN or infinite value, or
 - **Night mode** changes the colour cameras in the dark: **off** gives a dark picture, **on** a brighter, grainy one like the real camera's Night Scene mode, **auto** turns it on only in the dark. By day it changes nothing.
 - **Night vision** works only through the 7× lens: a black-and-white close-up lit by the drone's infrared beam (5.7° wide, reaching up to 100 m). Send it on with the 7× zoom you want it on, or before it.
 - **Laser rangefinder** measures at the centre of the main camera, wherever it points, once a second: 1 m to 1,800 m, or 600 m on ground slanted 1:5 or shallower to the beam. Readings are off by up to ±(0.2 m + 0.15 % of the distance). Tilt the camera onto a person and read where they stand.
-- **Ground distance** comes from the sensors under the drone, 10 times a second, 0.5 m to 16 m. At the 20 m patrol height it usually reads 60 (out of range); over the park's higher ground it comes into range.
+- **Ground distance** comes from the sensors under the drone, 10 times a second: the downward cameras by day, 0.5 m to 16 m, and the infrared sensor at night, 0.1 m to 8 m. At the 20 m patrol height it usually reads 60 (out of range); over the park's higher ground it comes into range, at night only within 8 m.
 - **Link delay.** Everything the model sees is a snapshot 60 or 80 ms old, drawn per decision. A command reaches the aircraft 20 ms after it is sent. Colour and zoom images carry the look of compressed live video; thermal does not.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>

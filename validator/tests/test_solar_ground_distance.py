@@ -88,7 +88,7 @@ def test_beyond_the_range_reads_out_of_range(world, height):
 @pytest.mark.parametrize("height", [0.1, 0.36])
 def test_closer_than_the_range_reads_its_nearest_distance(world, height):
     """Closer than 0.5 m, as in the dock or at touch-down, the reading holds at 0.5 m."""
-    assert _reading_at(*world, height) == ground_distance.MIN_RANGE_M
+    assert _reading_at(*world, height) == ground_distance.DAY_RANGE_M[0]
 
 
 def test_reads_the_first_thing_below(world):
@@ -125,3 +125,13 @@ def test_downward_sensing_reports_working(world):
     _place(env, 3.0)
     ground_distance.reset(env, ep)
     assert _reading(env, ep)[1] == 1.0
+
+
+@pytest.mark.parametrize("height, by_day, at_night", [(10.0, 10.0, 60.0), (7.9, 7.9, 7.9), (0.3, 0.5, 0.3)])
+def test_at_night_the_infrared_sensor_reads_a_shorter_range(world, height, by_day, at_night):
+    """By day the cameras read 0.5 to 16 m; at night the infrared sensor reads 0.1 to 8 m and past that is out of
+    range."""
+    env, ep = world
+    assert _reading_at(env, ep, height) == pytest.approx(by_day, abs=1e-3)
+    env._sun = SimpleNamespace(night=True)
+    assert _reading_at(env, ep, height) == pytest.approx(at_night, abs=1e-3)
