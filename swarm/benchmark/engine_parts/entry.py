@@ -223,6 +223,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     eval_start,
                     launched_workers,
                     host_parallelism="process",
+                    family_id=args.family_id,
                 )
             except BaseException as exc:
                 report_error = exc

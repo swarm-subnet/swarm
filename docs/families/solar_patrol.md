@@ -259,7 +259,7 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 - **Day or night**, half and half, with the sun or moon set by the seed.
 - **Wind** is none, light or strong, drawn per seed: by day about 5 %, 70 % and 25 %, by night about 10 %, 80 % and 10 %. Light wind tops out between 2.5 and 6 m/s, strong between 10 and 12 m/s, gusts included.
 - **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when the drone's camera shows them: work on, freeze, drop flat and lie still, or run. Nobody leaves the park before the camera has seen him. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
-- **Decoys** are in every seed: one to three dogs wandering inside the fence, a farm truck on the public road outside, and a bird circling high above. None of them is a threat.
+- **Decoys** are in every seed: one to three dogs wandering inside the fence, two to four farmers driving a pickup along the public road outside, one at a time and each at their own hour, and a bird circling high above. None of them is a threat.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 
@@ -346,9 +346,10 @@ swarm benchmark --model Submission/submission.zip --family-id cf_solar_patrol --
 ```
 
 - `swarm model package` stops if `Submission/submission.zip` already exists: add `--overwrite` to package again.
+- Each seed's line shows its missed threats and false alarms, and under the table the benchmark applies the ×10 rule to the seeds it flew: the plain mean beside the score after the rule. On a handful of seeds one mistake zeroes most of them; the leaderboard applies the same rule across the epoch's 250 seeds.
 - `--seeds-per-group` sets how many seeds the benchmark flies (default 3). Every seed is first flown once by a scripted reference pilot that checks the seed can be done; the verdict is cached, so a seed costs this check only the first time.
 - To fly one exact seed, pass `--seed-file seeds.json` with `{"schema_version": "challenge_family_seed_file.v1", "family_id": "cf_solar_patrol", "type_seeds": {"type8_solar": [1002]}}`.
-- One patrol takes about a minute on a fast desktop CPU, plus the seed check, and a worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
+- On a fast desktop CPU the starter's patrol, about 220 s of flight, takes 42 to 50 s to run, and a patrol that flies longer takes longer. The seed check adds about 10 s of CPU the first time a seed is flown, and the first run measures the host's speed once, under two minutes. A worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
 - Always pass `--family-id cf_solar_patrol`: without it, `swarm benchmark` runs Search and Rescue.
 
 To watch a patrol, film it with `swarm video` (it needs a video writer the install does not include), or look around a park with `swarm visualize`:
