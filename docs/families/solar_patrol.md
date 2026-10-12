@@ -109,7 +109,7 @@ Your program stays alive for the whole patrol and is reset between seeds, so it 
 
 ## State vector layout
 
-Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed stands it. Axes are east, north and up, in metres. Every height in this family is measured **above the dock**, never above the ground under the drone.
+Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed stands it. Axes are east, north and up, in metres. Every height in the state is measured **above the dock**. The scoring rules measure height **above the ground straight under the drone** (see [Scoring](#scoring)), and the park's ground rises and falls around the dock, so the two differ: with the camera straight down, the laser's point gives the height of what lies below, panel tops and roofs included.
 
 | Index | Field | Meaning | Updates |
 |---|---|---|---|
@@ -212,7 +212,7 @@ Values are clipped to their bounds. An action with any NaN or infinite value, or
 - **Night mode** changes the colour cameras in the dark: **off** gives a dark picture, **on** a brighter, grainy one like the real camera's Night Scene mode, **auto** turns it on only in the dark. By day it changes nothing.
 - **Night vision** works only through the 7× lens: a black-and-white close-up lit by the drone's infrared beam (5.7° wide, reaching up to 100 m). Send it on with the 7× zoom you want it on, or before it.
 - **Laser rangefinder** measures at the centre of the main camera, wherever it points, once a second: 1 m to 1,800 m, or 600 m on ground slanted 1:5 or shallower to the beam. Readings are off by up to ±(0.2 m + 0.15 % of the distance). Tilt the camera onto a person and read where they stand.
-- **Ground distance** comes from the sensors under the drone, 10 times a second: the downward cameras by day, 0.5 m to 16 m, and the infrared sensor at night, 0.1 m to 8 m. At the 20 m patrol height it usually reads 60 (out of range); over the park's higher ground it comes into range, at night only within 8 m.
+- **Ground distance** comes from the sensors under the drone, 10 times a second: the downward cameras by day, 0.5 m to 16 m, and the infrared sensor at night, 0.1 m to 8 m. At the 20 m patrol height it reads 60 (out of range); it comes into range only when the drone flies within 16 m of what lies below, at night within 8 m.
 - **Link delay.** Everything the model sees is a snapshot 60 or 80 ms old, drawn per decision. A command reaches the aircraft 20 ms after it is sent. Colour and zoom images carry the look of compressed live video; thermal does not.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
@@ -239,7 +239,7 @@ docked ──take_off──► taking off ──(dock lifts it to 20 m)──►
   It never comes home lower than 1 m above the pad, and if the lids are not fully open when it arrives over the pad, it waits 1 m above it until they are. Then it lands on the pad, about 12 s for the landing itself. The park bends, and a straight line home can cut across a corner past the flight limit's stop line, which ends the patrol without the landing: press return home where the straight line to the dock stays inside the fence.
 - **Landed**: once the drone rests on the pad the lids close (about 4 s) and the patrol ends with them shut. The landing counts on the step the drone settles, so the clock running out while the lids close changes nothing; meanwhile `act()` is not called and no new frame is drawn.
 - **Cancel**: `cancel_return` during the return or the landing closes the lids again and hands the drone straight back: it brakes towards whatever your sticks ask, at up to 2 m/s², so send zero sticks to hover. Press `return_home` again later; that return still earns the landing if it lands in time.
-- **Height ceiling**: the drone cannot climb past 30 m above the dock.
+- **Height ceiling**: the drone cannot climb past 45 m above the dock. Like the real dock's limit it counts from the take-off point, and it leaves room for 22 m over the park's highest ground in every seed.
 
 The patrol ends on the first of:
 
@@ -260,7 +260,7 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 
 ## The park
 
-- **One park, never the same twice.** Every seed shifts each panel table, building and tree a little in place, size and colour, and keeps more or fewer of the trees and grass around the park. The fence stays where it is. The ground inside the fence rises about 39 m from one end to the other, so 20 m above the dock is much less than 20 m above the high end.
+- **One park, never the same twice.** Every seed shifts each panel table, building and tree a little in place, size and colour, and keeps more or fewer of the trees and grass around the park. The fence stays where it is. The ground inside the fence rises about 39 m from one end to the other: the dock's take-off, return home and height ceiling count from the dock, while the scoring rules count from the ground under the drone.
 - **The dock** stands on a different open spot each seed, at least 10 m inside the fence and clear of panels and trees.
 - **Day or night**, half and half, with the sun or moon set by the seed.
 - **Wind** is none, light or strong, drawn per seed: by day about 5 %, 70 % and 25 %, by night about 10 %, 80 % and 10 %. Light wind tops out between 2.5 and 6 m/s, strong between 10 and 12 m/s, gusts included. Those are the speeds 20 m up; nearer whatever lies under it the drone feels slower air, down to what the dock's gauge reads close to the ground.
@@ -280,14 +280,14 @@ seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 ```
 
 - **Detection**, with intruders: valid reports ÷ (threats + false alarms), so every miss and every false alarm pulls it down. In an empty seed it is the coverage ÷ (1 + false alarms): silence only pays after a real search.
-- **Coverage**: the share of the park searched. The park is split into 2 m × 2 m cells inside the fence, laid down with a random offset and a turn of up to 10° each seed. A cell counts as searched once a main-camera frame shows it from **20 m or lower above the dock**, sharp enough that a person would be about 6 pixels across (at most 8.3 cm of ground per pixel). Zoom images mark nothing, and a colour frame at night with night mode off marks nothing.
-- **Flight**: half for landing in the dock after your own `return_home`, half for the peak height: full up to 22 m above the dock, falling in a straight line to 0 at 30 m. The peak counts, so one climb past 22 m costs for the whole patrol.
+- **Coverage**: the share of the park searched. The park is split into 2 m × 2 m cells inside the fence, laid down with a random offset and a turn of up to 10° each seed. A cell counts as searched once a main-camera frame shows it from **20 m or lower above the ground straight under the camera** (the terrain, not a panel table or roof), sharp enough that a person would be about 6 pixels across (at most 8.3 cm of ground per pixel). Zoom images mark nothing, and a colour frame at night with night mode off marks nothing.
+- **Flight**: half for landing in the dock after your own `return_home`, half for the peak height above the ground straight under the drone while your model flies it: full up to 22 m, falling in a straight line to 0 at 30 m. The peak counts, so one climb past 22 m costs for the whole patrol. The dock's own take-off and flight home do not count.
 
 **A seed scores 0** when the drone never takes off, or comes closer than 5 m to an intruder inside the fence (measured in 3D to a 1.8 m tall person) while out of the dock.
 
 **A report is valid** when all of these hold, checked against the simulator's own map of what each pixel shows in the very frame you boxed:
 
-1. The frame was taken no higher than 24 m above the dock.
+1. The frame was taken no higher than 24 m above the ground straight under the camera.
 2. Your box covers a real object: overlap with the tight box around that object's visible pixels (intersection over union) of at least 0.5.
 3. The class is person and the object is a person.
 4. That person was inside the fence when the frame was taken.
@@ -295,7 +295,7 @@ seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 
 Any report that fails is a false alarm, and a report never ends the patrol. Counting who you have already reported is the model's job. Up to **20 reports per patrol**; a press past that does nothing.
 
-Every row below lands after its own `return_home` and never climbs above 22 m:
+Every row below lands after its own `return_home` and never flies higher than 22 m above the ground:
 
 | Seed | Score |
 |---|---|
@@ -340,7 +340,7 @@ The other families give 0.6 s per `act()`. Here a new frame comes every fifth de
 
 ## Local testing
 
-Start from the starter agent. It flies a whole patrol from the state and the site map: it takes off, sweeps the park in lanes at 19.5 m above the dock, returns home and lands. It never looks at the images and never reports, so it finds nobody; replace its sweep with your own search. Run these from the repo root:
+Start from the starter agent. It flies a whole patrol from the state and the site map: it takes off, sweeps the park in lanes about 17 m above what the laser meets straight down, returns home and lands. It never looks at the images and never reports, so it finds nobody; replace its sweep with your own search. Run these from the repo root:
 
 ```bash
 mkdir -p my_model
