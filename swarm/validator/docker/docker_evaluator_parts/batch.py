@@ -1894,6 +1894,7 @@ async def evaluate_seeds_batch(
     warm_container: Optional[WarmContainer] = None,
     on_container_ready: Optional[Callable[[], None]] = None,
     cancel_event: Optional[Any] = None,
+    raw_timing: bool = False,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1906,6 +1907,8 @@ async def evaluate_seeds_batch(
         warm_container: A spare started ahead of time; adopted instead of a fresh start
         on_container_ready: Called once the container serves, before the first seed flies
         cancel_event: Set by the dispatcher to abandon the batch; unfinished seeds report a stop status
+        raw_timing: Fly on the per-step timeout with no host speed factor instead of measuring the host;
+            only the local benchmark sets it, after its own speed check found no usable factor
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1939,7 +1942,7 @@ async def evaluate_seeds_batch(
         discard_warm_container(warm_container)
         return early
 
-    if not is_calibration_run:
+    if not is_calibration_run and not raw_timing:
         speed = None
         if host_speed_factor is not None:
             try:

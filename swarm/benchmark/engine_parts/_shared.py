@@ -103,6 +103,8 @@ class _ProcessBatchRequest:
     model_image: Optional[str] = None
     # More seeds follow for this worker: start the next container during this flight.
     prewarm_next: bool = False
+    # The host has no usable speed factor: fly on raw act times, never measure from inside the worker.
+    raw_timing: bool = False
 
 
 @dataclass
