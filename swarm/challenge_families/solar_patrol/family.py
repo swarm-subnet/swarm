@@ -353,9 +353,12 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     # scoring
     # ------------------------------------------------------------------ #
     def stalled_rollout_metrics(self, task: Any, info: dict) -> dict:
-        """The patrol outcome so far, so a model that stalls still answers for the threats it left unreported."""
+        """The outcome of a patrol the model abandoned: one patrol is one mission, so every intruder of the seed counts
+        as missed, reported or not, and the false alarms it made stand."""
         _ = task
-        return dict((info or {}).get("solar_outcome") or asdict(Outcome()))
+        outcome = dict((info or {}).get("solar_outcome") or asdict(Outcome()))
+        outcome["missed_threats"] = int(outcome["threats"])
+        return outcome
 
     def evaluate_rollout(self, *, task: Any, success: bool, t: float, horizon: float,
                          min_clearance: Optional[float], collision: bool, failure_reason: str,
