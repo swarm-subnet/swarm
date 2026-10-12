@@ -104,7 +104,7 @@ def test_valid_reports_never_count_past_the_threats():
     (0.5, 1.0), (20.0, 1.0), (22.0, 1.0), (24.0, 0.75), (26.0, 0.5), (29.0, 0.125), (30.0, 0.0), (45.0, 0.0),
 ])
 def test_height_is_free_to_22_m_and_falls_in_a_straight_line_to_0_at_30_m(peak, height_part):
-    """The height half of the flight term is full up to 22 m above the dock, low flying included, and 0 from 30 m."""
+    """The height half of the flight term is full up to 22 m above the ground, low flying included, and 0 from 30 m."""
     assert score.score(None, _metrics(max_height_m=peak))["flight_term"] == pytest.approx(0.5 + 0.5 * height_part)
 
 
@@ -218,12 +218,13 @@ def test_a_drone_in_the_dock_is_never_close_to_a_threat(world, phase):
     assert ep.outcome.min_threat_distance_m is None
 
 
-def test_the_peak_height_is_measured_above_the_dock():
-    """Heights are above the take-off point, not above the ground under the drone, and only the highest is kept."""
-    ep = SolarEpisode(seed=0, dock_position=np.array([0.0, 0.0, 14.0]))
-    env = SimpleNamespace(CLIENT=-1, pos=np.zeros((1, 3)))
-    score.reset(env, ep)
-    for z in (14.0, 34.0, 37.5, 30.0):
-        env.pos[0] = (0.0, 0.0, z)
+def test_the_peak_height_is_measured_above_the_ground_while_the_model_flies(world):
+    """Heights count from the terrain under the drone, past the panel over it, 30 m above the dock here; only the
+    highest is kept, and only while the model flies, never while the dock flies it home."""
+    env, ep, _ = world
+    for phase, x, height in (("flying", 0.0, 18.0), ("flying", _THIEF_XY[0], 21.5), ("returning", 0.0, 27.0),
+                             ("flying", 0.0, 20.0)):
+        ep.phase = phase
+        env.pos[0] = (x, 0.0, _GROUND_Z + height)
         score.update(env, ep)
-    assert ep.outcome.max_height_m == pytest.approx(23.5)
+    assert ep.outcome.max_height_m == pytest.approx(21.5)

@@ -18,7 +18,9 @@
 """Per-seed score (task 23): one score per patrol, from detection, coverage and flight.
 
 update() keeps the flight facts the score needs while the patrol runs; score() turns a finished patrol's metrics
-into the terms named in SCORE_TERMS. Every height is measured above the dock, the take-off point.
+into the terms named in SCORE_TERMS. The peak height is measured above the ground straight under the drone, the
+terrain past panels and roofs, while the model flies it; the dock's own take-off and return keep their DJI heights over
+the take-off point and do not count.
 
 seed = 0.70 detection + 0.20 coverage + 0.10 flight
   detection  valid reports / (threats + false alarms); on a seed with no threat, the share searched
@@ -60,9 +62,12 @@ def reset(env: Any, ep: SolarEpisode) -> None:
 
 
 def update(env: Any, ep: SolarEpisode) -> None:
-    """Keep the highest the drone has flown above its take-off point, and the closest it came to a threat."""
+    """Keep the highest the model has flown the drone above the ground under it, and the closest it came to a
+    threat."""
     pos = np.asarray(env.pos[0], dtype=float)
-    ep.outcome.max_height_m = max(ep.outcome.max_height_m, float(pos[2]) - float(ep.dock_position[2]))
+    if ep.phase == "flying":
+        height = float(pos[2]) - _ground(env, ep, float(pos[0]), float(pos[1]))
+        ep.outcome.max_height_m = max(ep.outcome.max_height_m, height)
     if ep.phase in _IN_DOCK:
         return
     for person in theft.people(ep):
