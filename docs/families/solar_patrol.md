@@ -258,7 +258,7 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 - **The dock** stands on a different open spot each seed, at least 10 m inside the fence and clear of panels and trees.
 - **Day or night**, half and half, with the sun or moon set by the seed.
 - **Wind** is none, light or strong, drawn per seed: by day about 5 %, 70 % and 25 %, by night about 10 %, 80 % and 10 %. Light wind tops out between 2.5 and 6 m/s, strong between 10 and 12 m/s, gusts included.
-- **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when they hear the drone overhead: work on, freeze, drop flat and lie still, or run. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
+- **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when the drone's camera shows them: work on, freeze, drop flat and lie still, or run. Nobody leaves the park before the camera has seen him. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
 - **Decoys** are in every seed: one to three dogs wandering inside the fence, a farm truck on the public road outside, and a bird circling high above. None of them is a threat.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
