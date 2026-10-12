@@ -35,8 +35,8 @@ The five reference models:
 and the shortcuts tried against the rules:
 
     repeat       perfect, then reports every thief again on every frame he shows in
-    high         perfect, flown 6 m higher, between 22 and 29 m above the dock
-    scan         climbs to 60 m over the dock, or the height limit, and zooms across the whole park before the search
+    high         perfect, flown 6 m higher, 25.5 m above the ground
+    scan         climbs to 60 m over the dock's ground, or the height limit, and zooms across the whole park first
     scan_low     the same scan from the highest height a report still counts from
     night_colour silent, searching dark nights in colour with night mode on instead of thermal
     zoom_all     perfect, spending all 80 zooms
@@ -92,13 +92,13 @@ NIGHT_MODE_AUTO = 1.0
 HOME_MARGIN_S = 35.0        # time kept for the climb, the flight home and the landing, on top of the distance
 HOME_SPEED_MPS = 4.0
 HOVER_HOME_LEFT_S = 60.0
-HIGH_OFFSET_M = 6.0         # perfect's heights, at most 19.5 m above the dock, raised into 22 to 29 m
-SCAN_HEIGHT_M = 60.0        # above the dock
+HIGH_OFFSET_M = 6.0         # perfect's heights, 19.5 m above the ground, raised to 25.5 m
+SCAN_HEIGHT_M = 60.0        # above the ground under the dock
 SCAN_GRID_M = 15.0          # ground between the points the scan zooms on, inside a 7x frame's footprint from there
 SCAN_ZOOM_RESERVE = 10      # zooms kept for the search after the scan
 SCAN_LIMIT_MARGIN_M = 0.5   # how far under a height limit the scan holds
 VISIT_GIVE_UP_S = 45.0      # a thief perfect cannot get onto a frame in this long is left to the search
-VISIT_STANDOFF_M = 10.0     # across the ground from the thief: the park's high ground stands up to 15 m over the dock
+VISIT_STANDOFF_M = 10.0     # across the ground from the thief
 VISIT_INSET_M = 8.0         # the watching spot stays this far inside the fence; the stop line can lie 5 m inside it
 AIM_ABOVE_GROUND_M = 0.9
 VISIT_SPARE_S = 30.0        # a visit starts only with this much more time than the flight home needs
@@ -302,7 +302,7 @@ class Perfect:
                 stand = np.asarray(nearest_points(self.watch_area, Point(stand))[0].coords[0], dtype=float)
             dock_z = float(ep.dock_position[2])
             ground = reference_pilot._ground_z(self.env.CLIENT, *stand, ep.terrain_uids, dock_z)
-            target_z = min(dock_z + PATROL_HEIGHT_M - reference_pilot.CEILING_MARGIN_M, ground + PATROL_HEIGHT_M)
+            target_z = min(ground + PATROL_HEIGHT_M, dock_z + HEIGHT_LIMIT_M) - reference_pilot.CEILING_MARGIN_M
             _steer(a, self.env, np.array([*stand, target_z + self.patrol.height_offset_m]))
             head = reference_pilot._ground_z(self.env.CLIENT, *thief, ep.terrain_uids, dock_z) + AIM_ABOVE_GROUND_M
             to_thief = thief - pos[:2]
@@ -413,7 +413,7 @@ class Repeat(Perfect):
 
 
 class High(Perfect):
-    """Perfect flown HIGH_OFFSET_M higher, between 22 and 29 m above the dock, for a wider view."""
+    """Perfect flown HIGH_OFFSET_M higher, 25.5 m above the ground, for a wider view."""
 
     def __init__(self, env: Any):
         """Perfect's route, raised."""
@@ -421,9 +421,9 @@ class High(Perfect):
 
 
 class Scan(Perfect):
-    """Climbs to scan_height_m over the dock, or as high as the dock's height limit lets it, faces the park and zooms
-    the 7x lens across all of it, reporting every thief a zoom frame shows, then comes down and flies perfect's
-    search."""
+    """Climbs to scan_height_m over the ground under the dock, or as high as the dock's height limit lets it, faces the
+    park and zooms the 7x lens across all of it, reporting every thief a zoom frame shows, then comes down and flies
+    perfect's search."""
 
     scan_height_m = SCAN_HEIGHT_M
 
@@ -440,6 +440,7 @@ class Scan(Perfect):
         self.targets = [np.array([x, y, reference_pilot._ground_z(env.CLIENT, x, y, self.ep.terrain_uids, ground)])
                         for x, y in points[inside]]
         self.centre = np.append(fence.mean(axis=0), ground)
+        self.base_z = reference_pilot._ground_z(env.CLIENT, *self.ep.dock_position[:2], self.ep.terrain_uids, ground)
         self.scanning = True
         self.scan_reports = 0
         self.scan_end_s: Optional[float] = None
@@ -460,8 +461,9 @@ class Scan(Perfect):
                     self.scan_reports += len(self.reported) - before
                     return a
         feed = sensor_noise.shown_view(self.ep, "feed")
-        height = float(self.env.pos[0][2] - self.ep.dock_position[2])
-        reachable = min(self.scan_height_m, HEIGHT_LIMIT_M - SCAN_LIMIT_MARGIN_M)
+        height = float(self.env.pos[0][2]) - self.base_z
+        reachable = min(self.scan_height_m, float(self.ep.dock_position[2]) + HEIGHT_LIMIT_M - self.base_z
+                        - SCAN_LIMIT_MARGIN_M)
         if feed is None or height < reachable - 1.0 or not self.buttons.ready("zoom", decision):
             return a
         while self.targets and self.ep.outcome.zooms_used < MAX_ZOOMS - SCAN_ZOOM_RESERVE:
@@ -482,7 +484,7 @@ class Scan(Perfect):
         """Climb straight up over the dock, turn to face the park's middle and tilt the camera onto it."""
         a = self._still()
         pos = np.asarray(self.env.pos[0], dtype=float)
-        rise = float(self.ep.dock_position[2]) + self.scan_height_m - pos[2]
+        rise = self.base_z + self.scan_height_m - pos[2]
         vz = float(np.clip(rise, -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
         a[ACTION_INDEX["move_up"]] = vz / (MAX_CLIMB_MPS if vz >= 0.0 else MAX_DESCENT_MPS)
         drift = self.ep.dock_position[:2] - pos[:2]
