@@ -450,7 +450,7 @@ def _run_multi_seed_rpc_sync(
 
             def _send_act(observation, timeout: float):
                 """Send act() now; its wall time is stamped when the reply lands, not when the loop reads it."""
-                clock = {"start": time.perf_counter(), "ms": 0.0}
+                clock = {"start": time.perf_counter(), "ms": 0.0, "timeout": timeout}
 
                 async def _reply():
                     """The reply within the timeout, its wall time stamped however it ends."""
@@ -509,6 +509,18 @@ def _run_multi_seed_rpc_sync(
                         ref_sec=FIRST_STEP_HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
                     ),
                 )
+
+            def _budget_left(step: int) -> float:
+                """Baseline-equivalent compute a decision after the first may still use: what its window has left."""
+                same_window = (step - 1) // window_acts == window_idx
+                return compute_budget_sec - (window_used_sec if same_window else 0.0)
+
+            def _first_ask_timeout(budget_sec: float, hard_cap_sec: float) -> float:
+                """Wall-clock wait for a decision's first ask: past its budget the answer is struck anyway, and waiting
+                longer would only bank thinking time the second ask can hand over at once."""
+                return min(hard_cap_sec, act_hard_cap_sec(
+                    speed_factor, rpc_overhead_sec, ref_sec=max(budget_sec, 0.0), margin_sec=HARD_CAP_MARGIN_SEC,
+                ))
 
             if use_ref:
                 act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
@@ -717,8 +729,14 @@ def _run_multi_seed_rpc_sync(
                             step_striked = False
                             if (step_idx - 1) // window_acts != window_idx:
                                 window_idx, window_used_sec = (step_idx - 1) // window_acts, 0.0
+                            budget = FIRST_STEP_BUDGET_REF_SEC if is_first_step else _budget_left(step_idx)
                             for act_attempt in (0, 1):
-                                reply, clock = sent or _send_act(observation, step_timeout)
+                                attempt_timeout = (
+                                    _first_ask_timeout(budget, step_timeout)
+                                    if use_ref and act_attempt == 0
+                                    else step_timeout
+                                )
+                                reply, clock = sent or _send_act(observation, attempt_timeout)
                                 sent = None
                                 try:
                                     action_response = await reply
@@ -730,11 +748,6 @@ def _run_multi_seed_rpc_sync(
                                         dtype=np.dtype(action_response.action.dtype),
                                     ).reshape(tuple(action_response.action.shape))
                                     if use_ref:
-                                        budget = (
-                                            FIRST_STEP_BUDGET_REF_SEC
-                                            if is_first_step
-                                            else compute_budget_sec - window_used_sec
-                                        )
                                         verdict = judge_act(
                                             act_ms / 1000.0,
                                             overhead_sec=rpc_overhead_sec,
@@ -778,6 +791,19 @@ def _run_multi_seed_rpc_sync(
                                     if not step_striked:
                                         step_striked = True
                                         strikes += 1
+                                    if use_ref and clock["timeout"] < step_timeout:
+                                        _trace(
+                                            f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
+                                            f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) stopped waiting "
+                                            f"attempt {act_attempt + 1}/2 "
+                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                        )
+                                        if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                            bt.logging.warning(
+                                                f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
+                                            )
+                                            break
+                                        continue
                                     if use_ref:
                                         hard_cap_hits += 1
                                     _trace(
@@ -854,7 +880,8 @@ def _run_multi_seed_rpc_sync(
                                 (obs, _r, terminated, truncated, info), early = await _step_ahead(
                                     env,
                                     act if n_drones > 1 else act[None, :],
-                                    act_hard_cap if use_ref else calibrated_timeout,
+                                    _first_ask_timeout(_budget_left(step_idx + 1), act_hard_cap)
+                                    if use_ref else calibrated_timeout,
                                 )
                             else:
                                 obs, _r, terminated, truncated, info = env.step(
