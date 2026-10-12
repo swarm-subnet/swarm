@@ -48,8 +48,9 @@ from .task import solar_patrol_task
 
 # Part of the kept verdicts' folder: a change to the checks is a new version. 3 drops the verdicts version 2 kept from
 # flights an incomplete install broke; 4 drops those flown while thieves still reacted to the pilot's sound; 5 drops
-# those flown with the camera leaning with the airframe and the Dock 1/2 return home.
-CHECK_VERSION = 5
+# those flown with the camera leaning with the airframe and the Dock 1/2 return home; 6 drops those flown in the full
+# 20 m wind down to the ground.
+CHECK_VERSION = 6
 CHECK_TRIES = 16                       # candidates tried per seed; at any real drop rate the last is never reached
 REPLACEMENT_TAG = "solar-seed-check"
 CACHE_ENV = "SWARM_SEED_CHECK_DIR"
