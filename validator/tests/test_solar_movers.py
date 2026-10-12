@@ -32,6 +32,7 @@ import numpy as np
 import pybullet as p
 import pytest
 
+from swarm.challenge_families.solar_patrol import theft_site
 from swarm.core.env_builder.sar_tagging import classify_body
 from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES
 from swarm.core.maps.solar import farmers
@@ -292,3 +293,41 @@ def test_the_wheels_ride_on_the_ground_and_the_front_ones_steer(world):
     assert np.percentile(gaps, 99) < 0.03 and gaps.max() < 0.08
     assert max(steered["pickup_wheel_front_left"]) > 25.0 and max(steered["pickup_wheel_rear_left"]) < 2.0
     assert under > 0
+
+
+def _truck_path():
+    """Ground points of the single truck's path, the road where the map ships no farmers' road."""
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+        return np.asarray(json.load(handle)["rows"], dtype=float)[:, :2]
+
+
+@needs_road
+def test_thieves_take_the_road_side_from_the_road_the_farmers_drive():
+    """Every fence opening within reach of a farmer's route is road side and never the woods' side, every road side
+    opening is within reach of the road the map ships, and part of that road side lies beyond reach of the single
+    truck's path."""
+    road = farmers.load_road(ROAD)
+    driven = np.vstack([farmers._path(road, arrive_by, turn, leave_by)[0] for arrive_by, turn, leave_by in _routes(road)])
+    shipped = np.vstack([road.lines[arm][:, :2] for arm in farmers.ARMS] + [turn.rows[:, :2] for turn in road.turns])
+    truck = _truck_path()
+    site = theft_site.Site(SEED, ASSET_DIR)
+    beyond_truck = 0
+    for opening in site.openings:
+        near = np.hypot(*(driven - opening.centre).T).min() < theft_site.ROAD_REACH_M
+        assert opening.road or not near, f"{opening.kind} {opening.index} by a farmer's route is not road side"
+        assert not opening.road or np.hypot(*(shipped - opening.centre).T).min() < theft_site.ROAD_REACH_M
+        assert not (opening.road and opening.forest)
+        beyond_truck += near and np.hypot(*(truck - opening.centre).T).min() >= theft_site.ROAD_REACH_M
+    assert beyond_truck > 0
+
+
+def test_a_map_without_the_farmers_road_keeps_the_truck_path_as_the_road(monkeypatch):
+    """Where the map ships no road file, the theft code reads the road from the single truck's path, as the movers
+    then drive it."""
+    monkeypatch.setitem(CONFIG, "road_file", "no_such_road.json")
+    theft_site._road.cache_clear()
+    try:
+        road = theft_site._road(ASSET_DIR)
+    finally:
+        theft_site._road.cache_clear()
+    np.testing.assert_array_equal(road, _truck_path())

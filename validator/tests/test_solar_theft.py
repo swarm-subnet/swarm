@@ -125,6 +125,24 @@ def test_the_same_seed_writes_the_same_theft():
 
 
 @pytest.mark.timeout(1200)
+def test_a_crew_cuts_in_on_the_side_its_way_names():
+    """A crew coming from the road always cuts a panel on the road side and one coming from the woods a panel against
+    the woods, the hole as wide as the rules allow and clear of the posts, on many draws of one park and in every
+    seed's story."""
+    site = _site(THEFT_SEEDS[0])
+    rng = np.random.default_rng(0)
+    for way in ("road", "forest"):
+        for _ in range(200):
+            opening, along, width = theft._way_in(rng, site, way)
+            assert getattr(opening, way), way
+            assert theft.HOLE_WIDTH_M[0] <= width <= theft.HOLE_WIDTH_M[1]
+            assert abs(along) + width / 2.0 + theft.POST_CLEAR_M <= opening.half_width + 1e-9
+    for seed in THEFT_SEEDS:
+        story = theft.write(seed, _site(seed))
+        if story.way in ("road", "forest"):
+            assert getattr(story.opening, story.way), (seed, story.way, story.opening.index)
+
+
 def test_every_crew_is_in_before_the_take_off_is_over_and_never_inside_a_table():
     """Played for a whole patrol with no drone, every man steps inside the fence by ENTRY_S, never stands inside a
     table, nobody leaves, since no camera ever saw him, no two men ever walk into each other, and the crews come in all

@@ -40,7 +40,7 @@ from shapely import contains_xy, prepare
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
-from swarm.core.maps.solar import builder
+from swarm.core.maps.solar import builder, farmers
 
 from .fixed_order import norm, rows_dot
 
@@ -352,11 +352,17 @@ def _distances(site: Site, cell: Tuple[int, int]) -> Tuple[np.ndarray, np.ndarra
 
 @lru_cache(maxsize=2)
 def _road(asset_dir: str) -> np.ndarray:
-    """Ground points along the public road outside the fence, from the path the farmer's truck drives on it."""
+    """Ground points along the public road outside the fence: on a map that ships the farmers' road, both its arms and
+    every place a farmer turns round on it, else the path of the single truck, as the movers then drive it."""
     manifest = builder.solar_manifest(asset_dir)
     for place in manifest["placements"]:
         if place.get("mover") == "pickup" and "path" in place:
             folder = os.path.join(asset_dir, manifest["items"][place["item"]]["folder"])
+            road = os.path.join(folder, builder.CONFIG["road_file"])
+            if os.path.exists(road):
+                public = farmers.load_road(road)
+                return np.vstack([public.lines[arm][:, :2] for arm in farmers.ARMS] +
+                                 [turn.rows[:, :2] for turn in public.turns])
             with open(os.path.join(folder, place["path"]), encoding="utf-8") as handle:
                 return np.asarray(json.load(handle)["rows"], dtype=float)[:, :2]
     return np.zeros((0, 2))
