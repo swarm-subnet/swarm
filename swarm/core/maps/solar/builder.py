@@ -233,6 +233,7 @@ class SolarMovers:
         self.rules = rules
         self.step = -1
         self.bodies = [int(body) for _, body in placed]
+        self.truck_parts: Dict[str, int] = {}
         self.trips: Optional[List[farmers.Trip]] = None
         self._seed = int(seed)
         self._driven: Any = ()
@@ -261,6 +262,24 @@ class SolarMovers:
         self._advance_pickup(self.step)
         self._advance_bird(self.step)
 
+    def truck_drive(self, step: int) -> Optional[Tuple[int, float]]:
+        """Which drive the truck is on at a step, counted from the patrol's first, and the seconds since it parked at
+        the end of it, zero while it drives; None while it waits to leave or no farmer is on the road.
+
+        A farmer comes onto the road already driving and keeps the engine running through every stop, so only the
+        truck that follows its table ever parks.
+        """
+        if not self._pickup:
+            return None
+        if self.trips is not None:
+            if not 0 <= step < len(self._trip_at) or self._trip_at[step] < 0:
+                return None
+            return int(self._trip_at[step]), 0.0
+        if step < self._pickup_delay_steps:
+            return None
+        parked = self._pickup_delay_steps + len(self._pickup_rows) - 1
+        return 0, max(step - parked, 0) / CONFIG["step_hz"]
+
     def _load(self, asset_dir: str, manifest: Dict[str, Any], placed: Sequence[Tuple[Dict[str, Any], int]]) -> None:
         """Read each mover's table and remember what every body needs to be placed from it."""
         for place, body in placed:
@@ -270,10 +289,15 @@ class SolarMovers:
                 self._pickup_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 self._pickup.append((int(body), list(place["local_position"]), list(place["local_quaternion"]),
                                      place.get("spin_axis"), "front" in place["item"]))
+                self.truck_parts[place["item"]] = int(body)
                 road = os.path.join(folder, CONFIG["road_file"])
                 if self.trips is None and os.path.exists(road):
                     self.trips = farmers.plan(self._seed, farmers.load_road(road))
                     self._timeline = farmers.timeline(self.trips, CONFIG["step_hz"])
+                    times = np.arange(len(self._timeline[0])) / CONFIG["step_hz"]
+                    self._trip_at = np.full(len(times), -1)
+                    for index, trip in enumerate(self.trips):
+                        self._trip_at[(times >= trip.start_s) & (times <= trip.end_s) & (self._trip_at < 0)] = index
             elif kind == "bird":
                 self._bird_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 poses = _mover_poses(os.path.join(folder, place["poses"]))

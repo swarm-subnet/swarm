@@ -27,12 +27,13 @@ from __future__ import annotations
 import json
 import math
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pybullet as p
 import pytest
 
-from swarm.challenge_families.solar_patrol import theft_site
+from swarm.challenge_families.solar_patrol import park, theft_site
 from swarm.core.env_builder.sar_tagging import classify_body
 from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES
 from swarm.core.maps.solar import farmers
@@ -110,6 +111,71 @@ def test_the_pickup_wheels_ride_and_spin(world):
     assert carried[0][0] == pytest.approx(carried[1][0], abs=1e-4)
     turned = 2.0 * math.acos(min(abs(p.getDifferenceQuaternion(carried[0][1], carried[1][1])[3]), 1.0))
     assert turned == pytest.approx(rows[105][7] - rows[100][7], abs=1e-4)
+
+
+@table_truck
+def test_the_truck_drives_from_the_moment_it_pulls_out_then_counts_its_time_parked(world):
+    """The truck following its table has not driven while it waits to leave, drives from that step to its last row,
+    and from then on counts the seconds it has stood parked at the dead end."""
+    _, _, movers = world
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+        rows = len(json.load(handle)["rows"])
+    delay = int(round(movers.rules["pickup_delay_s"] * CONFIG["step_hz"]))
+    assert movers.truck_drive(delay - 1) is None
+    assert movers.truck_drive(delay) == movers.truck_drive(delay + rows - 1) == (0, 0.0)
+    assert movers.truck_drive(delay + rows - 1 + 10 * CONFIG["step_hz"]) == (0, 10.0)
+
+
+@needs_road
+def test_each_farmer_drives_his_whole_trip_and_the_empty_road_holds_no_truck(world):
+    """Every step a farmer is on the road names that farmer's drive, counted in the order they come, with no time
+    parked, since each keeps his engine running; a step with the road empty names none."""
+    _, _, movers = world
+    hz = CONFIG["step_hz"]
+    for step in range(0, int(movers.trips[-1].end_s * hz) + 50, 7):
+        on = [i for i, trip in enumerate(movers.trips) if trip.start_s <= step / hz <= trip.end_s]
+        assert movers.truck_drive(step) == ((on[0], 0.0) if on else None)
+
+
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_THERMAL"), reason="engine without the thermal camera")
+def test_the_truck_reads_warm_in_a_night_thermal_frame_after_its_drive(world):
+    """From the patrol's 20 m straight over the truck once it has driven, a night thermal frame shows its bonnet near
+    white and far brighter than its cab roof, where the same frame with the truck left to the engine shows the two
+    alike."""
+    cli, built, movers = world
+    hz = CONFIG["step_hz"]
+    step = max(s for s in range(0, int(HORIZON_S * hz), 25) if movers.truck_drive(s) is not None)
+    movers.advance(step)
+    body, _ = _truck(built)
+    at, turn = p.getBasePositionAndOrientation(body, physicsClientId=cli)
+    view = p.computeViewMatrix([at[0], at[1], at[2] + 20.0], at, [0.0, 1.0, 0.0])
+    vertical = 2.0 * math.degrees(math.atan(math.tan(math.radians(22.5)) * 512.0 / math.hypot(640.0, 512.0)))
+    projection = p.computeProjectionMatrixFOV(vertical, 640.0 / 512.0, 0.1, 500.0)
+    to_image = np.reshape(projection, (4, 4)).T @ np.reshape(view, (4, 4)).T
+
+    def patch(grey, local):
+        """The median grey of the 5 x 5 pixels around a point given in the truck body's own frame."""
+        clip = to_image @ np.r_[p.multiplyTransforms(at, turn, local, [0.0, 0.0, 0.0, 1.0])[0], 1.0]
+        col, row = int((clip[0] / clip[3] + 1.0) * 320.0), int((1.0 - clip[1] / clip[3]) * 256.0)
+        return float(np.median(grey[row - 2:row + 3, col - 2:col + 3]))
+
+    def frame():
+        """A night White Hot frame at 15 C air under a -20 C clear sky: the grey over the engine and over the cab."""
+        _, _, image, _, _ = p.getCameraImage(
+            640, 512, view, projection, renderer=p.ER_TINY_RENDERER, lightDirection=[0.0, 0.0, -1.0],
+            flags=p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT, airTemperature=15.0,
+            skyTemperature=-20.0, thermalSeed=1, physicsClientId=cli)
+        grey = np.reshape(np.asarray(image, dtype=np.uint8), (512, 640, 4))[:, :, 0]
+        return patch(grey, [park.ENGINE_XY_M[0], park.ENGINE_XY_M[1], 0.8]), patch(grey, [-0.1, 0.0, 1.47])
+
+    cold_bonnet, cold_roof = frame()
+    ep = SimpleNamespace(park={"movers": movers, "air_c": 15.0, "truck": {"hot_c": [(45.0, 38.0)] * 4, "shown": None}})
+    item = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
+    ep.park["truck"]["heat_map"] = park._load_truck_heat(cli, os.path.join(ASSET_DIR, item["folder"], item["obj"]))
+    park.warm_truck(SimpleNamespace(CLIENT=cli), ep, step)
+    warm_bonnet, warm_roof = frame()
+    assert abs(cold_bonnet - cold_roof) < 40
+    assert warm_bonnet > 230 and warm_bonnet - warm_roof > 80
 
 
 def test_the_bird_wraps_its_loop(world):

@@ -281,6 +281,7 @@ def flat_ground(monkeypatch):
         """Movers for a park that has none."""
 
         body_uids = frozenset()
+        truck_parts = {}
 
         def advance(self, step=None):
             """Nothing moves."""
