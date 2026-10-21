@@ -1,0 +1,251 @@
+name: PR Review
+
+# Reviews every push to a team pull request, and answers a comment that tags @swarm-reviewer.
+# The review skill and the commands it may run come from the skill repository on every run.
+# The job posts the review with a vote taken from its verdict (approve or request changes); it never merges or pushes.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+# A new push replaces a review still running on the same PR; each comment gets its own group.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event.comment.id || 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # This repository's settings: the command that installs its packages for tests (empty when CI runs them).
+  REVIEW_SETUP: ""
+
+jobs:
+  review:
+    # Forks get no secrets, so only same-repository PRs; a comment must tag the reviewer.
+    if: >-
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && contains(github.event.comment.body, '@swarm-reviewer'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Token for this repository
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read
+          permission-statuses: read
+          permission-actions: read
+
+      - name: Decide whether to review
+        id: gate
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          # gh runs before the checkout, so it is told the repository instead of reading it from git.
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+        run: |
+          # Anyone can comment on a public PR, so a comment counts only from someone with write access.
+          if [ "$EVENT" = "issue_comment" ]; then
+            level=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$COMMENTER/permission" --jq .permission || echo none)
+            case "$level" in admin|maintain|write) ;; *) echo "Comment from outside the team, skipping"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+            if [ "$(gh pr view "$PR" --json isCrossRepository --jq .isCrossRepository)" != "false" ]; then
+              echo "PR from a fork or unreadable, skipping"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            kind="the comment at $COMMENT_URL that tags @swarm-reviewer: answer what it asks"
+          elif [ "$ACTION" = "synchronize" ]; then
+            kind="a new push to the pull request: run a follow-up review"
+          else
+            kind="the pull request being opened or marked ready: run a full review"
+          fi
+          sha=$(gh pr view "$PR" --json headRefOid --jq .headRefOid)
+          if [ -z "$sha" ]; then echo "Could not read the PR head" >&2; exit 1; fi
+          {
+            echo "run=true"
+            echo "pr=$PR"
+            echo "sha=$sha"
+            echo "kind=$kind"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Assign the author
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ steps.gate.outputs.pr }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/$PR/assignees" -f "assignees[]=$AUTHOR" --silent || echo "Could not assign $AUTHOR"
+
+      # An app cannot be requested as a reviewer, so a one-word review puts it in the Reviewers list.
+      - name: Show the review has started
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.gate.outputs.pr }}
+        run: |
+          # A follow-up needs no marker: the reviewer is already in the list from its earlier review.
+          reviewed=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --jq '[.[] | select(.user.login == "swarm-reviewer[bot]")] | length' || echo 0)
+          if [ "$reviewed" = "0" ]; then
+            gh pr review "$PR" --comment --body "Reviewing" || echo "Could not post the start marker"
+          fi
+
+      - name: Check out the pull request
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.gate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Token for the skill repository
+        if: steps.gate.outputs.run == 'true'
+        id: skill-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_KEY }}
+          repositories: ${{ vars.REVIEW_SKILL_REPO }}
+          permission-contents: read
+
+      - name: Fetch the review skill
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/${{ vars.REVIEW_SKILL_REPO }}
+          ref: ${{ vars.REVIEW_SKILL_REF }}
+          token: ${{ steps.skill-token.outputs.token }}
+          path: .review-skill
+          sparse-checkout: skills/pr-review
+          persist-credentials: false
+
+      - name: Install the skill and read its settings
+        if: steps.gate.outputs.run == 'true'
+        id: skill
+        run: |
+          skill="$HOME/.claude/skills/pr-review"
+          mkdir -p "$HOME/.claude/skills"
+          mv .review-skill/skills/pr-review "$skill"
+          rm -rf .review-skill
+          rules() { grep -vE '^[[:space:]]*(#|$)' "$1" | jq -R . | jq -s .; }
+          jq -n --argjson allow "$(rules "$skill/config/ci-allow.txt")" --argjson deny "$(rules "$skill/config/ci-deny.txt")" \
+            '{permissions: {defaultMode: "dontAsk", allow: $allow, deny: $deny}}' > "$RUNNER_TEMP/review-settings.json"
+          {
+            echo "dir=$skill"
+            echo "uv=$(sed -n 's/^uv==//p' "$skill/config/ci-tools.txt")"
+            echo "tools-hash=$(sha256sum "$skill/config/ci-tools.txt" | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up uv
+        if: steps.gate.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: ${{ steps.skill.outputs.uv }}
+
+      - name: Restore the review tools
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/share/uv/tools
+            ~/.local/share/claude
+            ~/.local/bin
+            ~/.cache/pre-commit
+          key: review-tools-${{ steps.skill.outputs.tools-hash }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: review-tools-${{ steps.skill.outputs.tools-hash }}-
+
+      # A cache hit leaves every tool at its pinned version, so each install below is skipped.
+      - name: Install the review tools
+        if: steps.gate.outputs.run == 'true'
+        id: tools
+        run: |
+          bin="$HOME/.local/bin"
+          mkdir -p "$bin"
+          grep -vE '^[[:space:]]*(#|$)|^uv==' "${{ steps.skill.outputs.dir }}/config/ci-tools.txt" \
+            | while IFS='=' read -r name _ version; do
+                case "$name" in
+                  claude-code)
+                    "$bin/claude" --version 2>/dev/null | grep -q "^$version " \
+                      || curl -fsSL https://claude.ai/install.sh | bash -s "$version" ;;
+                  age)
+                    "$bin/age" --version 2>/dev/null | grep -q "^v$version$" \
+                      || curl -fsSL "https://github.com/FiloSottile/age/releases/download/v$version/age-v$version-linux-amd64.tar.gz" \
+                        | tar -xz -C "$bin" --strip-components=1 age/age ;;
+                  *)
+                    uv tool list 2>/dev/null | grep -q "^$name v$version$" || uv tool install --quiet "$name==$version" ;;
+                esac
+              done
+          echo "claude=$bin/claude" >> "$GITHUB_OUTPUT"
+          if [ -n "$REVIEW_SETUP" ]; then eval "$REVIEW_SETUP"; fi
+
+      - name: Review
+        if: steps.gate.outputs.run == 'true'
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          settings: ${{ runner.temp }}/review-settings.json
+          path_to_claude_code_executable: ${{ steps.tools.outputs.claude }}
+          prompt: |
+            Review pull request #${{ steps.gate.outputs.pr }} in ${{ github.repository }} at commit ${{ steps.gate.outputs.sha }}.
+            Use the pr-review skill and follow its CI mode (references/ci-mode.md) from start to finish.
+            The skill is installed at ${{ steps.skill.outputs.dir }}; its scripts are in ${{ steps.skill.outputs.dir }}/scripts.
+            This run was started by ${{ steps.gate.outputs.kind }}.
+          claude_args: |
+            --model claude-opus-5-5
+            --max-turns 120
+            --add-dir ${{ steps.skill.outputs.dir }}
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","approve-with-nits","request-changes"]},"risk":{"type":"string","enum":["low","medium","high"]}},"required":["verdict","risk"]}'
+
+      # The vote comes from the verdict here, never from the reviewer, so PR text cannot talk it into one.
+      - name: Post the review with its vote
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request' && steps.review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.gate.outputs.pr }}
+          VERDICT: ${{ fromJSON(steps.review.outputs.structured_output).verdict }}
+        run: |
+          report=/tmp/pr-review/report.md
+          if [ ! -s "$report" ]; then echo "The reviewer wrote no report" >&2; exit 1; fi
+          case "$VERDICT" in
+            approve|approve-with-nits) vote=--approve ;;
+            request-changes) vote=--request-changes ;;
+            *) echo "Unknown verdict: $VERDICT" >&2; exit 1 ;;
+          esac
+          gh pr review "$PR" "$vote" --body-file "$report"
+
+      - name: Encrypt the transcript
+        id: encrypt
+        if: always() && steps.review.outputs.execution_file != '' && vars.REVIEW_LOG_KEY != ''
+        env:
+          TRANSCRIPT: ${{ steps.review.outputs.execution_file }}
+          LOG_KEY: ${{ vars.REVIEW_LOG_KEY }}
+        run: |
+          # Logs on a public repository are public, so the transcript is saved only encrypted.
+          age="$HOME/.local/bin/age"
+          [ -x "$age" ] || { sudo apt-get install -y -qq age > /dev/null; age=age; }
+          "$age" -r "$LOG_KEY" -o "$RUNNER_TEMP/transcript.json.age" "$TRANSCRIPT"
+
+      - name: Save the transcript
+        if: always() && steps.encrypt.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-transcript-${{ steps.gate.outputs.pr }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transcript.json.age
+          retention-days: 90
