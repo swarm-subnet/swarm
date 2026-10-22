@@ -127,7 +127,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/${{ vars.REVIEW_SKILL_REPO }}
-          ref: ${{ vars.REVIEW_SKILL_REF }}
+          # In the skill's own repository a PR is reviewed with the skill it proposes; elsewhere with the agreed version.
+          ref: ${{ github.event.repository.name == vars.REVIEW_SKILL_REPO && steps.gate.outputs.sha || vars.REVIEW_SKILL_REF }}
           token: ${{ steps.skill-token.outputs.token }}
           path: .review-skill
           sparse-checkout: skills/pr-review
@@ -212,17 +213,21 @@ jobs:
             --add-dir ${{ steps.skill.outputs.dir }}
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","approve-with-nits","request-changes"]},"risk":{"type":"string","enum":["low","medium","high"]}},"required":["verdict","risk"]}'
 
-      # The vote comes from the verdict here, never from the reviewer, so PR text cannot talk it into one.
+      # The vote is cast here from the verdict; the reviewer itself is not given the command to vote.
       - name: Post the review with its vote
         if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request' && steps.review.outputs.structured_output != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ steps.gate.outputs.pr }}
+          SHA: ${{ steps.gate.outputs.sha }}
           VERDICT: ${{ fromJSON(steps.review.outputs.structured_output).verdict }}
         run: |
           report=/tmp/pr-review/report.md
           if [ ! -s "$report" ]; then echo "The reviewer wrote no report" >&2; exit 1; fi
+          # A push during the review means this verdict is about old code; the run for the new commit votes instead.
+          head=$(gh pr view "$PR" --json headRefOid --jq .headRefOid)
+          if [ "$head" != "$SHA" ]; then echo "The PR moved on to ${head:0:7}; not voting on ${SHA:0:7}"; exit 0; fi
           case "$VERDICT" in
             approve|approve-with-nits) vote=--approve ;;
             request-changes) vote=--request-changes ;;
