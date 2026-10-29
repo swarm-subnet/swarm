@@ -17,10 +17,11 @@
 
 """Builder for the solar park map.
 
-The park is a real site, so its rows, fence, road and terrain never move. The map is a manifest of reusable pieces
+The park is a real site, so its layout, fence, road and terrain never move. The map is a manifest of reusable pieces
 with their placements; this builder loads what the manifest lists and lets the seed decide only what may vary:
-how much of the vegetation outside the fence stands, and how the movers cross it. Sun, sky and wind belong to the
-family's options.
+how much of the vegetation outside the fence stands, how the movers cross it, and a small shift of every row of
+tables, building and tree inside it, so no seed stands the park exactly where the survey does. Sun, sky and wind
+belong to the family's options.
 
 Adding a piece to the map is a new file and a manifest entry, never a change here. Changing how the seed varies
 the world is a number in CONFIG.
@@ -33,12 +34,15 @@ import math
 import os
 import random
 import tempfile
+from decimal import ROUND_HALF_EVEN, Decimal
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pybullet as p
 import swarm_worlds
+
+from swarm.core.maps.solar import farmers
 
 SOLAR_ASSET_DIR = os.path.join(swarm_worlds.maps_dir(), "custom", "solar")
 
@@ -56,16 +60,25 @@ CONFIG: Dict[str, Any] = {
     "forest_trunk_cell_m": 10.0,                 # trunks are grouped by this grid, so a body's trunks are neighbours
     "mover_seed_offset": 0x4D0FE,                # movers draw from their own stream, so a new density tier cannot move the truck
     "step_hz": 50,                               # the rate every mover table is written at, one row per simulator step
-    "pickup_delay_s": (0.0, 40.0),               # window the truck's start is drawn from, so it passes at a different moment
-    "pickup_parked_share": 0.2,                  # share of seeds that leave the truck parked at the first row all episode
+    "pickup_delay_s": (40.0, 365.0),             # the truck leaves after take-off and reaches the dead end before 390 s
+    "road_file": "public_road.json",             # the farmers' road; a map that ships it drives farmers instead of one truck
+    "off_road_position": (0.0, 0.0, -400.0),     # where the truck waits under the map while no farmer is on the road
     "bird_phase_share": (0.0, 1.0),              # where on its loop the bird starts, as a share of the whole loop
-    "goat_offset_m": 3.0,                        # how far within the meadow the herd's start is moved, each axis
-    "goat_heading_rad": (-0.7, 0.7),             # heading a seed draws per goat, about the direction the herd was posed in
-    "goat_turn_rad_frame": (0.010, 0.022),       # turn a seed draws per goat, radians per pose frame, the sign alternating
-    "goat_pace": (0.90, 1.10),                   # share of the walk's own speed a seed draws per goat
-    "goat_ray_steps": 1,                         # steps between two ground rays under a goat, measured at 4 us a ray
-    "goat_ray_window_m": (2.0, 5.0),             # how far above and below the last ground height that ray runs
-    "goat_mesh_steps": 1,                        # steps between two mesh rewrites of a goat, the one lever on their cost
+    "movers_left_out": ("goat",),                # the herd the manifest still lists; dogs replace it inside the fence
+    "shift_seed_offset": 0x5B1F7,                # the park's shifts draw from their own stream
+    "shifts": {                                  # per kind: move along and across its own axis (m), turn (deg), size, darkening
+        "table": {"move_m": (0.3, 0.6), "turn_deg": 1.0, "scale": 0.03, "tint": 0.08},
+        "building": {"move_m": (1.0, 1.0), "turn_deg": 5.0, "scale": 0.05, "tint": 0.10},
+        "tree": {"move_m": (1.5, 1.5), "turn_deg": 180.0, "scale": 0.15, "tint": 0.10},
+    },
+    "shift_units": {"building": (("white_unit_north", "white_unit_south"), ("service_object",), ("slab",)),
+                    "tree": (("olive_bark", "olive_leaves_0", "olive_leaves_1"),)},
+    "table_legs": ("pile",),                     # items standing under a table, which move with the table over them
+    "shift_scale_step": 0.01,                    # sizes snap to this, so a seed loads few distinct meshes
+    "shift_tries": 8,                            # draws a unit gets to land clear before it stays where the survey stands it
+    "fence_clear_m": 1.0,                        # a moved piece keeps this far inside the fence, or its surveyed distance if nearer
+    "piece_gap_m": 1.0,                          # moved units keep this far apart, or their surveyed gap if nearer
+    "shift_reach_m": 10.0,                       # units further apart than this in the survey can never meet
 }
 
 # tree_cache is left out on purpose: measured, a cached piece leaves the one static tree and every warm frame pays for it.
@@ -81,6 +94,22 @@ def solar_manifest(asset_dir: str = SOLAR_ASSET_DIR) -> Dict[str, Any]:
         raise FileNotFoundError(f"solar map manifest missing: {path}")
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
+
+
+@lru_cache(maxsize=2)
+def solar_fence(asset_dir: str = SOLAR_ASSET_DIR) -> np.ndarray:
+    """The fence posts where the survey stands them, world metres east and north, in the order the fence joins them."""
+    posts = np.array([place["position"][:2] for place in solar_manifest(asset_dir)["placements"]
+                      if place["item"] == "fence_post"], dtype=float).reshape(-1, 2)
+    order, left = [0] if len(posts) else [], set(range(1, len(posts)))
+    while left:
+        last = posts[order[-1]]
+        nearest = min(left, key=lambda k: (float(np.hypot(*(posts[k] - last))), k))
+        order.append(nearest)
+        left.remove(nearest)
+    ring = posts[order]
+    ring.flags.writeable = False
+    return ring
 
 
 @lru_cache(maxsize=8)
@@ -111,55 +140,21 @@ def solar_densities(seed: int) -> Dict[str, float]:
 
 
 def solar_mover_rules(seed: int) -> Dict[str, Any]:
-    """What this seed decides about the movers: when the truck leaves, where the bird is on its loop, how the herd walks.
-
-    The truck is parked for a share of seeds, which is the episode where the road stays empty; the rest of the draw
-    happens either way so that one branch cannot shift the stream the bird and the goats read.
-    """
+    """What this seed decides about the movers: when the truck leaves and where the bird is on its loop."""
     rng = random.Random((int(seed) ^ CONFIG["mover_seed_offset"]) & 0xFFFFFFFF)
-    parked = rng.random() < CONFIG["pickup_parked_share"]
     delay = rng.uniform(*CONFIG["pickup_delay_s"])
-    phase = rng.uniform(*CONFIG["bird_phase_share"])
-    offset = [rng.uniform(-CONFIG["goat_offset_m"], CONFIG["goat_offset_m"]) for _ in range(2)]
-    return {"pickup_parked": parked, "pickup_delay_s": 0.0 if parked else delay, "bird_phase_share": phase,
-            "goat_offset_m": offset, "goat_seed": rng.getrandbits(32)}
-
-
-def _goat_plans(stride: Dict[str, float], count: int, rules: Dict[str, Any]) -> List[Dict[str, float]]:
-    """Each goat's heading, turn, pace and stride phase for this seed, drawn the way the herd's own export draws them.
-
-    Speed and pose rate follow from the pace and the stride the walk was measured at, so the hooves cannot skate
-    however the seed moves the animal, and a rebuilt walk of another length or another rate carries itself here.
-    """
-    rng = random.Random(rules["goat_seed"])
-    plans = []
-    for index in range(count):
-        pace = rng.uniform(*CONFIG["goat_pace"])
-        turn = rng.uniform(*CONFIG["goat_turn_rad_frame"]) * (1.0 if index % 2 else -1.0)
-        plans.append({"heading_rad": rng.uniform(*CONFIG["goat_heading_rad"]), "turn_rad_s": turn * stride["fps"],
-                      "phase": float(rng.randrange(stride["frames"])), "pose_fps": stride["fps"] * pace,
-                      "speed_m_s": stride["stride_m"] * pace * stride["fps"] / stride["frames"]})
-    return plans
-
-
-def _stride_pose(poses: np.ndarray, phase: float) -> np.ndarray:
-    """The shape a stride holds at a continuous phase: the two frames it falls between, blended in proportion.
-
-    A 50 Hz step against a table authored in the twenties lands between frames far more often than on one, and
-    holding the nearer frame instead makes the animal repeat a shape and then jump, which reads as a limp.
-    """
-    frames = len(poses)
-    first = int(math.floor(phase))
-    share = phase - first
-    return poses[first % frames] * (1.0 - share) + poses[(first + 1) % frames] * share
+    return {"pickup_delay_s": delay, "bird_phase_share": rng.uniform(*CONFIG["bird_phase_share"])}
 
 
 def _stands(place: Dict[str, Any], densities: Dict[str, float]) -> bool:
-    """Whether a placement is part of this seed's world: fixed pieces always, vegetation by its rank.
+    """Whether a placement is part of this seed's world: fixed pieces always, vegetation by its rank, and no mover
+    the map leaves out.
 
     A merged piece carries the lowest rank of the vegetation inside it as band_low, so a whole band stands or
     falls together; a single plant carries its own rank.
     """
+    if place.get("mover") in CONFIG["movers_left_out"]:
+        return False
     tier = place.get("tier")
     if tier is None:
         return True
@@ -192,6 +187,11 @@ class _Shapes:
         flags = 0
         for flag in item.get("flags", []):
             flags |= getattr(p, _FLAG_BITS.get(flag, ""), 0)
+        # A panel's glass lies over its own white backsheet, which the renderer then draws without a ray behind it.
+        if item["group"] == "park" and "glass" in item.get("flags", []):
+            if not hasattr(p, "VISUAL_SHAPE_GLASS_BACKED"):
+                raise RuntimeError("the solar park needs a swarm-bullet3 wheel with VISUAL_SHAPE_GLASS_BACKED")
+            flags |= p.VISUAL_SHAPE_GLASS_BACKED
         return p.createVisualShape(p.GEOM_MESH, fileName=path, meshScale=list(scale), flags=flags,
                                    specularColor=[float(item.get("specular", 0.0))] * 3, physicsClientId=self.cli)
 
@@ -220,37 +220,36 @@ class _Shapes:
 class SolarMovers:
     """The map's movers, driven a step at a time from the tables the export wrote.
 
-    The pickup follows its table from the step this seed lets it leave and holds the last row at the dead end, the
-    bird loops its carrier path with the wingbeat composed on top, and each goat walks an arc of its own with its
-    foot dropped onto the terrain and its mesh rewritten from the stride at a phase that never stops moving.
-
-    The stride is written in the goat's own frame, so the vertices go in as they are and the body carries them:
-    turning them first would pay for the transform twice and put the animal in the wrong place.
+    On a map that ships the public road, the pickup carries this seed's farmers one after another along it, steering,
+    rolling and resting on the ground as the road file poses it, and waits under the map while the road is empty.
+    Otherwise it waits at the first row of its table until the step this seed lets it leave, follows the table and
+    holds the last row at the dead end. The bird loops its carrier path with the wingbeat composed on top.
     """
 
     def __init__(self, cli: int, asset_dir: str, manifest: Dict[str, Any], placed: Sequence[Tuple[Dict[str, Any], int]],
-                 rules: Dict[str, Any], terrain: Sequence[int]):
+                 rules: Dict[str, Any], seed: int = 0):
         """Sort the placed mover bodies by what drives them and load the tables each of them reads."""
         self.cli = cli
         self.rules = rules
         self.step = -1
-        self.terrain = frozenset(int(uid) for uid in terrain)
         self.bodies = [int(body) for _, body in placed]
-        self._pickup: List[Tuple[int, List[float], List[float], Optional[List[float]]]] = []
+        self.truck_parts: Dict[str, int] = {}
+        self.trips: Optional[List[farmers.Trip]] = None
+        self._seed = int(seed)
+        self._driven: Any = ()
+        self._pickup: List[Tuple[int, List[float], List[float], Optional[List[float]], bool]] = []
         self._bird: List[Tuple[int, int]] = []
-        self._goats: List[Dict[str, Any]] = []
         self._pickup_rows: List[List[float]] = []
         self._bird_rows: List[List[float]] = []
         self._bird_poses = np.zeros((0, 0, 7), dtype=np.float32)
-        self._goat_poses = np.zeros((0, 0, 3), dtype=np.float32)
-        self.stride: Dict[str, float] = {}
-        self.goat_stride = False
-        self.goat_mesh = False
+        self._pickup_index = -1
         self._load(asset_dir, manifest, placed)
+        # The bird's poses repeat with its loop, so each row's world poses are composed once and kept.
+        self._bird_world = np.zeros((len(self._bird_rows), len(self._bird), 7))
+        self._bird_known = np.zeros(len(self._bird_rows), dtype=bool)
         # A family may look at the world before it steps it, so everything stands at step zero from the start.
         self._advance_pickup(0)
         self._advance_bird(0)
-        self._advance_goats(0)
 
     @property
     def body_uids(self) -> frozenset:
@@ -262,7 +261,24 @@ class SolarMovers:
         self.step = int(step) if step is not None else self.step + 1
         self._advance_pickup(self.step)
         self._advance_bird(self.step)
-        self._advance_goats(self.step)
+
+    def truck_drive(self, step: int) -> Optional[Tuple[int, float]]:
+        """Which drive the truck is on at a step, counted from the patrol's first, and the seconds since it parked at
+        the end of it, zero while it drives; None while it waits to leave or no farmer is on the road.
+
+        A farmer comes onto the road already driving and keeps the engine running through every stop, so only the
+        truck that follows its table ever parks.
+        """
+        if not self._pickup:
+            return None
+        if self.trips is not None:
+            if not 0 <= step < len(self._trip_at) or self._trip_at[step] < 0:
+                return None
+            return int(self._trip_at[step]), 0.0
+        if step < self._pickup_delay_steps:
+            return None
+        parked = self._pickup_delay_steps + len(self._pickup_rows) - 1
+        return 0, max(step - parked, 0) / CONFIG["step_hz"]
 
     def _load(self, asset_dir: str, manifest: Dict[str, Any], placed: Sequence[Tuple[Dict[str, Any], int]]) -> None:
         """Read each mover's table and remember what every body needs to be placed from it."""
@@ -272,56 +288,39 @@ class SolarMovers:
             if kind == "pickup":
                 self._pickup_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 self._pickup.append((int(body), list(place["local_position"]), list(place["local_quaternion"]),
-                                     place.get("spin_axis")))
+                                     place.get("spin_axis"), "front" in place["item"]))
+                self.truck_parts[place["item"]] = int(body)
+                road = os.path.join(folder, CONFIG["road_file"])
+                if self.trips is None and os.path.exists(road):
+                    self.trips = farmers.plan(self._seed, farmers.load_road(road))
+                    self._timeline = farmers.timeline(self.trips, CONFIG["step_hz"])
+                    times = np.arange(len(self._timeline[0])) / CONFIG["step_hz"]
+                    self._trip_at = np.full(len(times), -1)
+                    for index, trip in enumerate(self.trips):
+                        self._trip_at[(times >= trip.start_s) & (times <= trip.end_s) & (self._trip_at < 0)] = index
             elif kind == "bird":
                 self._bird_rows = _mover_table(os.path.join(folder, place["path"]))["rows"]
                 poses = _mover_poses(os.path.join(folder, place["poses"]))
                 self._bird_poses = poses["poses"]
                 self._bird.append((int(body), [str(name) for name in poses["parts"]].index(place["item"])))
-            elif kind == "goat":
-                self._load_goat(folder, manifest, place, int(body))
         self._pickup_delay_steps = int(round(self.rules["pickup_delay_s"] * CONFIG["step_hz"]))
         self._bird_offset = int(self.rules["bird_phase_share"] * max(len(self._bird_rows), 1))
-        if self._goats:
-            self._probe_goat_mesh()
-
-    def _load_goat(self, folder: str, manifest: Dict[str, Any], place: Dict[str, Any], body: int) -> None:
-        """Give one goat this seed's path and stride, from the herd table and the offset the seed drew."""
-        herd = _mover_table(os.path.join(folder, place["path"]))
-        self.goat_stride = bool(herd.get("poses"))
-        if not self.goat_stride:
-            # No stride shipped with the herd, so the animals stand where the manifest put them rather than skate.
-            return
-        if not len(self._goat_poses):
-            table = _mover_poses(os.path.join(folder, herd["poses"]))
-            self._goat_poses = table["poses"]
-            # The pose table is the walk: its own length and rate answer for it, whatever the herd file remembers.
-            self.stride = {"frames": len(table["poses"]),
-                           "fps": float(table.get("hz", herd["cycle_fps"])),
-                           "stride_m": float(table.get("stride_m", herd["stride_m"]))}
-        plan = _goat_plans(self.stride, len(herd["goats"]), self.rules)[int(place["herd"])]
-        start = herd["goats"][int(place["herd"])]["start"]
-        self._goats.append(dict(plan, body=body, ground=float(start[2]),
-                                foot=float(manifest["items"][place["item"]]["bounds_min"][2]),
-                                start=[float(start[0]) + self.rules["goat_offset_m"][0],
-                                       float(start[1]) + self.rules["goat_offset_m"][1]]))
-
-    def _probe_goat_mesh(self) -> None:
-        """Try the stride against the engine once; one that will not rewrite a rigid mesh still gets the herd, stiffly."""
-        try:
-            p.resetMeshData(self._goats[0]["body"], self._goat_poses[0].tolist(), physicsClientId=self.cli)
-            self.goat_mesh = True
-        except p.error:
-            self.goat_mesh = False
 
     def _advance_pickup(self, step: int) -> None:
-        """Set the truck's body, glass and wheels to the row this step reads, holding the last row at the dead end."""
+        """Set the truck's body, glass and wheels where this step has them: with the farmers on a map that ships the
+        road, else at the row of its table this step reads, holding the last row at the dead end."""
         if not self._pickup:
             return
-        index = 0 if self.rules["pickup_parked"] else min(max(step - self._pickup_delay_steps, 0),
-                                                          len(self._pickup_rows) - 1)
+        if self.trips is not None:
+            self._drive(step)
+            return
+        index = min(max(step - self._pickup_delay_steps, 0), len(self._pickup_rows) - 1)
+        # The truck holds its row while it waits and once it parks, and writing a pose a body holds changes nothing.
+        if index == self._pickup_index:
+            return
+        self._pickup_index = index
         row = self._pickup_rows[index]
-        for body, local_position, local_quaternion, axis in self._pickup:
+        for body, local_position, local_quaternion, axis, _ in self._pickup:
             turn = local_quaternion
             if axis is not None:
                 half = float(row[7]) / 2.0
@@ -330,42 +329,68 @@ class SolarMovers:
             position, orientation = p.multiplyTransforms(row[:3], row[3:7], local_position, turn)
             p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
 
+    def _drive(self, step: int) -> None:
+        """Set the truck where this seed's farmer on the road has it at this step, its front wheels steered, every
+        wheel rolled by the distance driven and seated on the ground, or under the map while no farmer is on the road."""
+        on, poses, rolled, curves = self._timeline
+        state = None
+        if 0 <= step < len(on) and on[step]:
+            state = (poses[step, :7].tolist(), float(rolled[step]), math.atan(self.trips[0].wheelbase * float(curves[step])),
+                     float(poses[step, 7]))
+        # A truck standing still, or a road staying empty, holds a pose the bodies already have.
+        if state == self._driven:
+            return
+        self._driven = state
+        if state is None:
+            for body, *_ in self._pickup:
+                p.resetBasePositionAndOrientation(body, CONFIG["off_road_position"], [0.0, 0.0, 0.0, 1.0],
+                                                  physicsClientId=self.cli)
+            return
+        pose, rolled, steer, twist = state
+        half = rolled / 2.0
+        turn_to = [0.0, 0.0, math.sin(steer / 2.0), math.cos(steer / 2.0)]
+        for body, local_position, local_quaternion, axis, steers in self._pickup:
+            turn = local_quaternion
+            if axis is not None:
+                spin = [axis[0] * math.sin(half), axis[1] * math.sin(half), axis[2] * math.sin(half), math.cos(half)]
+                turn = p.multiplyTransforms([0.0, 0.0, 0.0], spin, [0.0, 0.0, 0.0], turn)[1]
+            if steers:
+                turn = p.multiplyTransforms([0.0, 0.0, 0.0], turn_to, [0.0, 0.0, 0.0], turn)[1]
+            seat = local_position
+            if axis is not None:
+                # The suspension lifts the front left and rear right wheels by the twist and drops the other two.
+                rise = twist if (local_position[0] > 0.0) == (local_position[1] > 0.0) else -twist
+                seat = [local_position[0], local_position[1], local_position[2] + rise]
+            position, orientation = p.multiplyTransforms(pose[:3], pose[3:], seat, turn)
+            p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
+
     def _advance_bird(self, step: int) -> None:
         """Set every bird part to the carrier row this step reads and the wingbeat pose that belongs to it."""
         if not self._bird:
             return
         index = (step + self._bird_offset) % len(self._bird_rows)
-        row = self._bird_rows[index]
-        for body, part in self._bird:
-            local = self._bird_poses[part, index]
-            position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
-            p.resetBasePositionAndOrientation(body, position, orientation, physicsClientId=self.cli)
+        if not self._bird_known[index]:
+            row = self._bird_rows[index]
+            for slot, (_, part) in enumerate(self._bird):
+                local = self._bird_poses[part, index]
+                position, orientation = p.multiplyTransforms(row[:3], row[3:7], local[:3].tolist(), local[3:7].tolist())
+                self._bird_world[index, slot] = [*position, *orientation]
+            self._bird_known[index] = True
+        for (body, _), pose in zip(self._bird, self._bird_world[index].tolist()):
+            p.resetBasePositionAndOrientation(body, pose[:3], pose[3:], physicsClientId=self.cli)
 
-    def _advance_goats(self, step: int) -> None:
-        """Carry each goat along its arc, drop its foot on the terrain and rewrite its mesh from the stride."""
-        seconds = step / float(CONFIG["step_hz"])
-        for goat in self._goats:
-            half = goat["turn_rad_s"] * seconds / 2.0
-            heading = goat["heading_rad"] + 2.0 * half
-            # The heading turns at a constant rate, so the track is the arc that rate draws, not a run of chords.
-            gone = goat["speed_m_s"] * seconds * (math.sin(half) / half if half else 1.0)
-            x = goat["start"][0] + gone * math.sin(goat["heading_rad"] + half)
-            y = goat["start"][1] - gone * math.cos(goat["heading_rad"] + half)
-            if step % CONFIG["goat_ray_steps"] == 0:
-                goat["ground"] = self._ground(x, y, goat["ground"])
-            # The goat is modelled facing its own -y, which a yaw of heading turns onto the track's direction.
-            p.resetBasePositionAndOrientation(goat["body"], [x, y, goat["ground"] - goat["foot"]],
-                                              [0.0, 0.0, math.sin(heading / 2.0), math.cos(heading / 2.0)],
-                                              physicsClientId=self.cli)
-            if self.goat_mesh and step % CONFIG["goat_mesh_steps"] == 0:
-                pose = _stride_pose(self._goat_poses, seconds * goat["pose_fps"] + goat["phase"])
-                p.resetMeshData(goat["body"], pose.tolist(), physicsClientId=self.cli)
 
-    def _ground(self, x: float, y: float, last: float) -> float:
-        """Terrain height under a point from a short downward ray, holding the last height where the ray misses it."""
-        up, down = CONFIG["goat_ray_window_m"]
-        hit = p.rayTest([x, y, last + up], [x, y, last - down], physicsClientId=self.cli)[0]
-        return float(hit[3][2]) if int(hit[0]) in self.terrain else last
+def _fixed_body(cli: int, collision: int, visual: int, position: Sequence[float], orientation: Sequence[float]) -> int:
+    """A piece nothing but a reset moves, as a plain static object instead of a jointed body the physics step solves.
+
+    It stays awake, so every step re-measures its bounds as it did for the jointed body and contacts are found in the
+    same order. A jointed body keeps its rotation as the quaternion of its matrix, so the piece is set to that
+    quaternion read back from its own matrix and stands to the last bit where a jointed body would.
+    """
+    body = p.createMultiBody(0, collision, visual, position, orientation, useMaximalCoordinates=True, physicsClientId=cli)
+    turned = p.getBasePositionAndOrientation(body, physicsClientId=cli)[1]
+    p.resetBasePositionAndOrientation(body, position, turned, physicsClientId=cli)
+    return body
 
 
 @lru_cache(maxsize=2)
@@ -373,6 +398,31 @@ def _forest_table(path: str) -> Dict[str, np.ndarray]:
     """Every tree of the forest: its mesh, position, yaw, scale, zone and rank, read once per process."""
     with np.load(path) as table:
         return {key: table[key] for key in table.files}
+
+
+@lru_cache(maxsize=2)
+def _forest_rows(path: str) -> np.ndarray:
+    """Every tree of the forest as a binary forest-file row (mesh, position, quaternion, scale), each number the one the
+    four-decimal text gives, worked out once per process: a seed takes the rows of the trees it stands."""
+    table = _forest_table(path)
+    half = table["yaw"] * 0.5
+    rows = np.column_stack([table["mesh"], table["position"], np.zeros(len(half)), np.zeros(len(half)), np.sin(half),
+                            np.cos(half), table["scale"]])
+    rows[:, 1:] = _four_decimals(rows[:, 1:])
+    return rows
+
+
+def _four_decimals(values: np.ndarray) -> np.ndarray:
+    """The numbers a reader parses back from values printed with four decimals, worked out without printing them.
+
+    Dividing the rounded integer by 10^4 rounds once, as parsing the decimal does. Only a product within reach of a
+    half way point can round the other way in binary, so those few are rounded in exact decimal arithmetic instead.
+    """
+    scaled = values * 1e4
+    whole = np.rint(scaled)
+    for i in np.flatnonzero(np.abs(np.abs(scaled - np.floor(scaled)) - 0.5) < 1e-3):
+        whole.flat[i] = float(Decimal(float(values.flat[i])).scaleb(4).to_integral_value(ROUND_HALF_EVEN))
+    return whole / 1e4
 
 
 def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
@@ -385,19 +435,21 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     instanced = getattr(p, "VISUAL_SHAPE_RENDER_INSTANCED", 0)
     if not instanced:
         raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with VISUAL_SHAPE_RENDER_INSTANCED")
+    if not getattr(p, "FOREST_FILE_BINARY", 0):
+        raise RuntimeError("the solar forest needs a swarm-bullet3 wheel with FOREST_FILE_BINARY")
     folder = os.path.join(asset_dir, forest["folder"])
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
     keep = table["rank"] < limits[table["tier"]]
-    position, yaw, scale = table["position"][keep], table["yaw"][keep], table["scale"][keep]
-    half = yaw * 0.5
-    rows = np.column_stack([table["mesh"][keep], position, np.zeros(len(yaw)), np.zeros(len(yaw)), np.sin(half),
-                            np.cos(half), scale])
+    position, scale = table["position"][keep], table["scale"][keep]
+    # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
+    rows = _forest_rows(os.path.join(folder, forest["table"]))[keep]
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
-        with os.fdopen(handle, "w") as out:
-            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]))
-            np.savetxt(out, rows, fmt="%d " + " ".join(["%.4f"] * 10))
+        with os.fdopen(handle, "wb") as out:
+            out.write("".join(f"mesh {os.path.join(folder, name)}\n" for name in forest["meshes"]).encode())
+            out.write(f"binary {len(rows)}\n".encode())
+            out.write(np.ascontiguousarray(rows, dtype="<f8").tobytes())
         flags = instanced | p.VISUAL_SHAPE_DOUBLE_SIDED_MULTIBODY | p.VISUAL_SHAPE_MATERIALS_FROM_MTL
         visual = p.createVisualShape(p.GEOM_MESH, fileName=path, flags=flags, specularColor=[0, 0, 0], physicsClientId=cli)
         bodies = [p.createMultiBody(0, -1, visual, physicsClientId=cli)]
@@ -422,52 +474,328 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
         shape = p.createCollisionShapeArray([p.GEOM_CYLINDER] * len(group), radii=[CONFIG["cylinder_radius_m"]] * len(group),
                                             lengths=tall[group].tolist(), collisionFramePositions=(centres[group] - base).tolist(),
                                             physicsClientId=cli)
-        bodies.append(p.createMultiBody(0, shape, sliver, base.tolist(), physicsClientId=cli))
+        bodies.append(_fixed_body(cli, shape, sliver, base.tolist(), [0.0, 0.0, 0.0, 1.0]))
     return bodies, int(keep.sum())
+
+
+def _outline(item: Dict[str, Any], place: Dict[str, Any]) -> Tuple[float, float, float]:
+    """The circle a placed piece covers seen from above: the centre of its bounds in the world and their larger half
+    width, which for a tree crown is its radius."""
+    low = np.array(item["bounds_min"][:2]) * place["scale"][:2]
+    high = np.array(item["bounds_max"][:2]) * place["scale"][:2]
+    x, y, z, w = place["quaternion"]
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    cx, cy = (low + high) / 2.0
+    c, s = math.cos(yaw), math.sin(yaw)
+    return (float(place["position"][0] + c * cx - s * cy), float(place["position"][1] + s * cx + c * cy),
+            float(np.max(high - low) / 2.0))
+
+
+def _footprint(item: Dict[str, Any], place: Dict[str, Any]) -> np.ndarray:
+    """The eight corners of a placed piece's bounds seen from above, east and north in the world, tilt included."""
+    low = np.array(item["bounds_min"]) * place["scale"]
+    high = np.array(item["bounds_max"]) * place["scale"]
+    corners = np.array([[x, y, z] for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])])
+    turn = np.array(p.getMatrixFromQuaternion(place["quaternion"])).reshape(3, 3)
+    # Turned with elementwise products in a fixed order, not by BLAS, whose rounding follows the CPU.
+    return np.stack([corners[:, 0] * turn[row, 0] + corners[:, 1] * turn[row, 1] + corners[:, 2] * turn[row, 2]
+                     + place["position"][row] for row in (0, 1)], 1)
+
+
+def _yaw(quaternion: Sequence[float]) -> float:
+    """The heading of a rotation about the vertical, radians."""
+    x, y, z, w = quaternion
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _turned(quaternion: Sequence[float], angle: float) -> List[float]:
+    """A rotation turned further about the world vertical by angle radians, which keeps any tilt it carries."""
+    x, y, z, w = quaternion
+    s, c = math.sin(angle / 2.0), math.cos(angle / 2.0)
+    return [c * x - s * y, c * y + s * x, c * z + s * w, c * w - s * z]
+
+
+def _corners(piece: Dict[str, Any], anchor: np.ndarray, yaw: float, scale: float) -> np.ndarray:
+    """The four corners of a piece's outline seen from above, standing on anchor at a heading and a size."""
+    (x0, y0), (x1, y1) = piece["low"] * scale, piece["high"] * scale
+    c, s = math.cos(yaw), math.sin(yaw)
+    local = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+    # Turned with elementwise products in a fixed order, not by BLAS, whose rounding follows the CPU.
+    return np.stack([local[:, 0] * c - local[:, 1] * s, local[:, 0] * s + local[:, 1] * c], 1) + anchor
+
+
+def _gap(a: np.ndarray, b: np.ndarray) -> float:
+    """The distance between two convex outlines, 0 when they overlap."""
+    for poly in (a, b):
+        edges = np.roll(poly, -1, axis=0) - poly
+        normals = np.column_stack([-edges[:, 1], edges[:, 0]])
+        pa, pb = (ring[:, 0:1] * normals[:, 0] + ring[:, 1:2] * normals[:, 1] for ring in (a, b))
+        if np.any((pa.max(axis=0) < pb.min(axis=0)) | (pb.max(axis=0) < pa.min(axis=0))):
+            return float(min(_point_gap(a, b), _point_gap(b, a)))
+    return 0.0
+
+
+def _point_gap(points: np.ndarray, ring: np.ndarray) -> float:
+    """The smallest distance from any of the points to the sides of a closed ring."""
+    side = np.roll(ring, -1, axis=0) - ring
+    rel = points[:, None, :] - ring[None, :, :]
+    t = np.clip((rel * side).sum(axis=2) / np.maximum((side * side).sum(axis=1), 1e-12), 0.0, 1.0)
+    return float(np.min(np.linalg.norm(rel - t[..., None] * side, axis=2)))
+
+
+def _inside(ring: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """Which points lie inside the closed ring, by counting the sides a ray from each crosses."""
+    a, b = ring, np.roll(ring, -1, axis=0)
+    x, y = points[:, :1], points[:, 1:]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        crosses = ((a[:, 1] > y) != (b[:, 1] > y)) & (x < a[:, 0] + (y - a[:, 1]) * (b[:, 0] - a[:, 0]) / (b[:, 1] - a[:, 1]))
+    return crosses.sum(axis=1) % 2 == 1
+
+
+def _fence_gap(outline: np.ndarray, ring: np.ndarray) -> float:
+    """How far an outline stands from the fence: positive inside it, negative outside it, 0 when the fence crosses it."""
+    inside = _inside(ring, outline)
+    if np.any(_inside(outline, ring)) or inside.any() != inside.all():
+        return 0.0
+    gap = min(_point_gap(outline, ring), _point_gap(ring, outline))
+    return gap if inside.all() else -gap
+
+
+def _piece(placements: Sequence[Dict[str, Any]], items: Dict[str, Any], indices: List[int]) -> Dict[str, Any]:
+    """The placements standing on one spot as one piece: where it stands, how it turns, the outline its parts cover
+    seen from above, and the height its size is taken from, the lowest point of its parts."""
+    first = placements[indices[0]]
+    low = np.min([np.array(items[placements[i]["item"]]["bounds_min"]) * placements[i]["scale"] for i in indices], axis=0)
+    high = np.max([np.array(items[placements[i]["item"]]["bounds_max"]) * placements[i]["scale"] for i in indices], axis=0)
+    return {"parts": list(indices), "legs": [], "anchor": np.array(first["position"][:2], dtype=float),
+            "yaw": _yaw(first["quaternion"]), "low": low[:2], "high": high[:2], "base": float(first["position"][2] + low[2])}
+
+
+@lru_cache(maxsize=2)
+def _shift_units(asset_dir: str) -> Tuple[Dict[str, Any], ...]:
+    """Every part of the park that shifts as one: each row of tables with the legs under it, each building and the tree.
+
+    A row moves as one straight string, as the tables in it stand end to end. Each unit keeps the outlines of its
+    pieces as surveyed, its distance to the fence, and its gap to every unit near enough to meet it.
+    """
+    manifest = solar_manifest(asset_dir)
+    placements, items = manifest["placements"], manifest["items"]
+    ring = solar_fence(asset_dir)
+    if len(ring) < 3:
+        # A map without a fence has no line to keep a shift inside, so nothing on it moves.
+        return ()
+    spots: Dict[Tuple[str, Any, Tuple[float, ...]], List[int]] = {}
+    for index, place in enumerate(placements):
+        if "row" in place:
+            spots.setdefault(("table", place["row"], tuple(place["position"])), []).append(index)
+    for kind, groups in CONFIG["shift_units"].items():
+        for number, names in enumerate(groups):
+            for index, place in enumerate(placements):
+                if place["item"] in names:
+                    spots.setdefault((kind, number, tuple(place["position"])), []).append(index)
+    grouped: Dict[Tuple[str, Any], List[Dict[str, Any]]] = {}
+    for (kind, number, _), indices in spots.items():
+        grouped.setdefault((kind, number), []).append(_piece(placements, items, indices))
+    tables = [piece for (kind, _), pieces in grouped.items() if kind == "table" for piece in pieces]
+    if tables:
+        # Every table's axes and outline at once: a leg in a table's own axes about its anchor, along then across.
+        anchors = np.array([table["anchor"] for table in tables])
+        cos = np.array([math.cos(table["yaw"]) for table in tables])
+        sin = np.array([math.sin(table["yaw"]) for table in tables])
+        mids = np.array([(table["low"] + table["high"]) / 2.0 for table in tables])
+        halves = np.array([(table["high"] - table["low"]) / 2.0 for table in tables])
+    for index, place in enumerate(placements):
+        if place["item"] in CONFIG["table_legs"] and tables:
+            # The table whose outline the leg stands deepest inside carries it.
+            rel = np.asarray(place["position"][:2], dtype=float) - anchors
+            local = np.stack([cos * rel[:, 0] + sin * rel[:, 1], -sin * rel[:, 0] + cos * rel[:, 1]], axis=1)
+            outside = np.max(np.abs(local - mids) - halves, axis=1)
+            tables[int(np.argmin(outside))]["legs"].append(index)
+    kinds = list(CONFIG["shifts"])
+    units = []
+    for (kind, _), pieces in sorted(grouped.items(), key=lambda entry: (kinds.index(entry[0][0]), entry[0][1])):
+        outlines = [_corners(piece, piece["anchor"], piece["yaw"], 1.0) for piece in pieces]
+        fence = [_fence_gap(outline, ring) for outline in outlines]
+        # A unit keeps the side of the fence it stands on; one the fence runs through is built into it and stays.
+        side = 1.0 if min(fence) > 0.0 else -1.0 if max(fence) < 0.0 else 0.0
+        units.append({"kind": kind, "pieces": pieces, "outlines": outlines,
+                      "pivot": np.mean([piece["anchor"] for piece in pieces], axis=0), "yaw": pieces[0]["yaw"],
+                      "fence_side": side, "fence_m": min(abs(gap) for gap in fence)})
+    # The box around a unit's outlines: two units whose boxes stand shift_reach_m apart or more cannot come nearer.
+    boxes = [(np.min([o.min(axis=0) for o in unit["outlines"]], axis=0), np.max([o.max(axis=0) for o in unit["outlines"]], axis=0))
+             for unit in units]
+    for number, unit in enumerate(units):
+        unit["gaps"] = {}
+        for other_number, other in enumerate(units):
+            if other is not unit:
+                apart = np.maximum(np.maximum(boxes[other_number][0] - boxes[number][1], boxes[number][0] - boxes[other_number][1]), 0.0)
+                if math.hypot(apart[0], apart[1]) >= CONFIG["shift_reach_m"] + 1e-6:
+                    continue
+                gap = min(_gap(a, b) for a in unit["outlines"] for b in other["outlines"])
+                if gap < CONFIG["shift_reach_m"]:
+                    unit["gaps"][other_number] = gap
+    return tuple(units)
+
+
+def _pose(unit: Dict[str, Any], draw: Tuple[float, float, float, float], piece: Dict[str, Any]) -> Tuple[np.ndarray, float]:
+    """Where a piece of the unit stands and its heading once the unit takes a draw: moved along and across the
+    unit's own axis, turned about its centre and sized about it."""
+    along, across, turn, scale = draw
+    c, s = math.cos(unit["yaw"]), math.sin(unit["yaw"])
+    move = np.array([c * along - s * across, s * along + c * across])
+    ct, st = math.cos(turn), math.sin(turn)
+    rel = (piece["anchor"] - unit["pivot"]) * scale
+    return unit["pivot"] + move + np.array([ct * rel[0] - st * rel[1], st * rel[0] + ct * rel[1]]), piece["yaw"] + turn
+
+
+def _clear(number: int, units: Sequence[Dict[str, Any]], outlines: List[np.ndarray],
+           standing: Dict[int, List[np.ndarray]], ring: np.ndarray) -> bool:
+    """Whether a unit's outlines keep to their side of the fence and clear of it and of every unit near it, each by
+    the configured distance or by what the survey leaves when that is less."""
+    unit = units[number]
+    fence_m = min(CONFIG["fence_clear_m"], unit["fence_m"])
+    if any(_fence_gap(outline, ring) * unit["fence_side"] < fence_m for outline in outlines):
+        return False
+    for other, surveyed in unit["gaps"].items():
+        need = min(CONFIG["piece_gap_m"], surveyed)
+        if any(_gap(a, b) < need for a in outlines for b in standing[other]):
+            return False
+    return True
+
+
+def solar_shifts(seed: int, asset_dir: str = SOLAR_ASSET_DIR) -> Dict[int, Dict[str, Any]]:
+    """Where this seed stands every placement that shifts: its moved position, rotation and size, its tint, and the
+    spots its piece reads the ground at where the survey stands it and where the seed does.
+
+    Each unit draws a move along and across its own axis, a turn about its centre and a size, and keeps the first
+    draw that leaves it inside the fence and clear of every other unit as it stands so far; a unit no draw clears
+    stays where the survey stands it, which every earlier unit was already kept clear of. Heights are the survey's,
+    sized about the piece's lowest point; the builder drops each piece by the ground it moved over. Each piece
+    draws its own tint, a little darker than the survey's in each colour, as a brighter one would overflow the
+    renderer.
+    """
+    manifest = solar_manifest(asset_dir)
+    placements = manifest["placements"]
+    units = _shift_units(asset_dir)
+    ring = solar_fence(asset_dir)
+    rng = random.Random((int(seed) ^ CONFIG["shift_seed_offset"]) & 0xFFFFFFFF)
+    step = CONFIG["shift_scale_step"]
+    standing = {number: list(unit["outlines"]) for number, unit in enumerate(units)}
+    shifts: Dict[int, Dict[str, Any]] = {}
+    for number, unit in enumerate(units):
+        spec = CONFIG["shifts"][unit["kind"]]
+        chosen = (0.0, 0.0, 0.0, 1.0)
+        for _ in range(CONFIG["shift_tries"] if unit["fence_side"] else 0):
+            draw = (rng.uniform(-spec["move_m"][0], spec["move_m"][0]), rng.uniform(-spec["move_m"][1], spec["move_m"][1]),
+                    math.radians(rng.uniform(-spec["turn_deg"], spec["turn_deg"])),
+                    1.0 + step * round(rng.uniform(-spec["scale"], spec["scale"]) / step))
+            poses = [_pose(unit, draw, piece) for piece in unit["pieces"]]
+            outlines = [_corners(piece, anchor, yaw, draw[3]) for piece, (anchor, yaw) in zip(unit["pieces"], poses)]
+            if _clear(number, units, outlines, standing, ring):
+                chosen, standing[number] = draw, outlines
+                break
+        turn, scale = chosen[2], chosen[3]
+        ct, st = math.cos(turn), math.sin(turn)
+        for piece in unit["pieces"]:
+            anchor, _ = _pose(unit, chosen, piece)
+            tint = [round(1.0 - rng.uniform(0.0, spec["tint"]), 4) for _ in range(3)]
+            for index in piece["parts"] + piece["legs"]:
+                place = placements[index]
+                rel = np.array(place["position"][:2]) - piece["anchor"]
+                x, y = anchor + scale * np.array([ct * rel[0] - st * rel[1], st * rel[0] + ct * rel[1]])
+                z = piece["base"] + scale * (place["position"][2] - piece["base"])
+                size = place["scale"] if index in piece["legs"] else [scale * v for v in place["scale"]]
+                shifts[index] = {"position": [round(float(x), 4), round(float(y), 4), round(float(z), 4)],
+                                 "quaternion": _turned(place["quaternion"], turn), "scale": size, "tint": tint,
+                                 "ground": (tuple(map(float, piece["anchor"])), tuple(map(float, anchor)))}
+    return shifts
+
+
+def _ground_rise(cli: int, terrain: frozenset, spots: Sequence[Tuple[np.ndarray, np.ndarray]]) -> List[float]:
+    """How much higher the terrain lies under each moved spot than under the same piece where the survey stands it;
+    0 where either ray meets anything but the terrain."""
+    if not terrain or not spots:
+        return [0.0] * len(spots)
+    points = [xy for pair in spots for xy in pair]
+    hits = p.rayTestBatch([[float(x), float(y), 1000.0] for x, y in points],
+                          [[float(x), float(y), -1000.0] for x, y in points], numThreads=0, physicsClientId=cli)
+    rise = []
+    for before, after in zip(hits[0::2], hits[1::2]):
+        on_terrain = int(before[0]) in terrain and int(after[0]) in terrain
+        rise.append(float(after[3][2]) - float(before[3][2]) if on_terrain else 0.0)
+    return rise
 
 
 def build_solar_map(seed: int = 0, cli: int = 0, asset_dir: Optional[str] = None,
                     groups: Optional[Tuple[str, ...]] = None) -> Dict[str, Any]:
     """Build the solar park inside an existing PyBullet world.
 
-    Returns the body ids per group, the placement and body of every mover for the runtime to drive, the densities
-    the seed drew, and the counts of what was placed. Naming groups builds only those, which is how a check loads
-    the terrain on its own.
+    Returns the body ids per group, the placement and body of every mover for the runtime to drive, the outline of
+    every standing park piece the simulator lets a drone pass through (a tree's crown), the glass of the panel tables,
+    the footprint of every piece of every panel table where the seed stands it, the densities the seed drew, and the
+    counts of what was placed. Naming groups builds only those, which is how a check loads the terrain on its own.
+
+    The pieces this seed shifts stand last, once the terrain is in, so each is dropped by the ground it moved over.
     """
     asset_dir = asset_dir or SOLAR_ASSET_DIR
     manifest = solar_manifest(asset_dir)
     shapes = _Shapes(cli, asset_dir, manifest["items"])
     densities = solar_densities(seed)
+    shifts = solar_shifts(seed, asset_dir)
     bodies: Dict[str, List[int]] = {}
     movers: List[Tuple[Dict[str, Any], int]] = []
+    passable: List[Tuple[float, float, float]] = []
+    glass: List[int] = []
+    tables: List[np.ndarray] = []
     triangles = 0
-    for place in manifest["placements"]:
+
+    def stand(place: Dict[str, Any], item: Dict[str, Any], tint: Sequence[float]) -> None:
+        """Create one placed piece in the world and file its body where the caller will look for it."""
+        nonlocal triangles
+        visual, collision = shapes.get(place["item"], place["scale"])
+        body = _fixed_body(cli, collision, visual, place["position"], place["quaternion"])
+        p.changeVisualShape(body, -1, rgbaColor=[*tint, 1], specularColor=[float(item.get("specular", 0.0))] * 3,
+                            physicsClientId=cli)
+        bodies.setdefault(item["group"], []).append(body)
+        if "mover" in place:
+            movers.append((place, body))
+        if item["group"] == "park" and item.get("collision", "none") == "none":
+            passable.append(_outline(item, place))
+        if item["group"] == "park" and "glass" in item.get("flags", ()):
+            glass.append(body)
+        if "row" in place:
+            tables.append(_footprint(item, place))
+        triangles += item["triangles"]
+
+    shifted = []
+    for index, place in enumerate(manifest["placements"]):
         item = manifest["items"][place["item"]]
         if groups is not None and item["group"] not in groups:
             continue
         if not _stands(place, densities):
             continue
-        visual, collision = shapes.get(place["item"], place["scale"])
-        body = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
-                                 basePosition=place["position"], baseOrientation=place["quaternion"],
-                                 physicsClientId=cli)
-        p.changeVisualShape(body, -1, rgbaColor=[1, 1, 1, 1], specularColor=[float(item.get("specular", 0.0))] * 3,
-                            physicsClientId=cli)
-        bodies.setdefault(item["group"], []).append(body)
-        if "mover" in place:
-            movers.append((place, body))
-        triangles += item["triangles"]
+        if index in shifts:
+            shifted.append((place, item, shifts[index]))
+            continue
+        stand(place, item, (1.0, 1.0, 1.0))
+    spots = list(dict.fromkeys(shift["ground"] for _, _, shift in shifted))
+    rise = dict(zip(spots, _ground_rise(cli, frozenset(bodies.get("terrain", ())), spots)))
+    for place, item, shift in shifted:
+        x, y, z = shift["position"]
+        moved = dict(place, position=[x, y, z + rise[shift["ground"]]], quaternion=shift["quaternion"],
+                     scale=shift["scale"])
+        stand(moved, item, shift["tint"])
     trees = 0
     forest = manifest.get("forest")
     if forest and (groups is None or "plants" in groups):
         standing, trees = _stand_forest(cli, asset_dir, forest, densities)
         bodies.setdefault("plants", []).extend(standing)
-    return {"bodies": bodies, "movers": movers, "densities": densities, "triangles": triangles, "trees": trees,
-            "asset_dir": asset_dir, "body_count": sum(len(ids) for ids in bodies.values())}
+    return {"bodies": bodies, "movers": movers, "passable": passable, "glass": glass, "tables": tables,
+            "densities": densities, "triangles": triangles, "trees": trees, "asset_dir": asset_dir,
+            "body_count": sum(len(ids) for ids in bodies.values())}
 
 
 def build_solar_movers(world: Dict[str, Any], seed: int = 0, cli: int = 0) -> SolarMovers:
     """The runtime that drives the movers build_solar_map placed, with the rules this seed drew for them."""
     asset_dir = world["asset_dir"]
-    return SolarMovers(cli, asset_dir, solar_manifest(asset_dir), world["movers"], solar_mover_rules(seed),
-                       world["bodies"].get("terrain", ()))
+    return SolarMovers(cli, asset_dir, solar_manifest(asset_dir), world["movers"], solar_mover_rules(seed), seed=seed)

@@ -119,7 +119,7 @@ async def test_run_task_screening_happy_path_submits_score(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 100,
+            "benchmark_version": "5.1.6", "task_id": 100,
             "uid": 42,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -162,7 +162,7 @@ async def test_run_task_screening_early_fail_marks_flag(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 101,
+            "benchmark_version": "5.1.6", "task_id": 101,
             "uid": 42,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -202,7 +202,7 @@ async def test_run_task_aborts_when_cancel_flag_signal(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 102,
+            "benchmark_version": "5.1.6", "task_id": 102,
             "uid": 42,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -244,7 +244,7 @@ async def test_run_task_cancelled_during_the_download_never_starts_the_phase(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 103,
+            "benchmark_version": "5.1.6", "task_id": 103,
             "uid": 42,
             "phase": "BENCHMARK",
             "seeds_from": 200,
@@ -281,7 +281,7 @@ async def test_run_task_benchmark_happy_path(monkeypatch, fake_model_path):
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 200,
+            "benchmark_version": "5.1.6", "task_id": 200,
             "uid": 42,
             "phase": "BENCHMARK",
             "seeds_from": 200,
@@ -333,7 +333,7 @@ async def test_run_task_reeval_evaluates_full_1000_seeds(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 300,
+            "benchmark_version": "5.1.6", "task_id": 300,
             "uid": 42,
             "phase": "REEVAL",
             "seeds_from": 0,
@@ -361,7 +361,7 @@ async def test_run_task_drops_when_model_fetch_fails(monkeypatch):
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 1,
+            "benchmark_version": "5.1.6", "task_id": 1,
             "uid": 99,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -390,7 +390,7 @@ async def test_run_task_drops_on_hash_mismatch(monkeypatch, fake_model_path):
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 1,
+            "benchmark_version": "5.1.6", "task_id": 1,
             "uid": 42,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -428,7 +428,7 @@ async def test_run_task_logs_seed_gap_response_without_raising(
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 5,
+            "benchmark_version": "5.1.6", "task_id": 5,
             "uid": 42,
             "phase": "SCREENING",
             "seeds_from": 0,
@@ -474,7 +474,7 @@ async def _feeder_outcomes(monkeypatch, fake_model_path, backend, calls: int) ->
     await run_task_module.run_task(
         _validator(backend_api=backend),
         {
-            "task_id": 9, "uid": 42, "phase": "BENCHMARK", "flow": "seed",
+            "benchmark_version": "5.1.6", "task_id": 9, "uid": 42, "phase": "BENCHMARK", "flow": "seed",
             "model_hash": ("abc" * 22)[:64],
             "github_url": "https://github.com/x/y", "epoch_number": 5,
         },
@@ -566,7 +566,7 @@ async def test_run_task_survives_a_result_that_never_lands(monkeypatch, fake_mod
     await run_task_module.run_task(
         _validator(backend_api=_FailingBackend()),
         {
-            "task_id": 5, "uid": 42, "phase": "SCREENING",
+            "benchmark_version": "5.1.6", "task_id": 5, "uid": 42, "phase": "SCREENING",
             "seeds_from": 0, "seeds_to": 200,
             "model_hash": ("abc" * 22)[:64],
             "github_url": "https://github.com/x/y", "epoch_number": 5,
@@ -574,3 +574,11 @@ async def test_run_task_survives_a_result_that_never_lands(monkeypatch, fake_mod
         cancel_flag=asyncio.Event(),
         wake_flag=asyncio.Event(),
     )
+
+
+@pytest.mark.asyncio
+async def test_seed_feeder_refuses_a_claim_for_another_version(monkeypatch, fake_model_path):
+    """A claim that crosses a family cutover cannot dispatch the granted seed indexes."""
+    backend = _ClaimBackend([{'granted': [3], 'pending': 5, 'benchmark_version': '6.0.0'}])
+    outcomes = await _feeder_outcomes(monkeypatch, fake_model_path, backend, calls=1)
+    assert outcomes == [([], True)]

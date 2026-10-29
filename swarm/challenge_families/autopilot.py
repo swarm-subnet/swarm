@@ -15,7 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Autopilot family: fly from the start pad to the goal platform, and the score that weighs arrival time against clearance."""
+"""COMPLETED, NOT IN USE: Autopilot (cf_autopilot) is completed; Swarm Sentinel took its place.
+
+No validator serves it, nobody can submit to it and it pays nothing. The code stays only so its published
+champions and past benchmarks can still be re-run: do not build new work on it.
+The live families are cf_solar_patrol, cf_swarm_sar and cf_search_and_rescue.
+Guide: docs/families/completed/autopilot.md.
+
+Autopilot family: fly from the start pad to the goal platform, and the score that weighs arrival time against clearance."""
 
 from __future__ import annotations
 

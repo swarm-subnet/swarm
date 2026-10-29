@@ -82,8 +82,8 @@ def _fresh_world(spawn):
 def test_loaded_tree_matches_built_tree(cache_dir, spawn):
     """The first spawn writes one tree file, the second loads it, and both see identical hits."""
     built = _fresh_world(spawn)
-    files = sorted(cache_dir.iterdir())
-    assert len(files) == 1 and files[0].suffix == ".bvh"
+    files = sorted(path for path in cache_dir.iterdir() if path.suffix == ".bvh")
+    assert len(files) == 1
     stamp = (files[0].stat().st_size, files[0].stat().st_mtime)
     loaded = _fresh_world(spawn)
     assert loaded == built

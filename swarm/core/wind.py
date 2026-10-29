@@ -79,6 +79,7 @@ class SeededWind:
         self._gain = sigma * np.sqrt(2.0 * self._dt / tau)
         self._turb = np.zeros(3)
         self._rng = rng
+        self.current = np.zeros(3)
 
     def velocity(self, t: float) -> np.ndarray:
         """Wind vector (m/s, world frame) at time t; advances the turbulence by one step."""
@@ -90,4 +91,5 @@ class SeededWind:
         speed = math.sqrt(float(wind[0]) ** 2 + float(wind[1]) ** 2 + float(wind[2]) ** 2)
         if speed > self.max_mps:
             wind = wind * (self.max_mps / speed)
+        self.current = wind
         return wind

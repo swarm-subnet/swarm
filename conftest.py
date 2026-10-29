@@ -140,6 +140,9 @@ def wheel_source_ignore():
         for name in names:
             if (Path(directory) / name / "pyvenv.cfg").is_file():
                 ignored.add(name)
+        # The gitignored /state/ and /swarm/state/ caches change while other tests run.
+        if "state" in names and ("pyproject.toml" in names or Path(directory).name == "swarm"):
+            ignored.add("state")
         return ignored
 
     return ignore

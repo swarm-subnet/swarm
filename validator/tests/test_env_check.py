@@ -18,13 +18,19 @@
 """The startup check that keeps a validator on the versions it pins."""
 from __future__ import annotations
 
+import json
+import sys
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from swarm.validator import env_check
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+WORLDS = "git+https://github.com/swarm-subnet/swarm-worlds.git"
+WORLDS_PIN = f"swarm-worlds @ {WORLDS}@v1.0.0"
 
 
 def _requirements(tmp_path: Path, body: str) -> Path:
@@ -100,7 +106,7 @@ def test_a_drifted_environment_installs_the_pin_and_restarts(tmp_path: Path, mon
     installed: list = []
     restarted: list = []
 
-    monkeypatch.setattr(env_check, "_install", lambda pins: installed.append(pins) or True)
+    monkeypatch.setattr(env_check, "_install", lambda pins, requirements: installed.append(pins) or True)
     monkeypatch.setattr(env_check.os, "execv", lambda exe, argv: restarted.append(argv))
     monkeypatch.delenv(env_check.REPAIRED_MARKER, raising=False)
 
@@ -127,10 +133,24 @@ def test_a_second_pass_does_not_restart_again(tmp_path: Path, monkeypatch) -> No
 def test_a_failed_install_does_not_restart(tmp_path: Path, monkeypatch) -> None:
     """Proves a validator whose repair failed keeps running rather than looping on exec."""
     path = _requirements(tmp_path, "pytest==0.0.1\n")
-    monkeypatch.setattr(env_check, "_install", lambda pins: False)
+    monkeypatch.setattr(env_check, "_install", lambda pins, requirements: False)
     monkeypatch.setattr(env_check.os, "execv", lambda *a: pytest.fail("must not restart"))
     monkeypatch.delenv(env_check.REPAIRED_MARKER, raising=False)
     env_check.ensure_environment(path)
+
+
+def test_a_stalled_install_ends_as_a_failed_repair(tmp_path: Path, monkeypatch) -> None:
+    """Proves a pip that never answers is cut off at the time limit and reported, so the start never hangs."""
+    limits: list = []
+
+    def _stalls(*args, **kwargs):
+        """Stand in for a pip install that hangs until its timeout fires."""
+        limits.append(kwargs.get("timeout"))
+        raise env_check.subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+    monkeypatch.setattr(env_check.subprocess, "run", _stalls)
+    assert env_check._install([("pytest", "0.0.1", "8.0.0")], _requirements(tmp_path, "pytest==0.0.1\n")) is False
+    assert limits == [env_check.REPAIR_TIMEOUT_S]
 
 
 def test_the_shipped_requirements_pin_numpy() -> None:
@@ -141,3 +161,95 @@ def test_the_shipped_requirements_pin_numpy() -> None:
     """
     pins = env_check.required_versions(REPO_ROOT / "requirements.txt")
     assert "numpy" in pins, "numpy must be pinned exactly, not given as a range"
+
+
+def _installed_as(monkeypatch, version: str = "", direct_url=None) -> None:
+    """Stand swarm-worlds in as installed at that version with that record of where it came from; no version means
+    it is not installed at all."""
+    def distribution(name):
+        """The stand-in install, or none."""
+        if not version:
+            raise PackageNotFoundError(name)
+        record = None if direct_url is None else json.dumps(direct_url)
+        return SimpleNamespace(version=version, read_text=lambda file: record if file == "direct_url.json" else None)
+
+    monkeypatch.setattr(env_check, "distribution", distribution)
+
+
+def test_a_git_tag_pin_is_read_with_its_tag(tmp_path: Path) -> None:
+    """Proves a package pinned to a git tag is read with the tag and the line pip installs it from, and that a git
+    requirement without a tag is not taken for a pin."""
+    path = _requirements(tmp_path, "\n".join([
+        "numpy==2.4.6",
+        f"{WORLDS_PIN}  # assets",
+        "loose @ git+https://example.invalid/loose.git",
+        "",
+    ]))
+    assert env_check.required_tags(path) == {"swarm-worlds": (WORLDS_PIN, "v1.0.0")}
+    assert env_check.required_versions(path) == {"numpy": "2.4.6"}
+
+
+def test_the_shipped_requirements_pin_swarm_worlds_to_a_tag() -> None:
+    """Proves the check covers the swarm-worlds the validator actually ships with."""
+    _requirement, tag = env_check.required_tags(REPO_ROOT / "requirements.txt")["swarm-worlds"]
+    assert tag.startswith("v")
+
+
+@pytest.mark.parametrize(("version", "direct_url", "found"), [
+    ("1.0.0", {"url": WORLDS[4:], "vcs_info": {"vcs": "git", "requested_revision": "v1.0.0", "commit_id": "4084a9f"}},
+     []),
+    ("1.0.0", None, []),
+    ("1.1.0", {"url": WORLDS[4:], "vcs_info": {"vcs": "git", "requested_revision": "v1.1.0", "commit_id": "51f7890"}},
+     [("swarm-worlds", "v1.0.0", "v1.1.0")]),
+    ("1.1.0", {"url": WORLDS[4:], "vcs_info": {"vcs": "git", "commit_id": "51f7890"}},
+     [("swarm-worlds", "v1.0.0", "51f7890")]),
+    ("1.1.0", None, [("swarm-worlds", "v1.0.0", "1.1.0")]),
+    ("1.1.0", {"url": "file:///home/dev/swarm-worlds", "dir_info": {"editable": True}},
+     [("swarm-worlds", "v1.0.0", env_check.LOCAL_CHECKOUT)]),
+    ("", None, [("swarm-worlds", "v1.0.0", "missing")]),
+], ids=["tag", "index-release", "other-tag", "branch-commit", "other-release", "local-checkout", "missing"])
+def test_swarm_worlds_is_compared_by_the_tag_it_was_installed_from(tmp_path, monkeypatch, version, direct_url, found):
+    """Proves a stale swarm-worlds is noticed however it was installed: from another tag, from a branch's commit,
+    from another release, or not at all, while the pinned tag or its release is left alone."""
+    _installed_as(monkeypatch, version, direct_url)
+    assert env_check.mismatches(_requirements(tmp_path, f"{WORLDS_PIN}\n")) == found
+
+
+def test_a_stale_swarm_worlds_is_reinstalled_from_its_tag_and_the_validator_restarts(tmp_path, monkeypatch) -> None:
+    """Proves the repair reinstalls the tagged release afresh, alone, in its own pip run after the exact pins, and
+    then re-executes the validator to load it."""
+    _installed_as(monkeypatch, "1.1.0", {"url": WORLDS[4:], "vcs_info": {"vcs": "git", "commit_id": "51f7890"}})
+    monkeypatch.setattr(env_check, "version", lambda name: "0.0.1")
+    runs, restarted = [], []
+    monkeypatch.setattr(env_check.subprocess, "run",
+                        lambda argv, **kwargs: runs.append(argv) or SimpleNamespace(returncode=0, stderr=""))
+    monkeypatch.setattr(env_check.os, "execv", lambda exe, argv: restarted.append(argv))
+    monkeypatch.delenv(env_check.REPAIRED_MARKER, raising=False)
+
+    env_check.ensure_environment(_requirements(tmp_path, f"pytest==1.0.0\n{WORLDS_PIN}\n"))
+
+    pip = [sys.executable, "-m", "pip", "install", "--quiet"]
+    assert runs == [pip + ["pytest==1.0.0"], pip + ["--force-reinstall", "--no-deps", WORLDS_PIN]]
+    assert restarted
+
+
+def test_a_failed_tag_repair_does_not_restart(tmp_path, monkeypatch) -> None:
+    """Proves a tag that cannot be installed leaves the validator running, as a failed version pin does."""
+    _installed_as(monkeypatch, "1.1.0", None)
+    monkeypatch.setattr(env_check.subprocess, "run",
+                        lambda argv, **kwargs: SimpleNamespace(returncode=1, stderr="could not reach the repository"))
+    monkeypatch.setattr(env_check.os, "execv", lambda *a: pytest.fail("must not restart"))
+    monkeypatch.delenv(env_check.REPAIRED_MARKER, raising=False)
+    env_check.ensure_environment(_requirements(tmp_path, f"{WORLDS_PIN}\n"))
+
+
+def test_a_local_checkout_is_reported_and_left_alone(tmp_path, monkeypatch) -> None:
+    """Proves a swarm-worlds someone installed from their own folder is named in the log but never overwritten."""
+    _installed_as(monkeypatch, "1.1.0", {"url": "file:///home/dev/swarm-worlds", "dir_info": {"editable": True}})
+    warned = []
+    monkeypatch.setattr(env_check.bt.logging, "warning", warned.append)
+    monkeypatch.setattr(env_check, "_install", lambda *a: pytest.fail("a local checkout must not be reinstalled"))
+    monkeypatch.setattr(env_check.os, "execv", lambda *a: pytest.fail("must not restart"))
+    monkeypatch.delenv(env_check.REPAIRED_MARKER, raising=False)
+    env_check.ensure_environment(_requirements(tmp_path, f"{WORLDS_PIN}\n"))
+    assert warned == [f"swarm-worlds is {env_check.LOCAL_CHECKOUT}, this validator pins v1.0.0; leaving it as it is"]

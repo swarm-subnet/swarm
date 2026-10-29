@@ -19,8 +19,8 @@
 
 from __future__ import annotations
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.constants import N_DOCKER_WORKERS
+from swarm.domain_model import DEFAULT_CLI_FAMILY_ID
 
 from ._shared import (
     Any,
@@ -205,10 +205,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--family-id",
         type=str,
-        default=DEFAULT_RUNTIME_FAMILY_ID,
+        default=DEFAULT_CLI_FAMILY_ID,
         help=(
             "Challenge family to benchmark "
-            f"(default: {DEFAULT_RUNTIME_FAMILY_ID})."
+            f"(default: {DEFAULT_CLI_FAMILY_ID})."
         ),
     )
     parser.add_argument(

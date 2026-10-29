@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import socket
 import threading
@@ -16,7 +17,7 @@ from swarm.benchmark import engine as bench_full_eval
 from swarm.benchmark.engine_parts import workers
 from swarm.protocol import ValidationResult
 from swarm.validator.docker import docker_evaluator as de
-from swarm.validator.docker.docker_evaluator_parts import batch
+from swarm.validator.docker.docker_evaluator_parts import batch, networking
 from validator.tests.test_docker_evaluator import _ScriptedContext
 
 _LOAD_SEC = 1.0
@@ -96,11 +97,20 @@ class _FakeDocker:
         return [cmd[cmd.index("--name") + 1] for cmd in self.runs]
 
 
+def _port_band_base() -> int:
+    """This test process's own host-port band: every test here plays worker 0, and parallel test processes probing one
+    band could each find the same port free and both bind it, so each process starts its band elsewhere."""
+    worker = os.getenv("PYTEST_XDIST_WORKER", "")
+    index = int(worker[2:]) + 1 if worker.startswith("gw") and worker[2:].isdigit() else 0
+    return networking._PORT_BASE + index * 400
+
+
 @pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
     """Wire the fake daemon into the evaluator and hand back a real, tiny submission."""
     docker = _FakeDocker()
     monkeypatch.setattr(batch.subprocess, "run", docker.run)
+    monkeypatch.setattr(networking, "_PORT_BASE", _port_band_base())
     monkeypatch.setattr(de.DockerSecureEvaluator, "_get_container_pid", lambda self, name: 4242)
     monkeypatch.setattr(de.DockerSecureEvaluator, "_apply_network_lockdown", lambda self, pid, ip: True)
     monkeypatch.setattr(de.DockerSecureEvaluator, "_get_docker_host_ip", lambda self: "172.17.0.1")
@@ -179,19 +189,19 @@ def test_second_seed_does_not_wait_for_its_container(fake_docker, monkeypatch):
     """Serially the second flight starts a full model load after the first one ends;
     with the start hidden behind the first flight that gap shrinks below the load time."""
     def _gap_between_flights() -> float:
-        """Seconds from the end of the first flight to the start of the second."""
+        """Seconds from the end of the first flight until the second seed's container finished loading."""
         fake_docker.events.clear()
         _run_worker([
             _request(0, 7, fake_docker.model_path, prewarm_next=True),
             _request(1, 7, fake_docker.model_path, prewarm_next=False),
         ])
         first, second = fake_docker.names()[-2:]
-        return fake_docker.first("fly_start", second) - fake_docker.first("fly_end", first)
+        return fake_docker.ready_time(second) - fake_docker.first("fly_end", first)
 
     monkeypatch.setenv("SWARM_DOCKER_PREWARM", "0")
-    assert _gap_between_flights() > _LOAD_SEC
+    assert _gap_between_flights() >= _LOAD_SEC
     monkeypatch.setenv("SWARM_DOCKER_PREWARM", "1")
-    assert _gap_between_flights() < _LOAD_SEC
+    assert _gap_between_flights() <= 0.0
 
 
 def test_spare_for_the_last_seed_is_killed_at_shutdown(fake_docker):
@@ -337,16 +347,27 @@ def test_cancel_gives_up_on_a_flight_that_ignores_the_signal(fake_docker, monkey
     assert any(kind == "kill" and subject == name for _, kind, subject in fake_docker.events)
 
 
-def test_cancel_during_the_container_start_never_flies(fake_docker):
+def test_cancel_during_the_container_start_never_flies(fake_docker, monkeypatch):
     """A stop that lands while the agent is still loading ends the wait at once: the container is removed and no flight starts."""
-    result, statuses, elapsed = _run_cancellable_worker(
-        _request(0, 7, fake_docker.model_path, prewarm_next=True), threading.Event(), cancel_after=0.3,
+    cancel_event = threading.Event()
+    launch = fake_docker.run
+
+    def _run_then_stop(cmd, **kwargs):
+        """Launch as the daemon does, and raise the stop 0.3 s into the container's load."""
+        done = launch(cmd, **kwargs)
+        if cmd[1] == "run":
+            threading.Timer(0.3, cancel_event.set).start()
+        return done
+
+    monkeypatch.setattr(batch.subprocess, "run", _run_then_stop)
+    result, statuses, _elapsed = _run_cancellable_worker(
+        _request(0, 7, fake_docker.model_path, prewarm_next=True), cancel_event,
     )
 
     (name,) = fake_docker.names()
     assert statuses == ["stopped_before_seed"]
     assert result.results[0][3] == 0.0
-    assert elapsed < _LOAD_SEC
+    assert fake_docker.first("rm", name) < fake_docker.ready_time(name)
     assert not any(kind == "fly_start" for _, kind, _subject in fake_docker.events)
     assert any(kind == "rm" and subject == name for _, kind, subject in fake_docker.events)
 
@@ -393,3 +414,13 @@ def test_validator_dispatcher_asks_for_a_spare_until_the_last_seed(monkeypatch, 
     )
 
     assert [r.prewarm_next for r in scripted_context.requests] == [True, True, False]
+
+
+def test_parallel_test_processes_take_disjoint_port_bands(monkeypatch):
+    """Two parallel test processes never share a host-port band, so their fake containers cannot bind one port twice."""
+    bases = []
+    for worker in ("gw0", "gw1", "gw7"):
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", worker)
+        bases.append(_port_band_base())
+    assert len(set(bases)) == 3
+    assert all(abs(a - b) >= 20 * networking._PORT_STRIDE for a in bases for b in bases if a != b)

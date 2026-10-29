@@ -24,7 +24,7 @@ and the runtime behaviour agree by construction.
 For each king ``i`` in the active window:
 
     gain_i   = log(max(1 - prev_i, HEADROOM_EPS) / max(1 - score_i, HEADROOM_EPS))
-    ladder_i = RANK_LADDER_RATIO ** rank_i        (0 when rank_i >= WINDOW_SIZE)
+    ladder_i = RANK_LADDER_RATIO ** rank_i        (0 when rank_i >= the family's king window)
     bonus_i  = 1 + GAIN_BONUS * min(gain_i, GAIN_BONUS_CAP)
     share_i  = ladder_i * bonus_i / sum(over the window)
 
@@ -33,12 +33,17 @@ dethronement steps a seat down the ladder; the gain is a bonus that can never
 flip the order. A row that did not beat its prev_score earns nothing; one
 whose gain is lost inside HEADROOM_EPS keeps its seat without the bonus. Scores are clamped to [0, 1] first. Rank is derived from
 ``(crowned_at_epoch, lineage_id)`` descending, not list position.
+
+Each family pays its last WINDOW_SIZE kings unless its registry entry sets its
+own ``king_window``.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+
+from swarm.domain_model import UnknownChallengeFamilyError, get_family_king_window
 
 HEADROOM_EPS: float = 0.01
 WINDOW_SIZE: int = 5
@@ -79,6 +84,10 @@ class KingEntry:
             crowned_at_epoch = int(data["crowned_at_epoch"])
             lineage_id_raw = data.get("lineage_id")
             lineage_id = int(lineage_id_raw) if lineage_id_raw is not None else None
+            family_raw = data["family_id"]
+            if family_raw is None or str(family_raw).strip() == "":
+                raise ValueError("empty family_id")
+            family_id = str(family_raw)
         except (KeyError, TypeError, ValueError) as exc:
             raise MalformedKingEntry(
                 f"invalid king sync entry: {exc} (data={dict(data)!r})"
@@ -92,7 +101,7 @@ class KingEntry:
             crowned_at_epoch=crowned_at_epoch,
             lineage_id=lineage_id,
             manual_override_drop=manual_override_drop,
-            family_id=str(data.get("family_id", "cf_autopilot")),
+            family_id=family_id,
         )
 
 
@@ -133,6 +142,15 @@ def rank_weight(rank: int, window: int = WINDOW_SIZE) -> float:
     return RANK_LADDER_RATIO ** float(rank)
 
 
+def king_window(family_id: str) -> int:
+    """Kings the family pays at once: its registry window, or WINDOW_SIZE when it sets none."""
+    try:
+        window = get_family_king_window(family_id)
+    except UnknownChallengeFamilyError:
+        return WINDOW_SIZE
+    return window if window > 0 else WINDOW_SIZE
+
+
 def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
     """Ladder seat for the rank scaled by the capped gain bonus, 0.0 when the king improved nothing."""
     # Bonus gain is capped: max factor 1 + GAIN_BONUS * CAP = 1.3, below the
@@ -140,7 +158,8 @@ def _adjusted_weight(king: "KingEntry", rank: int, eps: float) -> float:
     if _clamp_unit(king.score) <= _clamp_unit(king.prev_score):
         return 0.0
     gain = headroom_gain(king.score, king.prev_score, eps=eps)
-    return rank_weight(rank) * (1.0 + GAIN_BONUS * min(gain, GAIN_BONUS_CAP))
+    # The window follows the row's own family_id, which the backend's sync schema requires on every king.
+    return rank_weight(rank, king_window(king.family_id)) * (1.0 + GAIN_BONUS * min(gain, GAIN_BONUS_CAP))
 
 
 def _ranks(rows: List[KingEntry]) -> List[int]:

@@ -1,0 +1,338 @@
+# The MIT License (MIT)
+# Copyright © 2026 Swarm
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+"""Dock take-off, return home and landing (task 9): where the dock stands, and the flights it makes by itself.
+
+The dock owns the flight phase. While it flies the drone (take-off, the flight home, the landing) its setpoint
+replaces the model's; once the drone is up, the model flies until it asks to come home.
+
+Each seed stands the Dock 3 (task 3's model) on its own open spot, found in the built world with rays: inside the
+fence by DJI's take-off margin, clear of everything standing by DJI's installation distance, on ground its concrete
+base can level. The lids open only for the take-off and the landing, as in DJI's flight procedure: take-off opens
+them, climbs straight up to the patrol height and shuts them behind. Return home is the Dock 3's preset return: the
+lids open, its height is fixed when it is pressed, the drone turns to face home, reaches that height first, flies
+straight to the point above the pad, waits above the dock until the lids are open, and descends onto the pad held over
+its centre against the wind, as RTK and the pad's markers hold the real one. Once it rests there the lids shut.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any, Optional, Tuple
+
+import numpy as np
+import pybullet as p
+
+from . import dock3, park
+from .contract import (
+    FLIGHT_PHASES,
+    MAX_CLIMB_MPS,
+    MAX_DESCENT_MPS,
+    MAX_HORIZONTAL_MPS,
+    MAX_YAW_RATE_DEG_S,
+    PATROL_HEIGHT_M,
+    STATE_SLICES,
+    Command,
+    put,
+)
+from .episode import Setpoint, SolarEpisode
+from .fixed_order import norm
+
+DRONE_REST_M = 0.0                     # dock_position is the aircraft's own resting point on the pad
+ARRIVE_M = 0.5                         # close enough to a target height, and DJI's landing start above the pad
+RTH_NEAR_M = 5.0                       # Dock 3 preset RTH: nearer than this the aircraft flies above the dock and lands
+RTH_FAR_M = 50.0                       # Dock 3 preset RTH: further than this, below the RTH altitude it climbs to it first
+FACED_DEG = 5.0                        # the turn to face the home point ends this close to it
+TURN_GAIN_PER_S = 2.0                  # turn rate asked for per radian still to turn, inside the model's own limit
+WAIT_M = 1.0                           # above the resting point, where a landing waits for the lids: 0.6 m over their swing
+LIDS_OPEN = ("taking_off", "returning", "landing")  # DJI's flight procedure: the cover is shut while the aircraft flies
+LANDED_SPEED_MPS = 0.3                 # slower than this on the pad counts as landed
+TOUCHDOWN_MPS = 0.4                    # the slowest descent, so the last centimetres still close
+GAIN_PER_S = 1.0                       # speed asked for per metre still to go
+CENTRED_M = 0.3                        # the descent pauses while the aircraft is further than this off the pad
+BRAKE_MPS2 = 1.5                       # approach no faster than a stop at this deceleration allows, inside the setpoint's own 2 m/s2
+LAND_GAIN_PER_S = 2.0                  # the landing's own pull towards the pad centre, per metre off
+LEAN_GAIN_PER_S2 = 1.0                 # how fast it learns the wind's steady push: with LAND_GAIN_PER_S, settles in about 1 s
+LEAN_MAX_MPS = 1.0                     # the most the learned push may add to the speed asked for
+GATE_M = 0.5                           # above the resting point, where the aircraft waits to be centred before entering the dock
+GATE_BAND_M = 0.05                     # close enough to the gate height to count as waiting there
+FINAL_CENTRED_M = 0.02                 # RTK and the pad's markers: centred this close before the last part of the descent
+FINAL_STILL_MPS = 0.05                 # and drifting no faster than this
+FINAL_HOLD_M = 0.03                    # further off than this, the room at rest, the last part goes back up to the gate
+
+SITE_SEED_STREAM = 0xD0C9              # the dock's own stream, so its spot never moves another part's draws
+FENCE_MARGIN_M = 10.0                  # DJI refuses take-off this near the flight area's edge, which never lies inside the fence
+CLEAR_M = 3.4                          # DJI: anything under 5 m tall stands over 2.5 m from the dock, whose open lids reach 0.88 m
+INSTALL_M = 1.5                        # the ground the slope is read over: DJI's 2.6 x 3 m installation area
+MAX_SLOPE_DEG = 20.0                   # steeper ground than any open patch inside the park, where the base would not stand
+COARSE_STEP_M = 1.0                    # a first sparse look that turns most spots away cheaply
+RAY_STEP_M = 0.15                      # rays this close cannot pass either side of a 0.26 m trunk
+RAY_REACH_M = 1000.0
+SITE_BATCH = 256
+SITE_BATCHES = 80
+
+
+class NoDockGround(RuntimeError):
+    """The seed's park has no open, level ground for the dock: the seed's own world fails, not the machine."""
+
+
+def _disc(step: float) -> np.ndarray:
+    """Offsets on a square grid of the given step that lie within CLEAR_M of the centre."""
+    r = np.arange(-CLEAR_M, CLEAR_M + 1e-9, step)
+    u, v = np.meshgrid(r, r)
+    keep = u * u + v * v <= CLEAR_M * CLEAR_M
+    return np.column_stack([u[keep], v[keep]])
+
+
+_COARSE = _disc(COARSE_STEP_M)
+_FINE = _disc(RAY_STEP_M)
+
+
+def _inside(polygon: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """Which points lie inside the closed polygon, by counting the sides a ray from each crosses."""
+    a, b = polygon, np.roll(polygon, -1, axis=0)
+    x, y = points[:, :1], points[:, 1:]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        crosses = ((a[:, 1] > y) != (b[:, 1] > y)) & (x < a[:, 0] + (y - a[:, 1]) * (b[:, 0] - a[:, 0]) / (b[:, 1] - a[:, 1]))
+    return crosses.sum(axis=1) % 2 == 1
+
+
+def _edge_distance(polygon: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """Distance from each point to the nearest side of the closed polygon."""
+    a = polygon
+    ab = np.roll(polygon, -1, axis=0) - a
+    rel = points[:, None, :] - a[None, :, :]
+    t = np.clip((rel * ab).sum(axis=2) / (ab * ab).sum(axis=1), 0.0, 1.0)
+    return np.min(np.linalg.norm(rel - t[..., None] * ab, axis=2), axis=1)
+
+
+def _ground(cli: int, spot: np.ndarray, offsets: np.ndarray, terrain_uids: frozenset) -> Optional[np.ndarray]:
+    """The ground points under rays dropped around the spot, or None when any ray meets something else first."""
+    xy = spot + offsets
+    hits = p.rayTestBatch([[x, y, RAY_REACH_M] for x, y in xy], [[x, y, -RAY_REACH_M] for x, y in xy],
+                          numThreads=0, physicsClientId=cli)
+    if any(hit[0] not in terrain_uids for hit in hits):
+        return None
+    return np.array([hit[3] for hit in hits], dtype=float)
+
+
+def _slope_deg(ground: np.ndarray, spot: np.ndarray) -> float:
+    """Tilt of the plane fitted through the ground points within INSTALL_M of the spot."""
+    near = ground[np.hypot(*(ground[:, :2] - spot).T) <= INSTALL_M]
+    # Least squares from exactly rounded sums about the points' centre, not LAPACK, whose rounding follows the CPU.
+    u, v, w = ((x - math.fsum(x) / len(x)).tolist() for x in (near[:, 0] - spot[0], near[:, 1] - spot[1], near[:, 2]))
+    uu, uv, vv = math.fsum(x * x for x in u), math.fsum(x * y for x, y in zip(u, v)), math.fsum(y * y for y in v)
+    uw, vw = math.fsum(x * z for x, z in zip(u, w)), math.fsum(y * z for y, z in zip(v, w))
+    det = uu * vv - uv * uv
+    a, b = (uw * vv - vw * uv) / det, (vw * uu - uw * uv) / det
+    return math.degrees(math.atan(math.hypot(a, b)))
+
+
+def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset,
+              passable: np.ndarray) -> Tuple[float, float]:
+    """A spot for the dock drawn from the seed's own stream: FENCE_MARGIN_M inside the fence, CLEAR_M from every
+    body standing and from every passable outline, on ground no steeper than MAX_SLOPE_DEG.
+
+    Only the terrain may meet the rays dropped around the spot, so the check reads whatever the world holds this
+    seed, wherever the park put it, and the column the drone climbs through is clear with it.
+    """
+    rng = np.random.default_rng([SITE_SEED_STREAM, int(seed)])
+    low, high = fence.min(axis=0) + FENCE_MARGIN_M, fence.max(axis=0) - FENCE_MARGIN_M
+    for _ in range(SITE_BATCHES):
+        spots = rng.uniform(low, high, size=(SITE_BATCH, 2))
+        spots = spots[_inside(fence, spots)]
+        spots = spots[_edge_distance(fence, spots) >= FENCE_MARGIN_M]
+        for spot in spots:
+            if np.any(np.hypot(*(passable[:, :2] - spot).T) < passable[:, 2] + CLEAR_M):
+                continue
+            if _ground(cli, spot, _COARSE, terrain_uids) is None:
+                continue
+            ground = _ground(cli, spot, _FINE, terrain_uids)
+            if ground is not None and _slope_deg(ground, spot) <= MAX_SLOPE_DEG:
+                return float(spot[0]), float(spot[1])
+    raise NoDockGround(f"no open ground for the dock in seed {seed}")
+
+
+def reset(env: Any, ep: SolarEpisode) -> None:
+    """Stand the dock on this seed's spot, set the drone down on its pad, and tell the environment the pad is a
+    landing."""
+    cli = env.CLIENT
+    x, y = find_site(cli, ep.seed, ep.fence, ep.terrain_uids, park.passable_outlines(ep))
+    model = dock3.spawn(env, x, y, yaw=0.0)
+    pad, yaw = dock3.rest_pose(model)
+    ep.dock_uid = model.uid
+    ep.dock_position = pad
+    ep.dock_yaw = yaw
+    ep.phase = "docked"
+    ep.dock = {"model": model, "return_z": 0.0, "facing": False, "at_height": False, "lean": np.zeros(2),
+               "final": False}
+    drone = int(env.DRONE_IDS[0])
+    p.resetBasePositionAndOrientation(drone, (pad + [0.0, 0.0, DRONE_REST_M]).tolist(),
+                                      p.getQuaternionFromEuler([0.0, 0.0, ep.dock_yaw]), physicsClientId=cli)
+    p.resetBaseVelocity(drone, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], physicsClientId=cli)
+    # Only the pad takes a landing; the body and the lids are a solid the aircraft can hit.
+    env._end_platform_uids = [model.pad_uid]
+    env.task.start = tuple(float(v) for v in pad)
+    env.task.goal = tuple(float(v) for v in pad)
+    env.GOAL_POS = pad.copy()
+
+
+def _return_height(ep: SolarEpisode, pos: np.ndarray) -> float:
+    """The Dock 3's preset return height, fixed when return home is pressed: further than RTH_FAR_M the patrol height
+    when the drone is lower, else its current height; never under WAIT_M over the pad, so the flight home clears the
+    dock."""
+    height = float(pos[2])
+    if math.hypot(*(ep.dock_position[:2] - pos[:2])) > RTH_FAR_M:
+        height = max(height, float(ep.dock_position[2]) + PATROL_HEIGHT_M)
+    return max(height, float(ep.dock_position[2]) + WAIT_M)
+
+
+def command(env: Any, ep: SolarEpisode, cmd: Command) -> None:
+    """Act on the take-off, return home and cancel buttons, each only in the phase where the real dock takes it."""
+    if cmd.take_off and ep.phase == "docked":
+        ep.phase = "taking_off"
+        ep.outcome.took_off = True
+    elif cmd.return_home and ep.phase == "flying":
+        pos = np.asarray(env.pos[0], dtype=float)
+        ep.phase = "returning"
+        ep.outcome.returned_by_model = True
+        ep.dock["return_z"] = _return_height(ep, pos)
+        ep.dock["facing"] = math.hypot(*(ep.dock_position[:2] - pos[:2])) >= RTH_NEAR_M
+        ep.dock["at_height"] = False
+    elif cmd.cancel_return and ep.phase in ("returning", "landing"):
+        ep.phase = "flying"
+        ep.outcome.returned_by_model = False
+
+
+def _towards(delta: np.ndarray, limit: float, gain: float = GAIN_PER_S) -> np.ndarray:
+    """A velocity along delta, gain times its length, capped at limit and slow enough to stop in time."""
+    distance = norm(delta)
+    if distance < 1e-6:
+        return np.zeros_like(delta)
+    return delta / distance * min(limit, gain * distance, math.sqrt(2.0 * BRAKE_MPS2 * distance))
+
+
+def _climb(rise: float) -> float:
+    """A vertical speed towards a height rise metres above, inside the climb and descent limits."""
+    return float(np.clip(GAIN_PER_S * rise, -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
+
+
+def _turn_home(env: Any, ep: SolarEpisode, pos: np.ndarray) -> float:
+    """The turn rate that brings the nose round to face the dock, inside the model's own turn limit; 0 once it
+    faces it within FACED_DEG."""
+    east, north = (float(v) for v in ep.dock_position[:2] - pos[:2])
+    error = (math.atan2(north, east) - float(env.rpy[0, 2]) + math.pi) % (2.0 * math.pi) - math.pi
+    if abs(error) < math.radians(FACED_DEG):
+        return 0.0
+    limit = math.radians(MAX_YAW_RATE_DEG_S)
+    return float(np.clip(TURN_GAIN_PER_S * error, -limit, limit))
+
+
+def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
+    """The dock's own setpoint in the phases it flies, or None while the model has the drone."""
+    if ep.phase in ("docked", "landed"):
+        return Setpoint(motors_on=False)
+    if ep.phase == "flying":
+        return None
+    if ep.phase == "taking_off" and ep.dock["model"].opening < 1.0:
+        return Setpoint(motors_on=False)
+    pos = np.asarray(env.pos[0], dtype=float)
+    east, north = (float(v) for v in _towards(ep.dock_position[:2] - pos[:2], MAX_HORIZONTAL_MPS))
+    if ep.phase == "taking_off":
+        rise = float(ep.dock_position[2]) + PATROL_HEIGHT_M - pos[2]
+        if abs(rise) < ARRIVE_M:
+            ep.phase = "flying"
+        return Setpoint((east, north, _climb(rise)))
+    if ep.phase == "returning":
+        turn = _turn_home(env, ep, pos) if ep.dock["facing"] else 0.0
+        if turn:
+            return Setpoint((0.0, 0.0, 0.0), turn)
+        ep.dock["facing"] = False
+        rise = ep.dock["return_z"] - pos[2]
+        if not ep.dock["at_height"] and abs(rise) >= ARRIVE_M:
+            return Setpoint((0.0, 0.0, _climb(rise)))
+        ep.dock["at_height"] = True
+        if math.hypot(*(ep.dock_position[:2] - pos[:2])) < ARRIVE_M:
+            ep.phase = "landing"
+            ep.dock["lean"], ep.dock["final"] = np.zeros(2), False
+        return Setpoint((east, north, _climb(rise)))
+    return _land(env, ep, pos)
+
+
+def _land(env: Any, ep: SolarEpisode, pos: np.ndarray) -> Setpoint:
+    """The descent onto the pad as the Dock 3 flies it, RTK and the pad's markers holding the aircraft over the centre
+    against the wind: down to WAIT_M above the resting point until the lids are open, then to GATE_M, a wait there until
+    centred and still, then the last part, which goes back up to the gate whenever the aircraft drifts further off than
+    the dock leaves room for."""
+    delta = ep.dock_position[:2] - pos[:2]
+    ep.dock["lean"] = _capped(ep.dock["lean"] + LEAN_GAIN_PER_S2 * float(env.CTRL_TIMESTEP) * delta, LEAN_MAX_MPS)
+    east, north = (float(v) for v in _towards(delta, MAX_HORIZONTAL_MPS, LAND_GAIN_PER_S) + ep.dock["lean"])
+    off = norm(delta)
+    height = pos[2] - DRONE_REST_M - ep.dock_position[2]
+    if ep.dock["final"] and off > FINAL_HOLD_M:
+        ep.dock["final"] = False
+    if not ep.dock["final"]:
+        gate = GATE_M if ep.dock["model"].opening >= 1.0 else WAIT_M
+        if height - gate > GATE_BAND_M:
+            vz = 0.0 if off > CENTRED_M else -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * (height - gate)))
+            return Setpoint((east, north, vz))
+        ep.dock["final"] = (gate == GATE_M and off < FINAL_CENTRED_M
+                            and norm(np.asarray(env.vel[0][:2], dtype=float)) < FINAL_STILL_MPS)
+        if not ep.dock["final"]:
+            return Setpoint((east, north, _climb(gate - height)))
+    return Setpoint((east, north, -min(MAX_DESCENT_MPS, max(TOUCHDOWN_MPS, GAIN_PER_S * height))))
+
+
+def _capped(v: np.ndarray, limit: float) -> np.ndarray:
+    """The vector v, shortened to limit when it is longer."""
+    length = norm(v)
+    return v if length <= limit else v * (limit / length)
+
+
+def update(env: Any, ep: SolarEpisode) -> None:
+    """Open the lids for the take-off and the landing and shut them otherwise, hold a resting aircraft still on the pad,
+    and close the patrol once a landing drone rests on the pad."""
+    model = ep.dock["model"]
+    dock3.move_lids(env, model, ep.phase in LIDS_OPEN, float(env.CTRL_TIMESTEP))
+    if ep.phase in ("docked", "landed") or (ep.phase == "taking_off" and model.opening < 1.0):
+        _hold(env, ep)
+    if ep.phase != "landing" or not env._platform_hit:
+        return
+    if norm(env.vel[0]) < LANDED_SPEED_MPS:
+        ep.phase = "landed"
+        ep.outcome.landed_in_dock = True
+        ep.end("landed")
+
+
+def closing(env: Any, ep: SolarEpisode) -> bool:
+    """True while the lids shut over the landed aircraft and the patrol's time has not run out: the patrol waits for
+    them, its outcome already fixed."""
+    return ep.phase == "landed" and ep.dock["model"].opening > 0.0 and ep.time_s < env.EP_LEN_SEC
+
+
+def _hold(env: Any, ep: SolarEpisode) -> None:
+    """Keep the aircraft on its resting pose while its motors are off: the pad's V holds the real one still, where
+    four small feet in the pad's V slowly creep at the patrol's physics step."""
+    drone = int(env.DRONE_IDS[0])
+    orn = p.getQuaternionFromEuler([0.0, 0.0, ep.dock_yaw])
+    p.resetBasePositionAndOrientation(drone, ep.dock_position.tolist(), orn, physicsClientId=env.CLIENT)
+    p.resetBaseVelocity(drone, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], physicsClientId=env.CLIENT)
+
+
+def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
+    """The flight phase, as the dock reports it."""
+    put(state, STATE_SLICES, "flight_phase", FLIGHT_PHASES.index(ep.phase))

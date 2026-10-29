@@ -35,7 +35,8 @@ import traceback
 
 import bittensor as bt
 
-from swarm.constants import FORWARD_SLEEP_SEC, N_DOCKER_WORKERS
+from swarm.challenge_families.base import IncompleteInstall
+from swarm.constants import FORWARD_SLEEP_SEC, INSTALL_REFUSAL_IDLE_SEC, N_DOCKER_WORKERS
 from swarm.validator.calibration import baseline_model_available
 
 from .backend_api import (
@@ -58,7 +59,7 @@ from .utils import (
     compute_koth_weights_from_sync,
     stamp_local_weights_on_kings,
 )
-from .utils_parts.run_task import run_task
+from .utils_parts.run_task import run_task, start_seed_preparations
 
 
 async def forward(self) -> None:
@@ -144,6 +145,7 @@ async def _forward_iteration(self) -> None:
             await _idle_until_wake(self, FORWARD_SLEEP_SEC)
             tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)
             return
+        start_seed_preparations(self, self.seed_manager.epoch_number)
 
         # Reset flags before each long-poll so SSE events that arrive
         # during the next /next-task wait can wake us promptly.
@@ -170,10 +172,16 @@ async def _forward_iteration(self) -> None:
             f"[Forward #{self.forward_count}] task uid={task.get('uid')} "
             f"phase={task.get('phase')}"
         )
-        await run_task(
-            self, task,
-            cancel_flag=self._cancel_flag, wake_flag=self._wake_flag,
-        )
+        try:
+            await run_task(
+                self, task,
+                cancel_flag=self._cancel_flag, wake_flag=self._wake_flag,
+            )
+        except IncompleteInstall as exc:
+            # The reason is already logged; the backend would hand the same task straight back.
+            tracker_call(self, "mark_forward_failed", error=f"incomplete_install: {exc}")
+            await _idle_until_wake(self, INSTALL_REFUSAL_IDLE_SEC)
+            return
 
         await _cleanup_off_loop(self, reason="task_end")
         tracker_call(self, "mark_forward_completed", forward_count=self.forward_count)

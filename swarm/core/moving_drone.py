@@ -414,7 +414,10 @@ class MovingDroneAviary(BaseRLAviary):
         before BaseAviary parses and loads it (both _parseURDFParameters and _housekeeping
         read self.URDF, resolving it through swarm.utils.gym_assets' staged-path shim)."""
         family_id = getattr(self.family_runtime, "family_id", "")
-        if family_id == "cf_interceptor":
+        family_urdf = self.family_runtime.drone_urdf(self)
+        if family_urdf is not None:
+            self.URDF = family_urdf
+        elif family_id == "cf_interceptor":
             from swarm.challenge_families.interceptor import ensure_interceptor_urdf_staged
             self.URDF = ensure_interceptor_urdf_staged()
         elif family_id in _OFFICE_RC_FAMILIES:
@@ -437,6 +440,11 @@ class MovingDroneAviary(BaseRLAviary):
             for _ in range(self.ACTION_BUFFER_SIZE):
                 self.action_buffer.append(np.zeros((self.NUM_DRONES, width)))
 
+        runtime = getattr(self, "family_runtime", None)
+        family_space = runtime.action_space(self) if runtime is not None else None
+        if family_space is not None:
+            _reseed_buffer(family_space.shape[-1])
+            return family_space
         if fam in _OFFICE_RC_FAMILIES and self.ACT_TYPE == ActionType.VEL:
             _reseed_buffer(4)
             return spaces.Box(
@@ -460,6 +468,9 @@ class MovingDroneAviary(BaseRLAviary):
         it, so a stray caller cannot corrupt the action-history buffer. The office family converts
         its body-frame RC sticks here instead of in the base class. Production always sends the
         right width (rpc clips to action_space); other families pass straight through unchanged."""
+        family_rpm = self.family_runtime.preprocess_action(self, action)
+        if family_rpm is not None:
+            return family_rpm
         if getattr(self, "_office_rc_enabled", False):
             return self._preprocess_rc_action(action)
         if getattr(self, "_sar_rgb_enabled", False):
@@ -1262,6 +1273,8 @@ class MovingDroneAviary(BaseRLAviary):
             # Office scoring never reads clearance, and getClosestPoints against
             # the office's concave meshes can segfault the process (seed 53).
             return
+        if not getattr(getattr(self, "family_runtime", None), "clearance_metric", True):
+            return
         if self.NUM_DRONES > 1:
             self._update_min_clearance_multi()
             return
@@ -1564,7 +1577,30 @@ class MovingDroneAviary(BaseRLAviary):
             for link in range(-1, p.getNumJoints(uid, physicsClientId=cli)):
                 p.setCollisionFilterGroupMask(uid, link, 2, 1, physicsClientId=cli)
 
-    def step(self, action):
+    def step(self, action, on_observation=None):
+        """One model decision: the family's control steps under the same action, then the observation and flags.
+
+        `on_observation`, when given, is handed the next decision's observation as soon as the family has fixed it,
+        while the remaining control steps run.
+        """
+        self._control_step(action)
+        for _ in range(int(getattr(self.family_runtime, "decision_steps", 1)) - 1):
+            if self._computeTerminated() or self._computeTruncated():
+                break
+            if on_observation is not None and self.family_runtime.observation_fixed(self):
+                on_observation(self._computeObs())
+                on_observation = None
+            self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
+            self._control_step(action)
+        obs = self._computeObs()
+        reward = self._computeReward()
+        terminated = self._computeTerminated()
+        truncated = self._computeTruncated()
+        info = self._computeInfo()
+        self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
+        return obs, reward, terminated, truncated, info
+
+    def _control_step(self, action):
         """Execute one control step with post-physics bookkeeping."""
         self._step_processed = False
         if self.RECORD and not self.GUI and self.step_counter % self.CAPTURE_FREQ == 0:
@@ -1679,7 +1715,7 @@ class MovingDroneAviary(BaseRLAviary):
                         self._drag(self.last_clipped_action[i, :], i)
                     self._downwash(i)
                 if wind is not None and self.PHYSICS != Physics.DYN:
-                    self._apply_wind(clipped_action[i, :], i, wind)
+                    self._apply_wind(clipped_action[i, :], i, self.family_runtime.felt_wind(self, i, wind))
             self.family_runtime.apply_world_physics(self)
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)
@@ -1687,13 +1723,6 @@ class MovingDroneAviary(BaseRLAviary):
         self._updateAndStoreKinematicInformation()
         self._process_step_updates()
         self._update_rgb_requests(action)
-        obs = self._computeObs()
-        reward = self._computeReward()
-        terminated = self._computeTerminated()
-        truncated = self._computeTruncated()
-        info = self._computeInfo()
-        self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
-        return obs, reward, terminated, truncated, info
 
     def _groundEffect(self, rpm, nth_drone: int) -> None:
         """Ground effect of the drone's URDF model with the height read from the downward
@@ -1792,6 +1821,7 @@ class MovingDroneAviary(BaseRLAviary):
             min_clearance=self._min_clearance_episode,
             collision=self._collision,
             failure_reason=getattr(self, "_failure_reason", "NONE"),
+            info=self.family_runtime.build_info(self),
         )
 
         reward = self.family_runtime.compute_training_reward(
@@ -1926,6 +1956,10 @@ class MovingDroneAviary(BaseRLAviary):
             # The rgb channel pulls its frame from the env's held-frame stream.
             state_vec = self._getDroneStateVector(0)
             return assemble(self._obs_layout, self, state_vec, {})
+
+        if "depth" not in self._obs_layout:
+            # A contract without a depth image never pays for rendering one.
+            return assemble(self._obs_layout, self, self._getDroneStateVector(0), {})
 
         _, depth_raw, _ = self._getDroneImages(0)
 

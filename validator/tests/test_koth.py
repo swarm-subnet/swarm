@@ -376,6 +376,7 @@ def test_from_sync_dict_full_payload():
             "crowned_at_epoch": 12,
             "manual_override_drop": False,
             "weight": 0.5,
+            "family_id": "cf_solar_patrol",
         }
     )
     assert entry.uid == 7
@@ -385,6 +386,7 @@ def test_from_sync_dict_full_payload():
     assert entry.crowned_at_epoch == 12
     assert entry.lineage_id == 42
     assert entry.manual_override_drop is False
+    assert entry.family_id == "cf_solar_patrol"
 
 
 def test_from_sync_dict_optional_fields_default():
@@ -396,6 +398,7 @@ def test_from_sync_dict_optional_fields_default():
             "score": 0.10,
             "prev_score": 0.0,
             "crowned_at_epoch": 1,
+            "family_id": "cf_search_and_rescue",
         }
     )
     assert entry.lineage_id is None
@@ -411,8 +414,17 @@ def test_from_sync_dict_raises_on_missing_prev_score():
                 "hotkey": "hk1",
                 "score": 0.10,
                 "crowned_at_epoch": 1,
+                "family_id": "cf_search_and_rescue",
             }
         )
+
+
+def test_from_sync_dict_raises_on_missing_or_empty_family():
+    """A row with no family is refused, never paid on a guessed family's king window."""
+    row = {"uid": 1, "hotkey": "hk1", "score": 0.10, "prev_score": 0.0, "crowned_at_epoch": 1}
+    for family in ({}, {"family_id": None}, {"family_id": " "}):
+        with pytest.raises(MalformedKingEntry):
+            KingEntry.from_sync_dict({**row, **family})
 
 
 def test_from_sync_dict_raises_on_non_numeric_score():
@@ -425,6 +437,7 @@ def test_from_sync_dict_raises_on_non_numeric_score():
                 "score": "not-a-number",
                 "prev_score": 0.0,
                 "crowned_at_epoch": 1,
+                "family_id": "cf_search_and_rescue",
             }
         )
 
@@ -440,6 +453,7 @@ def test_from_sync_dict_raises_on_bad_lineage_id():
                 "prev_score": 0.0,
                 "crowned_at_epoch": 1,
                 "lineage_id": "not-an-int",
+                "family_id": "cf_search_and_rescue",
             }
         )
 
@@ -454,6 +468,7 @@ def test_from_sync_dict_raises_on_empty_hotkey():
                 "score": 0.10,
                 "prev_score": 0.0,
                 "crowned_at_epoch": 1,
+                "family_id": "cf_search_and_rescue",
             }
         )
 
@@ -472,6 +487,7 @@ def test_from_sync_dict_uid_zero_is_preserved():
             "score": 0.30,
             "prev_score": 0.20,
             "crowned_at_epoch": 5,
+            "family_id": "cf_autopilot",
         }
     )
     assert entry.uid == 0

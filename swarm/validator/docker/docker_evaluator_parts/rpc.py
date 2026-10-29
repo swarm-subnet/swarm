@@ -18,6 +18,7 @@
 """Flying a batch of seeds against a miner container over one Cap'n Proto connection."""
 
 import asyncio
+import gc
 import mmap
 import os
 import statistics
@@ -28,6 +29,7 @@ from typing import Callable, Optional
 import bittensor as bt
 import capnp
 import numpy as np
+import pybullet as p
 
 from swarm.challenge_families import evaluate_rollout, runtime_family_for_task
 from swarm.config import RpcTraceSettings
@@ -62,12 +64,50 @@ from ._shared import (
 )
 from .submission import _serialize_observation_shm
 
+# Overlapping needs an engine that lets go of the GIL while it draws, or the frame's time would land in the act's.
+_ENGINE_RELEASES_GIL = hasattr(p, "CAMERA_RELEASES_GIL")
+# Seeds that froze the collector; a thread left behind by a timeout shares the process with the next seed.
+_frozen_seeds = 0
+_frozen_lock = threading.Lock()
 
-def _strike_zero_action(n_drones: int, act_dim: int) -> np.ndarray:
-    """Neutral substitute action in the exact family contract shape."""
+
+def _freeze_world() -> None:
+    """Keep every object built so far out of the collector, so no long collection holds the GIL on an act reply."""
+    global _frozen_seeds
+    with _frozen_lock:
+        _frozen_seeds += 1
+        gc.freeze()
+
+
+def _thaw_world() -> None:
+    """Give the frozen objects back to the collector once no seed in the process still needs them frozen."""
+    global _frozen_seeds
+    with _frozen_lock:
+        _frozen_seeds -= 1
+        if _frozen_seeds == 0:
+            gc.unfreeze()
+
+
+def _strike_action(family, previous: Optional[np.ndarray], n_drones: int, act_dim: int) -> np.ndarray:
+    """Substitute for a struck decision: the family's own from the last action flown, else a neutral zero action in
+    the exact family contract shape."""
+    substitute = family.slow_step_action(previous)
+    if substitute is not None:
+        return substitute
     if n_drones > 1:
         return np.zeros((n_drones, act_dim), dtype=np.float32)
     return np.zeros(act_dim, dtype=np.float32)
+
+
+def _abandoned_metrics(family, task, env, info: dict) -> dict:
+    """What a seed the model abandoned keeps: the family's stalled outcome, read from the env itself when the model
+    left before its first step had run."""
+    return family.stalled_rollout_metrics(task, info or family.build_info(env))
+
+
+def _link_dropped(exc: BaseException) -> bool:
+    """True when the model's process went away; an error the model raised itself arrives as a remote failure."""
+    return isinstance(exc, (BrokenPipeError, ConnectionResetError)) or getattr(exc, "type", None) == "DISCONNECTED"
 
 
 def _run_multi_seed_rpc_sync(
@@ -140,6 +180,12 @@ def _run_multi_seed_rpc_sync(
         if runtime_profile.rpc_step_timeout_sec is not None
         else RPC_STEP_TIMEOUT_SEC
     )
+    compute_budget_sec = float(
+        runtime_profile.miner_compute_budget_sec
+        if runtime_profile.miner_compute_budget_sec is not None
+        else MINER_COMPUTE_BUDGET_SEC
+    )
+    window_acts = max(1, int(runtime_profile.miner_compute_window_acts))
 
     # Phase clocks of the seed in flight, and its record while the env is still open.
     seed_clock: dict = {"phases": {}, "env_open": False, "held": None}
@@ -402,6 +448,48 @@ def _run_multi_seed_rpc_sync(
                     for _ in tasks
                 ]
 
+            def _send_act(observation, timeout: float):
+                """Send act() now; its wall time is stamped when the reply lands, not when the loop reads it."""
+                clock = {"start": time.perf_counter(), "ms": 0.0, "timeout": timeout}
+
+                async def _reply():
+                    """The reply within the timeout, its wall time stamped however it ends."""
+                    try:
+                        return await asyncio.wait_for(agent.act(observation), timeout=timeout)
+                    finally:
+                        clock["ms"] = (time.perf_counter() - clock["start"]) * 1000.0
+
+                return asyncio.ensure_future(_reply()), clock
+
+            async def _drop_act(early) -> None:
+                """Wait out an act() sent ahead for a decision that never came; its reply, time and strike are unused."""
+                if early is not None:
+                    try:
+                        await early[1][0]
+                    except Exception:
+                        pass
+
+            async def _step_ahead(env, action, timeout: float):
+                """env.step on a worker thread; once the family has fixed the next observation, act() is sent for it
+                while the decision's last control steps run. Returns the step's results and that act, or None."""
+                loop = asyncio.get_running_loop()
+                fixed = loop.create_future()
+                stepping = asyncio.ensure_future(asyncio.to_thread(
+                    env.step, action, on_observation=lambda o: loop.call_soon_threadsafe(fixed.set_result, o)
+                ))
+                early = None
+                try:
+                    await asyncio.wait((fixed, stepping), return_when=asyncio.FIRST_COMPLETED)
+                    if fixed.done():
+                        observation = _build_observation(fixed.result())
+                        early = (observation, _send_act(observation, timeout))
+                    return await stepping, early
+                except BaseException:
+                    # The step finishes before the error leaves, so the cleanup never closes the env under it.
+                    await asyncio.gather(stepping, return_exceptions=True)
+                    await _drop_act(early)
+                    raise
+
             calibrated_timeout = default_step_timeout_sec
             rpc_overhead_sec = max(
                 default_step_timeout_sec - MINER_COMPUTE_BUDGET_SEC, 0.010
@@ -421,6 +509,18 @@ def _run_multi_seed_rpc_sync(
                         ref_sec=FIRST_STEP_HARD_CAP_REF_SEC, margin_sec=HARD_CAP_MARGIN_SEC,
                     ),
                 )
+
+            def _budget_left(step: int) -> float:
+                """Baseline-equivalent compute a decision after the first may still use: what its window has left."""
+                same_window = (step - 1) // window_acts == window_idx
+                return compute_budget_sec - (window_used_sec if same_window else 0.0)
+
+            def _first_ask_timeout(budget_sec: float, hard_cap_sec: float) -> float:
+                """Wall-clock wait for a decision's first ask: past its budget the answer is struck anyway, and waiting
+                longer would only bank thinking time the second ask can hand over at once."""
+                return min(hard_cap_sec, act_hard_cap_sec(
+                    speed_factor, rpc_overhead_sec, ref_sec=max(budget_sec, 0.0), margin_sec=HARD_CAP_MARGIN_SEC,
+                ))
 
             if use_ref:
                 act_hard_cap, first_hard_cap = _ref_hard_caps(rpc_overhead_sec)
@@ -485,6 +585,7 @@ def _run_multi_seed_rpc_sync(
                         f"{task_label} env built in {phases['env_build_sec']:.2f}s"
                     )
                     seed_clock["env_open"] = True
+                    frozen = False
 
                     try:
                         t_reset_start = time.time()
@@ -521,7 +622,7 @@ def _run_multi_seed_rpc_sync(
                             )
                             if use_ref:
                                 rpc_overhead_sec = await _measure_rpc_overhead_via_ping(
-                                    agent, uid, ping_timeout_sec
+                                    agent_capnp, ping_timeout_sec
                                 )
                                 cpu_factor = 1.0
                             else:
@@ -532,7 +633,7 @@ def _run_multi_seed_rpc_sync(
                                     agent, agent_capnp, obs, uid
                                 )
                             calibrated_timeout = (
-                                (MINER_COMPUTE_BUDGET_SEC * cpu_factor)
+                                (compute_budget_sec * cpu_factor)
                                 + rpc_overhead_sec
                                 + CALIBRATION_MARGIN_SEC
                             )
@@ -545,7 +646,7 @@ def _run_multi_seed_rpc_sync(
                                 _trace(
                                     f"{phase_label} speed_factor={speed_factor:.2f}x "
                                     f"overhead={rpc_overhead_sec*1000:.1f}ms "
-                                    f"hard_cap={act_hard_cap*1000:.0f}ms budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}ms"
+                                    f"hard_cap={act_hard_cap*1000:.0f}ms budget={compute_budget_sec*1000:.0f}ms"
                                 )
                             else:
                                 _trace(
@@ -571,8 +672,24 @@ def _run_multi_seed_rpc_sync(
                         is_first_step = True
                         step_idx = 0
                         rpc_disconnected = False
+                        hard_cap_stalled = False
+                        window_idx, window_used_sec = 0, 0.0
+                        last_act = None
 
                         n_drones = int(getattr(env, "NUM_DRONES", 1))
+                        family = runtime_family_for_task(task)
+                        # One env.step is one decision, which holds for the family's control steps.
+                        step_sec = SIM_DT * int(family.decision_steps)
+                        # The next act() already sent, with its observation, while the last step finished.
+                        early = None
+                        if family.observation_ahead:
+                            if not _ENGINE_RELEASES_GIL:
+                                raise RuntimeError(
+                                    f"{family.family_id} overlaps decisions, but this engine holds the GIL while it "
+                                    f"draws; install the pinned swarm-bullet3 wheel"
+                                )
+                            _freeze_world()
+                            frozen = True
                         act_dim = int(env.action_space.shape[-1])
                         if n_drones > 1:
                             lo, hi = env.action_space.low, env.action_space.high
@@ -599,7 +716,8 @@ def _run_multi_seed_rpc_sync(
                                     else calibrated_timeout
                                 )
 
-                            observation = _build_observation(obs)
+                            observation, sent = early if early is not None else (_build_observation(obs), None)
+                            early = None
                             _set_phase(
                                 "rpc_act",
                                 task=task_label,
@@ -609,13 +727,22 @@ def _run_multi_seed_rpc_sync(
 
                             action = None
                             step_striked = False
-                            for act_attempt in (0, 1):
+                            if (step_idx - 1) // window_acts != window_idx:
+                                window_idx, window_used_sec = (step_idx - 1) // window_acts, 0.0
+                            budget = FIRST_STEP_BUDGET_REF_SEC if is_first_step else _budget_left(step_idx)
+                            # A result the family has fixed waits for no answer, so a late or lost model cannot undo it.
+                            attempts = () if sent is None and family.outcome_fixed(env) else (0, 1)
+                            for act_attempt in attempts:
+                                attempt_timeout = (
+                                    _first_ask_timeout(budget, step_timeout)
+                                    if use_ref and act_attempt == 0
+                                    else step_timeout
+                                )
+                                reply, clock = sent or _send_act(observation, attempt_timeout)
+                                sent = None
                                 try:
-                                    t_act_start = time.perf_counter()
-                                    action_response = await asyncio.wait_for(
-                                        agent.act(observation), timeout=step_timeout
-                                    )
-                                    act_ms = (time.perf_counter() - t_act_start) * 1000.0
+                                    action_response = await reply
+                                    act_ms = clock["ms"]
                                     phases["act_sec"] += act_ms / 1000.0
                                     phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     candidate = np.frombuffer(
@@ -623,18 +750,14 @@ def _run_multi_seed_rpc_sync(
                                         dtype=np.dtype(action_response.action.dtype),
                                     ).reshape(tuple(action_response.action.shape))
                                     if use_ref:
-                                        budget = (
-                                            FIRST_STEP_BUDGET_REF_SEC
-                                            if is_first_step
-                                            else MINER_COMPUTE_BUDGET_SEC
-                                        )
-                                        if judge_act(
+                                        verdict = judge_act(
                                             act_ms / 1000.0,
                                             overhead_sec=rpc_overhead_sec,
                                             speed_factor=speed_factor,
                                             budget_sec=budget,
                                             hard_cap_sec=step_timeout,
-                                        ).strike:
+                                        )
+                                        if verdict.strike:
                                             if not step_striked:
                                                 step_striked = True
                                                 strikes += 1
@@ -652,6 +775,8 @@ def _run_multi_seed_rpc_sync(
                                             if act_attempt == 0:
                                                 continue
                                             break
+                                        if not is_first_step:
+                                            window_used_sec += verdict.normalized_sec
                                     action = candidate
                                     if trace_rpc and (
                                         step_idx == 1 or step_idx % trace_every == 0
@@ -662,12 +787,25 @@ def _run_multi_seed_rpc_sync(
                                         )
                                     break
                                 except asyncio.TimeoutError:
-                                    act_ms = (time.perf_counter() - t_act_start) * 1000
+                                    act_ms = clock["ms"]
                                     phases["act_sec"] += act_ms / 1000.0
                                     phases["act_max_sec"] = max(phases["act_max_sec"], act_ms / 1000.0)
                                     if not step_striked:
                                         step_striked = True
                                         strikes += 1
+                                    if use_ref and clock["timeout"] < step_timeout:
+                                        _trace(
+                                            f"{task_label} step={step_idx} act_slow {act_ms:.1f}ms "
+                                            f"(>{budget*1000:.0f}ms@{speed_factor:.2f}x) stopped waiting "
+                                            f"attempt {act_attempt + 1}/2 "
+                                            f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
+                                        )
+                                        if strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                            bt.logging.warning(
+                                                f"UID {uid} seed {task_idx}: {strikes} slow-act strikes, failing seed"
+                                            )
+                                            break
+                                        continue
                                     if use_ref:
                                         hard_cap_hits += 1
                                     _trace(
@@ -683,14 +821,14 @@ def _run_multi_seed_rpc_sync(
                                     else:
                                         bt.logging.warning(
                                             f"UID {uid}: act() timeout ({act_ms:.0f}ms > {step_timeout*1000:.0f}ms "
-                                            f"[budget={MINER_COMPUTE_BUDGET_SEC*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
+                                            f"[budget={compute_budget_sec*1000:.0f}x{cpu_factor:.2f}+overhead={rpc_overhead_sec*1000:.1f}]), "
                                             f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                         )
                                     if use_ref and hard_cap_hits >= HARD_CAP_STRIKES_PER_SEED:
-                                        rpc_disconnected = True
+                                        hard_cap_stalled = True
                                         bt.logging.warning(
                                             f"UID {uid} seed {task_idx}: {hard_cap_hits} hard-cap timeouts, "
-                                            f"aborting seed and recycling container"
+                                            f"failing seed"
                                         )
                                         break
                                     if strikes >= RPC_MAX_STRIKES_PER_SEED:
@@ -709,12 +847,7 @@ def _run_multi_seed_rpc_sync(
                                         f"{task_label} step={step_idx} act error: {err_txt} "
                                         f"strike {strikes}/{RPC_MAX_STRIKES_PER_SEED}"
                                     )
-                                    lowered = err_txt.lower()
-                                    if (
-                                        "broken pipe" in lowered
-                                        or "disconnected" in lowered
-                                        or "connection reset" in lowered
-                                    ):
+                                    if _link_dropped(e):
                                         rpc_disconnected = True
                                         _trace(
                                             f"{task_label} rpc disconnected; aborting seed"
@@ -727,8 +860,8 @@ def _run_multi_seed_rpc_sync(
                                     break
 
                             if action is None:
-                                action = _strike_zero_action(n_drones, act_dim)
-                            if rpc_disconnected or strikes >= RPC_MAX_STRIKES_PER_SEED:
+                                action = _strike_action(family, last_act, n_drones, act_dim)
+                            if rpc_disconnected or hard_cap_stalled or strikes >= RPC_MAX_STRIKES_PER_SEED:
                                 break
 
                             is_first_step = False
@@ -740,16 +873,25 @@ def _run_multi_seed_rpc_sync(
                                 n_drones=n_drones if n_drones > 1 else None,
                                 act_dim=act_dim,
                             )
+                            last_act = act
                             _set_phase(
                                 "env_step", task=task_label, step=step_idx, sim_t=t_sim
                             )
                             t_step_start = time.perf_counter()
-                            obs, _r, terminated, truncated, info = env.step(
-                                act if n_drones > 1 else act[None, :]
-                            )
+                            if family.observation_ahead:
+                                (obs, _r, terminated, truncated, info), early = await _step_ahead(
+                                    env,
+                                    act if n_drones > 1 else act[None, :],
+                                    _first_ask_timeout(_budget_left(step_idx + 1), act_hard_cap)
+                                    if use_ref else calibrated_timeout,
+                                )
+                            else:
+                                obs, _r, terminated, truncated, info = env.step(
+                                    act if n_drones > 1 else act[None, :]
+                                )
                             phases["sim_sec"] += time.perf_counter() - t_step_start
 
-                            t_sim += SIM_DT
+                            t_sim += step_sec
                             if rollout_observer is not None:
                                 _emit_rollout_event(
                                     "step",
@@ -774,6 +916,7 @@ def _run_multi_seed_rpc_sync(
                                 break
 
                         phases["fly_sec"] = time.perf_counter() - t_fly_start
+                        await _drop_act(early)
                         seed_cancelled = (
                             stop_event is not None and stop_event.is_set()
                         )
@@ -815,7 +958,8 @@ def _run_multi_seed_rpc_sync(
                             results.append(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
-                                    failure_reason=FailureReason.INFRA.value,
+                                    failure_reason=FailureReason.AGENT_EXITED.value,
+                                    metrics=_abandoned_metrics(family, task, env, info),
                                 )
                             )
                             _emit_seed_complete(
@@ -829,7 +973,7 @@ def _run_multi_seed_rpc_sync(
                                 calibration_cpu_factor=cpu_factor,
                                 calibrated_timeout_sec=calibrated_timeout,
                             )
-                        elif strikes >= RPC_MAX_STRIKES_PER_SEED:
+                        elif hard_cap_stalled or strikes >= RPC_MAX_STRIKES_PER_SEED:
                             _set_phase(
                                 "seed_failed_timeout_strikes",
                                 task=task_label,
@@ -843,6 +987,7 @@ def _run_multi_seed_rpc_sync(
                                 ValidationResult(
                                     uid, False, t_sim, 0.0,
                                     failure_reason=FailureReason.SLOW_ACT_STRIKES.value,
+                                    metrics=_abandoned_metrics(family, task, env, info),
                                 )
                             )
                             _emit_seed_complete(
@@ -887,6 +1032,7 @@ def _run_multi_seed_rpc_sync(
                                     min_clearance=min_clearance,
                                     collision=collision,
                                     failure_reason=failure_reason,
+                                    info=info,
                                 )
                                 score = evaluation.score
                                 result_metrics = dict(evaluation.metrics)
@@ -933,6 +1079,8 @@ def _run_multi_seed_rpc_sync(
 
                     finally:
                         t_cleanup_start = time.perf_counter()
+                        if frozen:
+                            _thaw_world()
                         _cleanup_env_quietly(env)
                         _release_held_seed(time.perf_counter() - t_cleanup_start)
 
@@ -1012,17 +1160,43 @@ def _run_multi_seed_rpc_sync(
         if shm_file is not None:
             shm_file.close()
 
-async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: float) -> float:
-    """Pure RPC round-trip overhead from no-op pings (no miner-side compute)."""
+async def _measure_rpc_overhead_via_ping(agent_capnp, ping_timeout_sec: float) -> float:
+    """Pure RPC round-trip overhead from no-op pings to the validator's own echo server.
+
+    The miner's server answers inside the miner's process, where a model can slow its own
+    replies; the echo rides the same RPC stack and runs no submission code.
+    """
     facade = _docker_evaluator_facade()
+
+    class _Echo(agent_capnp.Agent.Server):
+        """Agent capability that answers ping and nothing else."""
+
+        async def ping(self, message, **kwargs):
+            """Answer the calibration ping."""
+            return "pong"
+
+    async def _serve(stream):
+        """Hold one echo connection open until the client leaves."""
+        await capnp.TwoPartyServer(stream, bootstrap=_Echo()).on_disconnect()
+
     samples = []
-    for _ in range(facade.CALIBRATION_ROUNDS):
-        try:
-            t0 = time.perf_counter()
-            await asyncio.wait_for(agent.ping("cal"), timeout=ping_timeout_sec)
-            samples.append(time.perf_counter() - t0)
-        except Exception:
-            continue
+    try:
+        server = await capnp.AsyncIoStream.create_server(_serve, "127.0.0.1", 0)
+        async with server:
+            stream = await capnp.AsyncIoStream.create_connection(
+                host="127.0.0.1", port=server.sockets[0].getsockname()[1]
+            )
+            echo = capnp.TwoPartyClient(stream).bootstrap().cast_as(agent_capnp.Agent)
+            for _ in range(facade.CALIBRATION_ROUNDS):
+                try:
+                    t0 = time.perf_counter()
+                    await asyncio.wait_for(echo.ping("cal"), timeout=ping_timeout_sec)
+                    samples.append(time.perf_counter() - t0)
+                except Exception:
+                    continue
+            stream.close()
+    except Exception:
+        pass
     if len(samples) < 3:
         return max(facade.RPC_STEP_TIMEOUT_SEC - facade.MINER_COMPUTE_BUDGET_SEC, 0.010)
     samples.sort()
@@ -1032,5 +1206,5 @@ async def _measure_rpc_overhead_via_ping(agent, uid: int, ping_timeout_sec: floa
 
 async def _calibrate_rpc_overhead_async(self, agent, agent_capnp, obs, uid: int):
     """Measure trusted transport overhead; graph artifacts cannot calibrate hosts."""
-    overhead = await _measure_rpc_overhead_via_ping(agent, uid, RPC_PING_TIMEOUT_SEC)
+    overhead = await _measure_rpc_overhead_via_ping(agent_capnp, RPC_PING_TIMEOUT_SEC)
     return overhead, 1.0

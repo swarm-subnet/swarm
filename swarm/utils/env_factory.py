@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import io
 import time
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pybullet as p
@@ -107,8 +108,10 @@ def make_env_with_initial_obs(
     task: MapTask,
     *,
     gui: bool = False,
+    wrap_runtime: Optional[Callable[[Any], Any]] = None,
 ) -> tuple[MovingDroneAviary, dict[str, np.ndarray]]:
-    """Create an env and return the observation produced by its initial reset."""
+    """Create an env and return the observation produced by its initial reset. When wrap_runtime is given, it is
+    handed the task's family runtime before that reset and the env runs on what it returns."""
     ctrl_freq = int(round(1.0 / task.sim_dt))
     runtime_profile = runtime_profile_for_task(task)
     # Office physics ticks at 250 Hz: a 20 ms tick cannot resolve motor lag (~1% cost).
@@ -128,6 +131,8 @@ def make_env_with_initial_obs(
             act=ActionType.VEL,
             **common_kwargs,
         )
+    if wrap_runtime is not None:
+        env.family_runtime = wrap_runtime(env.family_runtime)
 
     family_id = getattr(task, "family_id", "")
     if family_id == "cf_interceptor":
@@ -149,7 +154,11 @@ def make_env_with_initial_obs(
 
     with _hide_gui_rendering(cli, gui):
         with contextlib.redirect_stdout(io.StringIO()):
-            obs, _ = env.reset(seed=task.map_seed)
+            try:
+                obs, _ = env.reset(seed=task.map_seed)
+            except Exception:
+                env.close()
+                raise
 
     p.setPhysicsEngineParameter(
         numSolverIterations=SOLVER_ITERATIONS,

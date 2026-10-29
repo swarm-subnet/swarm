@@ -22,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 
 from swarm.constants import SIM_DT
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator.task_gen import task_for_seed_and_type
 
 
@@ -42,9 +42,8 @@ def test_village_env_builds_for_reported_seed() -> None:
 def test_mountain_env_renders_depth_without_er_depth_only() -> None:
     """The mountain camera gives finite depth on reset and on step, with a finite reward and a distance in info."""
     task = task_for_seed_and_type(sim_dt=SIM_DT, seed=657393, challenge_type=3)
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, info = env.reset(seed=task.map_seed)
         assert obs["depth"].size > 0
         assert np.isfinite(obs["depth"]).all()
 

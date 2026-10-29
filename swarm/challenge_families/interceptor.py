@@ -15,7 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Interceptor family: the miner chases a validator-flown evader across the open map, and the score that follows the catch."""
+"""COMPLETED, NOT IN USE: Interceptor (cf_interceptor) is completed; its champion reached the solve threshold.
+
+No validator serves it, nobody can submit to it and it pays nothing. The code stays only so the winning solution
+and past benchmarks can still be re-run: do not build new work on it.
+The live families are cf_solar_patrol, cf_swarm_sar and cf_search_and_rescue.
+Guide: docs/families/completed/interceptor.md.
+
+Interceptor family: the miner chases a validator-flown evader across the open map, and the score that follows the catch."""
 
 from __future__ import annotations
 

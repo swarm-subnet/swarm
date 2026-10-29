@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -159,6 +160,56 @@ def get_family_benchmark_admission_policy(
     return _deepcopy_mapping(family_definition.get("benchmark_admission_policy", {}))
 
 
+def get_family_benchmark_version(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> str:
+    """Return the bundled benchmark version, refusing unknown or malformed declarations."""
+    value = get_challenge_family_definition(family_id, registry=registry).get("benchmark_version")
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
+        raise ValueError(f"invalid_family_benchmark_version:{family_id}:{value!r}")
+    return value
+
+
+def validate_family_task_version(family_id: str, benchmark_version: str | None) -> str:
+    """Require a task's version to match the local family runtime before executing or uploading."""
+    local_version = get_family_benchmark_version(family_id)
+    if benchmark_version != local_version:
+        raise ValueError(f"family_benchmark_version_mismatch:{family_id}:{benchmark_version!r}:{local_version}")
+    return local_version
+
+
+def get_family_benchmark_seed_count(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Seeds a model of the family is scored on per epoch, the backend's own count; 0 when it flies the whole list."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("benchmark_seed_count", 0))
+
+
+def get_family_seeds_zeroed_per_mistake(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Best seeds the backend zeroes per missed threat or false alarm across the epoch; 0 when the family has no such rule."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("seeds_zeroed_per_mistake", 0))
+
+
+def get_family_king_window(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> int:
+    """Crowned kings the family pays at once; 0 when it keeps the shared King of the Hill window."""
+    family_definition = get_challenge_family_definition(family_id, registry=registry)
+    return int(family_definition.get("king_window", 0))
+
+
 def get_family_visibility(
     family_id: str,
     *,
@@ -250,6 +301,13 @@ CHALLENGE_FAMILY_TO_INTERFACE_VERSIONS = {
 }
 SCORE_SCHEMA_IDS = tuple(_REGISTRY["score_schemas"])
 POLICY_INTERFACE_KEYS = tuple(_REGISTRY.get("policy_interfaces", {}))
+OPEN_CHALLENGE_FAMILY_IDS = tuple(
+    family_id
+    for family_id in CHALLENGE_FAMILY_IDS
+    if _REGISTRY["challenge_families"][family_id]["family_state"] not in ("completed", "archived")
+)
+# Commands a person runs default to a live family; untagged data from before families stays Autopilot's.
+DEFAULT_CLI_FAMILY_ID = "cf_search_and_rescue"
 
 __all__ = [
     "BENCHMARK_GROUP_ORDER",
@@ -264,6 +322,7 @@ __all__ = [
     "CHALLENGE_TYPE_IDS",
     "CHALLENGE_TYPE_TO_BENCHMARK_GROUP",
     "CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE",
+    "DEFAULT_CLI_FAMILY_ID",
     "EMISSIONS_STATES",
     "ENVIRONMENT_TYPES",
     "ENVIRONMENT_TYPE_TO_CHALLENGE_TYPE",
@@ -271,6 +330,7 @@ __all__ = [
     "MARKET_VERTICAL_IDS",
     "MAX_CHALLENGE_TYPE",
     "MIN_CHALLENGE_TYPE",
+    "OPEN_CHALLENGE_FAMILY_IDS",
     "SCHEMA_VERSION",
     "SCORE_SCHEMA_IDS",
     "SKILL_IDS",
@@ -282,6 +342,10 @@ __all__ = [
     "domain_model_schema_path",
     "filter_challenge_family_definitions",
     "get_family_benchmark_admission_policy",
+    "get_family_benchmark_seed_count",
+    "get_family_benchmark_version",
+    "validate_family_task_version",
+    "get_family_king_window",
     "get_challenge_family_definition",
     "get_family_screening_policy",
     "get_family_visibility",

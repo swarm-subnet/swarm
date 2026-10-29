@@ -33,8 +33,11 @@ from swarm.constants import (
     SAR_RGB_RES,
     SWARM_NEIGHBOR_K,
 )
+from swarm.domain_model import get_policy_interface_contract
 
 _DETECTION_DIM = 2 + 5 * OFFICE_DET_MAX_BOXES
+# Read from the registry, which mirrors the family's contract module without importing the family.
+_SOLAR_FIELDS = get_policy_interface_contract("cf_solar_patrol", "submission_zip.v1")["observation_space"]["fields"]
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -177,6 +180,28 @@ def _rgb_camera(env, sv, ctx):
     return np.asarray(env._rgb_buffer[d], dtype=np.float32)
 
 
+def _solar_part(key):
+    """Compute fn for one key of the Solar Patrol view, which the family builds once per decision."""
+    def compute(env, sv, ctx):
+        """This decision's value for the key."""
+        return env.family_runtime.observation_part(env, key)
+    return compute
+
+
+def _solar_image(key, semantic_label):
+    """An image channel of the Solar Patrol view, at the contract's fixed shape."""
+    shape = tuple(_SOLAR_FIELDS[key]["shape"])
+    return SensorChannel(f"solar_{key}", semantic_label, "image", _solar_part(key),
+                         image_shape=lambda e: shape, param_image_shape=shape)
+
+
+def _solar_vector(key):
+    """A flat vector channel of the Solar Patrol view, at the contract's fixed length."""
+    width = int(_SOLAR_FIELDS[key]["shape"][0])
+    return SensorChannel(f"solar_{key}", key, "vector", _solar_part(key),
+                         env_dim=lambda e: width, param_dim=lambda cf, ad: width)
+
+
 def _action_dim(env) -> int:
     """Width of a single action in the env's action space."""
     return int(env.action_space.shape[-1])
@@ -277,4 +302,11 @@ OBSERVATION_CHANNELS = {
         image_shape=lambda e: (int(e.IMG_RES[1]), int(e.IMG_RES[0]), 3),
         param_image_shape=(OFFICE_CAMERA_RES, OFFICE_CAMERA_RES, 3),
     ),
+    # Solar Patrol: the colour or thermal feed (the other one is zero), the zoom view, the drone
+    # state and the site map, all built by the family once per decision.
+    "solar_rgb": _solar_image("rgb", "rgb_camera"),
+    "solar_thermal": _solar_image("thermal", "thermal_camera"),
+    "solar_zoom": _solar_image("zoom", "zoom_camera"),
+    "solar_state": _solar_vector("state"),
+    "solar_site_map": _solar_vector("site_map"),
 }

@@ -15,7 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar map movers: the truck on its path, the bird on its loop, the herd on the terrain, and what a seed draws.
+"""Solar map movers: the farmers on the public road, or the truck on its path where the map has no road, the bird on
+its loop, and what a seed draws.
 
 The map's assets are far too large to live in the repository, so the whole file is skipped unless SOLAR_ASSET_DIR
 points at a built copy of them. Only the terrain and the movers are placed: the vegetation adds a minute to the
@@ -26,83 +27,39 @@ from __future__ import annotations
 import json
 import math
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pybullet as p
 import pytest
 
+from swarm.challenge_families.solar_patrol import park, theft_site
 from swarm.core.env_builder.sar_tagging import classify_body
 from swarm.core.env_builder.sar_types import SUPPORT_CATEGORIES
-from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _stride_pose, build_solar_map, build_solar_movers, solar_manifest, solar_mover_rules
+from swarm.core.maps.solar import farmers
+from swarm.core.maps.solar.builder import CONFIG, SOLAR_ASSET_DIR, _inside, _point_gap, build_solar_map, build_solar_movers, solar_fence, solar_manifest, solar_mover_rules
 
 ASSET_DIR = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 SEED = 0
-WALK_STEPS = 100
+HORIZON_S = 390.0
 SUPPORT = {category.value for category in SUPPORT_CATEGORIES}
+
+ROAD = os.path.join(ASSET_DIR, "movers", CONFIG["road_file"])
+ROAD_SHIPPED = os.path.exists(ROAD)
 
 pytestmark = pytest.mark.skipif(not os.path.exists(os.path.join(ASSET_DIR, "manifest.json")),
                                 reason=f"solar map assets not built at {ASSET_DIR}")
-
-
-def _herd(asset_dir):
-    """The herd table the movers fragment names, read straight off disk."""
-    with open(os.path.join(asset_dir, "movers", "goat_herd.json"), encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _synthetic_stride(asset_dir, target):
-    """An asset directory like the real one but with a stride for the herd, for a build that shipped without one.
-
-    The stand-in is the rest pose repeated, in the face-corner order the engine holds the mesh in, so it has the
-    shape and the vertex count the real table has and the walk can be driven before that table lands.
-    """
-    os.mkdir(target)
-    for name in os.listdir(asset_dir):
-        if name != "movers":
-            os.symlink(os.path.join(asset_dir, name), os.path.join(target, name))
-    movers = os.path.join(target, "movers")
-    os.mkdir(movers)
-    for name in os.listdir(os.path.join(asset_dir, "movers")):
-        if name not in ("goat_herd.json", "goat_poses.npz"):
-            os.symlink(os.path.join(asset_dir, "movers", name), os.path.join(movers, name))
-    vertices, corners = [], []
-    with open(os.path.join(asset_dir, "movers", "goat.obj"), encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("v "):
-                vertices.append([float(value) for value in line.split()[1:4]])
-            elif line.startswith("f "):
-                corners += [int(token.split("/")[0]) - 1 for token in line.split()[1:4]]
-    herd = _herd(asset_dir)
-    rest = np.asarray(vertices, dtype=np.float32)[np.asarray(corners)]
-    np.savez_compressed(os.path.join(movers, "goat_poses.npz"), hz=herd["cycle_fps"], stride_m=herd["stride_m"],
-                        poses=np.repeat(rest[None], herd["cycle_frames"], axis=0))
-    herd["poses"] = "goat_poses.npz"
-    with open(os.path.join(movers, "goat_herd.json"), "w", encoding="utf-8") as handle:
-        json.dump(herd, handle)
-    return target
+needs_road = pytest.mark.skipif(not ROAD_SHIPPED, reason=f"the installed swarm-worlds has no {ROAD}")
+table_truck = pytest.mark.skipif(ROAD_SHIPPED, reason="the map ships the farmers' road, so the truck follows no table")
 
 
 @pytest.fixture(scope="module")
-def walking_assets(tmp_path_factory):
-    """An asset directory whose herd carries a stride: the real one where it does, a stand-in where it does not."""
-    if _herd(ASSET_DIR).get("poses"):
-        return ASSET_DIR
-    return _synthetic_stride(ASSET_DIR, str(tmp_path_factory.mktemp("solar") / "assets"))
-
-
-@pytest.fixture(scope="module")
-def world(walking_assets):
+def world():
     """A DIRECT client holding this seed's terrain and movers, and the runtime that drives them."""
     cli = p.connect(p.DIRECT)
-    built = build_solar_map(SEED, cli, asset_dir=walking_assets, groups=("terrain", "movers"))
+    built = build_solar_map(SEED, cli, asset_dir=ASSET_DIR, groups=("terrain", "movers"))
     yield cli, built, build_solar_movers(built, seed=SEED, cli=cli)
     p.disconnect(cli)
-
-
-def _ground(cli, x, y):
-    """Terrain height under a point, from a ray dropped from well above the park."""
-    hit = p.rayTest([float(x), float(y), 400.0], [float(x), float(y), -80.0], physicsClientId=cli)[0]
-    return float(hit[3][2]) if int(hit[0]) >= 0 else None
 
 
 def _by_item(built, item):
@@ -110,38 +67,21 @@ def _by_item(built, item):
     return [body for place, body in built["movers"] if place["item"] == item]
 
 
-def test_the_runtime_holds_every_mover_body(world):
-    """Every placement tagged as a mover is in the runtime, and the manifest's three movers are all there."""
+def test_the_runtime_holds_every_mover_body_and_the_herd_is_left_out(world):
+    """Every placement tagged as a mover is in the runtime, the truck and the bird both there, and no goat is built
+    though the manifest still lists the herd."""
     _, built, movers = world
     assert len(built["movers"]) == len(movers.body_uids) > 0
-    kinds = {place["mover"] for place, _ in built["movers"]}
-    assert kinds == {"pickup", "bird", "goat"}
-    assert movers.goat_stride
+    assert {place["mover"] for place, _ in built["movers"]} == {"pickup", "bird"}
+    listed = {place["mover"] for place in solar_manifest(ASSET_DIR)["placements"] if "mover" in place}
+    assert set(CONFIG["movers_left_out"]) <= listed | set(CONFIG["movers_left_out"])
 
 
-def test_the_stride_is_read_from_the_pose_table(world, walking_assets):
-    """How long the walk is, how fast it plays and how far it carries the animal all come off the table itself."""
-    _, _, movers = world
-    herd = _herd(walking_assets)
-    with np.load(os.path.join(walking_assets, "movers", herd["poses"])) as table:
-        assert movers.stride == {"frames": len(table["poses"]), "fps": float(table["hz"]),
-                                 "stride_m": float(table["stride_m"])}
-
-
-def test_the_stride_blends_between_its_frames():
-    """A whole phase is one frame of the table, a part phase is the two it falls between, and the end wraps round."""
-    poses = np.arange(12, dtype=np.float32).reshape(2, 2, 3)
-    assert _stride_pose(poses, 0.0) == pytest.approx(poses[0])
-    assert _stride_pose(poses, 1.0) == pytest.approx(poses[1])
-    assert _stride_pose(poses, 2.0) == pytest.approx(poses[0])
-    assert _stride_pose(poses, 0.25) == pytest.approx(0.75 * poses[0] + 0.25 * poses[1])
-    assert _stride_pose(poses, 1.5) == pytest.approx(0.5 * (poses[0] + poses[1]))
-
-
-def test_the_pickup_follows_its_table(world, walking_assets):
+@table_truck
+def test_the_pickup_follows_its_table(world):
     """The truck waits out its delay at the first row, walks the table, and holds the last row at the dead end."""
     cli, built, movers = world
-    with open(os.path.join(walking_assets, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
         rows = json.load(handle)["rows"]
     delay = int(round(movers.rules["pickup_delay_s"] * CONFIG["step_hz"]))
     body = _by_item(built, "pickup_body")[0]
@@ -153,10 +93,11 @@ def test_the_pickup_follows_its_table(world, walking_assets):
     assert p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] == pytest.approx(rows[-1][:3], abs=1e-4)
 
 
-def test_the_pickup_wheels_ride_and_spin(world, walking_assets):
+@table_truck
+def test_the_pickup_wheels_ride_and_spin(world):
     """Each wheel holds its place in the truck's frame and turns there by exactly what the table's spin column says."""
     cli, built, movers = world
-    with open(os.path.join(walking_assets, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
         rows = json.load(handle)["rows"]
     delay = int(round(movers.rules["pickup_delay_s"] * CONFIG["step_hz"]))
     body = _by_item(built, "pickup_body")[0]
@@ -172,10 +113,75 @@ def test_the_pickup_wheels_ride_and_spin(world, walking_assets):
     assert turned == pytest.approx(rows[105][7] - rows[100][7], abs=1e-4)
 
 
-def test_the_bird_wraps_its_loop(world, walking_assets):
+@table_truck
+def test_the_truck_drives_from_the_moment_it_pulls_out_then_counts_its_time_parked(world):
+    """The truck following its table has not driven while it waits to leave, drives from that step to its last row,
+    and from then on counts the seconds it has stood parked at the dead end."""
+    _, _, movers = world
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+        rows = len(json.load(handle)["rows"])
+    delay = int(round(movers.rules["pickup_delay_s"] * CONFIG["step_hz"]))
+    assert movers.truck_drive(delay - 1) is None
+    assert movers.truck_drive(delay) == movers.truck_drive(delay + rows - 1) == (0, 0.0)
+    assert movers.truck_drive(delay + rows - 1 + 10 * CONFIG["step_hz"]) == (0, 10.0)
+
+
+@needs_road
+def test_each_farmer_drives_his_whole_trip_and_the_empty_road_holds_no_truck(world):
+    """Every step a farmer is on the road names that farmer's drive, counted in the order they come, with no time
+    parked, since each keeps his engine running; a step with the road empty names none."""
+    _, _, movers = world
+    hz = CONFIG["step_hz"]
+    for step in range(0, int(movers.trips[-1].end_s * hz) + 50, 7):
+        on = [i for i, trip in enumerate(movers.trips) if trip.start_s <= step / hz <= trip.end_s]
+        assert movers.truck_drive(step) == ((on[0], 0.0) if on else None)
+
+
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_THERMAL"), reason="engine without the thermal camera")
+def test_the_truck_reads_warm_in_a_night_thermal_frame_after_its_drive(world):
+    """From the patrol's 20 m straight over the truck once it has driven, a night thermal frame shows its bonnet near
+    white and far brighter than its cab roof, where the same frame with the truck left to the engine shows the two
+    alike."""
+    cli, built, movers = world
+    hz = CONFIG["step_hz"]
+    step = max(s for s in range(0, int(HORIZON_S * hz), 25) if movers.truck_drive(s) is not None)
+    movers.advance(step)
+    body, _ = _truck(built)
+    at, turn = p.getBasePositionAndOrientation(body, physicsClientId=cli)
+    view = p.computeViewMatrix([at[0], at[1], at[2] + 20.0], at, [0.0, 1.0, 0.0])
+    vertical = 2.0 * math.degrees(math.atan(math.tan(math.radians(22.5)) * 512.0 / math.hypot(640.0, 512.0)))
+    projection = p.computeProjectionMatrixFOV(vertical, 640.0 / 512.0, 0.1, 500.0)
+    to_image = np.reshape(projection, (4, 4)).T @ np.reshape(view, (4, 4)).T
+
+    def patch(grey, local):
+        """The median grey of the 5 x 5 pixels around a point given in the truck body's own frame."""
+        clip = to_image @ np.r_[p.multiplyTransforms(at, turn, local, [0.0, 0.0, 0.0, 1.0])[0], 1.0]
+        col, row = int((clip[0] / clip[3] + 1.0) * 320.0), int((1.0 - clip[1] / clip[3]) * 256.0)
+        return float(np.median(grey[row - 2:row + 3, col - 2:col + 3]))
+
+    def frame():
+        """A night White Hot frame at 15 C air under a -20 C clear sky: the grey over the engine and over the cab."""
+        _, _, image, _, _ = p.getCameraImage(
+            640, 512, view, projection, renderer=p.ER_TINY_RENDERER, lightDirection=[0.0, 0.0, -1.0],
+            flags=p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT, airTemperature=15.0,
+            skyTemperature=-20.0, thermalSeed=1, physicsClientId=cli)
+        grey = np.reshape(np.asarray(image, dtype=np.uint8), (512, 640, 4))[:, :, 0]
+        return patch(grey, [park.ENGINE_XY_M[0], park.ENGINE_XY_M[1], 0.8]), patch(grey, [-0.1, 0.0, 1.47])
+
+    cold_bonnet, cold_roof = frame()
+    ep = SimpleNamespace(park={"movers": movers, "air_c": 15.0, "truck": {"hot_c": [(45.0, 38.0)] * 4, "shown": None}})
+    item = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
+    ep.park["truck"]["heat_map"] = park._load_truck_heat(cli, os.path.join(ASSET_DIR, item["folder"], item["obj"]))
+    park.warm_truck(SimpleNamespace(CLIENT=cli), ep, step)
+    warm_bonnet, warm_roof = frame()
+    assert abs(cold_bonnet - cold_roof) < 40
+    assert warm_bonnet > 230 and warm_bonnet - warm_roof > 80
+
+
+def test_the_bird_wraps_its_loop(world):
     """A step a whole loop later puts every bird part exactly where it was, and the step between does not."""
     cli, built, movers = world
-    with open(os.path.join(walking_assets, "movers", "bird_path.json"), encoding="utf-8") as handle:
+    with open(os.path.join(ASSET_DIR, "movers", "bird_path.json"), encoding="utf-8") as handle:
         steps = json.load(handle)["steps"]
     bodies = [body for place, body in built["movers"] if place["mover"] == "bird"]
     movers.advance(0)
@@ -185,70 +191,6 @@ def test_the_bird_wraps_its_loop(world, walking_assets):
     movers.advance(steps // 3)
     flown = [p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] for body in bodies]
     assert np.linalg.norm(np.array(flown[0]) - np.array(first[0])) > 1.0
-
-
-def test_the_goats_keep_their_feet_on_the_terrain(world, walking_assets):
-    """Over a hundred steps every goat walks, and its foot stays within a few centimetres of the ground under it."""
-    cli, built, movers = world
-    foot = float(solar_manifest(walking_assets)["items"]["goat"]["bounds_min"][2])
-    bodies = _by_item(built, "goat")
-    movers.advance(0)
-    start = [p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] for body in bodies]
-    worst, relief = 0.0, 0.0
-    for step in range(WALK_STEPS):
-        movers.advance(step)
-        for body, was in zip(bodies, start):
-            position = p.getBasePositionAndOrientation(body, physicsClientId=cli)[0]
-            ground = _ground(cli, position[0], position[1])
-            assert ground is not None
-            worst = max(worst, abs(position[2] + foot - ground))
-            relief = max(relief, abs(ground - was[2] - foot))
-    walked = [np.linalg.norm(np.array(p.getBasePositionAndOrientation(body, physicsClientId=cli)[0][:2])
-                             - np.array(was[:2])) for body, was in zip(bodies, start)]
-    assert min(walked) > 0.5
-    # A goat that never left its first height would pass on flat ground, so the ground has to move under it too.
-    assert relief > 0.05
-    assert worst < 0.05
-
-
-def test_the_goats_face_the_way_they_walk(world):
-    """Each goat's nose, its own -y turned by its pose, points along the ground it covers in its next steps."""
-    cli, built, movers = world
-    for body in _by_item(built, "goat"):
-        movers.advance(0)
-        start, pose = p.getBasePositionAndOrientation(body, physicsClientId=cli)
-        movers.advance(10)
-        travel = np.array(p.getBasePositionAndOrientation(body, physicsClientId=cli)[0][:2]) - np.array(start[:2])
-        nose = np.array(p.getMatrixFromQuaternion(pose)).reshape(3, 3) @ np.array([0.0, -1.0, 0.0])
-        assert float(nose[:2] @ travel) / np.linalg.norm(travel) > 0.98
-
-
-def test_the_goats_stand_still_without_a_stride(walking_assets, tmp_path):
-    """A herd table with no pose file leaves the animals where the manifest put them."""
-    target = str(tmp_path / "still")
-    os.mkdir(target)
-    for name in os.listdir(walking_assets):
-        if name != "movers":
-            os.symlink(os.path.join(walking_assets, name), os.path.join(target, name))
-    os.mkdir(os.path.join(target, "movers"))
-    for name in os.listdir(os.path.join(walking_assets, "movers")):
-        if name != "goat_herd.json":
-            os.symlink(os.path.join(walking_assets, "movers", name), os.path.join(target, "movers", name))
-    herd = dict(_herd(walking_assets), poses=None)
-    with open(os.path.join(target, "movers", "goat_herd.json"), "w", encoding="utf-8") as handle:
-        json.dump(herd, handle)
-    cli = p.connect(p.DIRECT)
-    try:
-        built = build_solar_map(SEED, cli, asset_dir=target, groups=("movers",))
-        movers = build_solar_movers(built, seed=SEED, cli=cli)
-        assert not movers.goat_stride
-        bodies = _by_item(built, "goat")
-        before = [p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] for body in bodies]
-        for step in range(20):
-            movers.advance(step)
-        assert [p.getBasePositionAndOrientation(body, physicsClientId=cli)[0] for body in bodies] == before
-    finally:
-        p.disconnect(cli)
 
 
 def test_no_mover_is_ever_landable_terrain(world):
@@ -279,23 +221,179 @@ def test_a_seed_draws_the_same_rules_twice_and_two_seeds_draw_different_ones():
     assert solar_mover_rules(11) != solar_mover_rules(12)
     drawn = [solar_mover_rules(seed) for seed in range(200)]
     assert len({rules["bird_phase_share"] for rules in drawn}) == len(drawn)
-    assert len({rules["goat_seed"] for rules in drawn}) == len(drawn)
-    parked = sum(rules["pickup_parked"] for rules in drawn)
-    assert 0 < parked < len(drawn)
-    delays = [rules["pickup_delay_s"] for rules in drawn if not rules["pickup_parked"]]
-    assert min(CONFIG["pickup_delay_s"]) <= min(delays) and max(delays) <= max(CONFIG["pickup_delay_s"])
+    assert len({rules["pickup_delay_s"] for rules in drawn}) == len(drawn)
 
 
-def test_two_seeds_walk_the_herd_differently(walking_assets):
-    """The same herd table walks every goat somewhere else once the seed changes."""
-    tracks = []
-    for seed in (SEED, SEED + 1):
-        cli = p.connect(p.DIRECT)
-        try:
-            built = build_solar_map(seed, cli, asset_dir=walking_assets, groups=("movers",))
-            build_solar_movers(built, seed=seed, cli=cli).advance(WALK_STEPS)
-            tracks.append([p.getBasePositionAndOrientation(body, physicsClientId=cli)[0][:2]
-                           for body in _by_item(built, "goat")])
-        finally:
-            p.disconnect(cli)
-    assert all(np.linalg.norm(np.array(one) - np.array(other)) > 0.5 for one, other in zip(*tracks))
+@table_truck
+def test_the_truck_drives_every_seed_after_take_off_and_before_the_patrol_ends():
+    """Every seed's truck leaves once the 40 s take-off is over, at a moment spread across the patrol, and reaches
+    the dead end before the 390 s are out."""
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+        drive_s = len(json.load(handle)["rows"]) / CONFIG["step_hz"]
+    delays = np.array([solar_mover_rules(seed)["pickup_delay_s"] for seed in range(2000)])
+    assert delays.min() >= 40.0
+    assert delays.max() + drive_s <= HORIZON_S
+    assert np.histogram(delays, bins=5, range=CONFIG["pickup_delay_s"])[0].min() > 300
+
+
+def _truck(built):
+    """The pickup's body id, and its wheels' ids with their placements."""
+    body = _by_item(built, "pickup_body")[0]
+    return body, [(place, b) for place, b in built["movers"] if place["item"].startswith("pickup_wheel")]
+
+
+@needs_road
+def test_every_patrol_has_a_farmer_coming_after_another_has_gone():
+    """Each seed brings farmers one at a time, never two on the road at once, and the second comes in within the
+    patrol after the first has left; the first is already on the road or comes as the patrol starts."""
+    road = farmers.load_road(ROAD)
+    for seed in range(300):
+        trips = farmers.plan(seed, road)
+        assert 2 <= len(trips) <= farmers.CONFIG["most"]
+        assert trips[0].start_s <= 0.0 < trips[0].end_s
+        assert all(a.end_s < b.start_s for a, b in zip(trips, trips[1:]))
+        assert 0.0 < trips[1].start_s < HORIZON_S
+        assert trips[-1].start_s < HORIZON_S
+
+
+def _drawn(trip):
+    """What a farmer drew, to compare two plans."""
+    return trip.arrive_by, trip.turn.from_end, trip.leave_by, trip.start_s, trip.cruise_m_s, trip.stop_s
+
+
+@needs_road
+def test_farmers_are_drawn_from_the_seed_and_change_with_it():
+    """The same seed brings the same farmers at the same moments, and different seeds bring them at different ones."""
+    road = farmers.load_road(ROAD)
+    assert [_drawn(t) for t in farmers.plan(11, road)] == [_drawn(t) for t in farmers.plan(11, road)]
+    second = {round(farmers.plan(seed, road)[1].start_s, 3) for seed in range(100)}
+    assert len(second) == 100
+    trips = [t for seed in range(100) for t in farmers.plan(seed, road)]
+    assert {(t.arrive_by, t.leave_by) for t in trips} == {(a, b) for a in farmers.ARMS for b in farmers.ARMS}
+    assert 0.3 < np.mean([t.stop_s > 0 for t in trips]) < 0.7
+
+
+@needs_road
+def test_farmers_come_from_both_ends_and_most_never_enter_the_yard():
+    """Farmers mostly come from the end the one before did not; most never enter the yard, swinging onto the other arm
+    at the corner or turning back short of it; a farmer who swings across leaves by the other end, one who turns back
+    by his own; and every way through is used."""
+    road = farmers.load_road(ROAD)
+    plans = [farmers.plan(seed, road) for seed in range(1000)]
+    assert np.mean([len({t.arrive_by for t in trips}) == 1 for trips in plans]) < 0.2
+    trips = [t for trips in plans for t in trips]
+    assert all(t.leave_by != t.arrive_by for t in trips if t.turn.corner)
+    assert all(t.leave_by == t.arrive_by for t in trips if not t.turn.yard and not t.turn.corner)
+    assert 0.6 < np.mean([not t.turn.yard for t in trips]) < 0.8
+    assert {id(t.turn) for t in trips} == {id(turn) for turn in road.turns}
+    assert sum(turn.corner for turn in road.turns) == 2
+
+
+def _routes(road):
+    """Every way a trip can go: each place to turn round with every arm in and out it serves."""
+    return [(a, turn, b) for turn in road.turns for a in turn.into for b in turn.out]
+
+
+@needs_road
+def test_every_farmer_stays_outside_the_fence():
+    """At every moment of every route, all four corners of the truck stand outside the fence and at least a metre off it."""
+    road = farmers.load_road(ROAD)
+    body = solar_manifest(ASSET_DIR)["items"]["pickup_body"]
+    (x0, y0), (x1, y1) = body["bounds_min"][:2], body["bounds_max"][:2]
+    ring = np.asarray(solar_fence(ASSET_DIR))
+    for arrive_by, turn, leave_by in _routes(road):
+        pose = farmers._path(road, arrive_by, turn, leave_by)[1]
+        yaw = np.arctan2(2 * (pose[:, 6] * pose[:, 5] + pose[:, 3] * pose[:, 4]), 1 - 2 * (pose[:, 4] ** 2 + pose[:, 5] ** 2))
+        c, s = np.cos(yaw)[:, None], np.sin(yaw)[:, None]
+        lx, ly = np.array([x0, x1, x1, x0]), np.array([y0, y0, y1, y1])
+        corners = np.stack([pose[:, :1] + c * lx - s * ly, pose[:, 1:2] + s * lx + c * ly], axis=2).reshape(-1, 2)
+        assert not _inside(ring, corners).any()
+        assert _point_gap(corners, ring) >= 1.0
+
+
+@needs_road
+def test_a_farmer_drives_in_turns_round_backing_up_and_drives_out():
+    """On every route a trip keeps to its speeds, backs up only while turning round and only slowly, halts each time
+    it changes gear, and stands where it turns for its stop."""
+    road = farmers.load_road(ROAD)
+    for arrive_by, turn, leave_by in _routes(road):
+        trip = farmers._trip(road, arrive_by, turn, leave_by, 5.0, 20.0)
+        gear = farmers._path(road, arrive_by, turn, leave_by)[3]
+        assert trip.speed.max() <= 5.0 + 1e-9
+        assert set(gear[gear < 0]) == {-1.0} and trip.speed[gear < 0].max() <= farmers.CONFIG["reverse_m_s"] + 1e-9
+        changes = np.flatnonzero(gear[1:] != gear[:-1])
+        assert len(changes) in (2, 4) and (trip.speed[changes] == 0.0).all()
+        there = len(road.lines[arrive_by]) - turn.from_end
+        assert trip.leave[there] - trip.reach[there] == pytest.approx(20.0)
+        backed = np.flatnonzero(gear < 0)
+        assert backed.min() > there and backed.max() < there + len(turn.rows)
+
+
+@needs_road
+def test_the_wheels_ride_on_the_ground_and_the_front_ones_steer(world):
+    """Through a whole patrol every wheel's lowest point sits within a few centimetres of the terrain, the front wheels
+    turn about the vertical on full lock in the yard while the rear ones never do, and the empty road leaves the truck
+    under the map."""
+    cli, built, movers = world
+    terrain = set(built["bodies"]["terrain"])
+    body, wheels = _truck(built)
+    gaps, steered, under = [], {}, 0
+    for step in range(0, int(HORIZON_S * CONFIG["step_hz"]), 10):
+        movers.advance(step)
+        position, orientation = p.getBasePositionAndOrientation(body, physicsClientId=cli)
+        if position[2] < -100.0:
+            under += 1
+            continue
+        down = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)[:, 2] * -0.36
+        for place, wheel in wheels:
+            at, turned = p.getBasePositionAndOrientation(wheel, physicsClientId=cli)
+            # The wheel's lowest point lies a radius down the body's own vertical, which tilts with the ground.
+            low = np.asarray(at) + down
+            hit = p.rayTest([low[0], low[1], low[2] + 0.1], [low[0], low[1], low[2] - 6.0], physicsClientId=cli)[0]
+            assert hit[0] in terrain
+            gaps.append(low[2] - hit[3][2])
+            local = p.multiplyTransforms(*p.invertTransform(position, orientation), at, turned)[1]
+            axle = p.rotateVector(local, [0.0, 1.0, 0.0])
+            steered.setdefault(place["item"], []).append(abs(math.degrees(math.atan2(-axle[0], axle[1]))))
+    gaps = np.abs(gaps)
+    assert np.percentile(gaps, 99) < 0.03 and gaps.max() < 0.08
+    assert max(steered["pickup_wheel_front_left"]) > 25.0 and max(steered["pickup_wheel_rear_left"]) < 2.0
+    assert under > 0
+
+
+def _truck_path():
+    """Ground points of the single truck's path, the road where the map ships no farmers' road."""
+    with open(os.path.join(ASSET_DIR, "movers", "pickup_path.json"), encoding="utf-8") as handle:
+        return np.asarray(json.load(handle)["rows"], dtype=float)[:, :2]
+
+
+@needs_road
+def test_thieves_take_the_road_side_from_the_road_the_farmers_drive():
+    """Every fence opening within reach of a farmer's route is road side and never the woods' side, every road side
+    opening is within reach of the road the map ships, and part of that road side lies beyond reach of the single
+    truck's path."""
+    road = farmers.load_road(ROAD)
+    driven = np.vstack([farmers._path(road, arrive_by, turn, leave_by)[0] for arrive_by, turn, leave_by in _routes(road)])
+    shipped = np.vstack([road.lines[arm][:, :2] for arm in farmers.ARMS] + [turn.rows[:, :2] for turn in road.turns])
+    truck = _truck_path()
+    site = theft_site.Site(SEED, ASSET_DIR)
+    beyond_truck = 0
+    for opening in site.openings:
+        near = np.hypot(*(driven - opening.centre).T).min() < theft_site.ROAD_REACH_M
+        assert opening.road or not near, f"{opening.kind} {opening.index} by a farmer's route is not road side"
+        assert not opening.road or np.hypot(*(shipped - opening.centre).T).min() < theft_site.ROAD_REACH_M
+        assert not (opening.road and opening.forest)
+        beyond_truck += near and np.hypot(*(truck - opening.centre).T).min() >= theft_site.ROAD_REACH_M
+    assert beyond_truck > 0
+
+
+def test_a_map_without_the_farmers_road_keeps_the_truck_path_as_the_road(monkeypatch):
+    """Where the map ships no road file, the theft code reads the road from the single truck's path, as the movers
+    then drive it."""
+    monkeypatch.setitem(CONFIG, "road_file", "no_such_road.json")
+    theft_site._road.cache_clear()
+    try:
+        road = theft_site._road(ASSET_DIR)
+    finally:
+        theft_site._road.cache_clear()
+    np.testing.assert_array_equal(road, _truck_path())

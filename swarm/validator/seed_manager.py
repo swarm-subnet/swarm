@@ -30,16 +30,17 @@ from typing import Dict, List, Optional, Tuple
 import bittensor as bt
 
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families.solar_patrol.seed_checks import CACHE_ENV as SEED_CHECK_CACHE_ENV
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
     BENCHMARK_TOTAL_SEED_COUNT,
-    BENCHMARK_VERSION,
     EPOCH_ANCHOR_UTC,
     EPOCH_DURATION_LONG_SECONDS,
     EPOCH_DURATION_SECONDS,
     EPOCH_SWITCH_NUMBER,
     EPOCH_SWITCH_TS,
 )
+from swarm.domain_model import UnknownChallengeFamilyError, get_family_benchmark_seed_count, get_family_benchmark_version
 from swarm.validator.seed_scheme import (
     DEFAULT_SEED_SCHEME_MIN_VERSION,
     SEED_SCHEME_VERSION,
@@ -55,6 +56,8 @@ EPOCH_SEEDS_DIR = STATE_DIR / "epoch_seeds"
 PREEVAL_SEEDS_DIR = STATE_DIR / "preeval_seeds"
 # Where the engine reads the collision trees it saved per mesh and scale; the folder follows the epoch.
 BVH_CACHE_ENV = "SWARM_BVH_CACHE_DIR"
+# Solar Patrol's seed check verdicts, a reference flight each: kept with the state so a restart keeps them.
+SEED_CHECKS_DIR = STATE_DIR / "seed_checks"
 
 _MAX_SEED = 2**32 - 1
 _EPOCH_FILE_RE = re.compile(r"^epoch_(\d+)(?:__(.+))?\.json$")
@@ -69,6 +72,15 @@ class SeedsNotReady(RuntimeError):
     Raised rather than falling back to random seeds: a silent fallback is exactly the
     divergence this whole mechanism exists to remove, and it would be invisible.
     """
+
+
+def epoch_seed_count(family_id: str) -> int:
+    """Seeds in a family's epoch list: the shared total, or the family's own count when that is larger."""
+    try:
+        own = get_family_benchmark_seed_count(family_id)
+    except UnknownChallengeFamilyError:
+        own = 0
+    return max(BENCHMARK_TOTAL_SEED_COUNT, own)
 
 
 def _generate_random_seeds(count: int) -> List[int]:
@@ -87,6 +99,7 @@ class BenchmarkSeedManager:
     def __init__(self) -> None:
         """Recover the latest local epoch and its seeds from disk, generating them when absent."""
         EPOCH_SEEDS_DIR.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault(SEED_CHECK_CACHE_ENV, str(SEED_CHECKS_DIR))
         self.seeds: List[int] = []
         self.current_epoch_requires_state_invalidation = False
         self._pending_publications: List[dict] = []
@@ -122,10 +135,10 @@ class BenchmarkSeedManager:
         A key arriving for an epoch whose cached list was built without it drops that cache,
         because checking the file alone would leave a stale list live in memory.
         """
-        was_derived = self.uses_derived_seeds()
+        previous_min = self._scheme_min_version
         if min_version:
             self._scheme_min_version = str(min_version)
-        if self.uses_derived_seeds() != was_derived:
+        if self._scheme_min_version != previous_min:
             # The scheme itself moved, so anything cached was built under the other one.
             self._family_seeds = {}
             self.seeds = []
@@ -148,13 +161,13 @@ class BenchmarkSeedManager:
                     self._family_seeds = {}
                     self.seeds = []
 
-    def uses_derived_seeds(self) -> bool:
-        """Whether this validator's own version is scored on the shared seed list."""
-        return uses_derived_seeds(BENCHMARK_VERSION, self._scheme_min_version)
+    def uses_derived_seeds(self, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> bool:
+        """Whether this family's bundled version uses the shared seed list."""
+        return uses_derived_seeds(get_family_benchmark_version(family_id), self._scheme_min_version)
 
-    def seeds_ready(self, epoch: Optional[int] = None) -> bool:
+    def seeds_ready(self, epoch: Optional[int] = None, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> bool:
         """Whether seeds can be built for an epoch, so the caller knows not to take work."""
-        if not self.uses_derived_seeds():
+        if not self.uses_derived_seeds(family_id):
             return True
         target = self.epoch_number if epoch is None else epoch
         return target > 0 and target in self._epoch_keys
@@ -167,7 +180,7 @@ class BenchmarkSeedManager:
         """Identity of the list a phase is flying, sent with its scores; None under the random scheme."""
         target = self.epoch_number if epoch is None else epoch
         key = self._epoch_keys.get(target)
-        if not self.uses_derived_seeds() or key is None:
+        if not self.uses_derived_seeds(family_id) or key is None:
             return None
         return seed_set_id(key_fingerprint(key), target, family_id)
 
@@ -176,17 +189,17 @@ class BenchmarkSeedManager:
 
         Under the shared scheme a missing key is an error, never a quiet roll of the dice.
         """
-        if not self.uses_derived_seeds():
-            return _generate_random_seeds(BENCHMARK_TOTAL_SEED_COUNT)
+        if not self.uses_derived_seeds(family_id):
+            return _generate_random_seeds(epoch_seed_count(family_id))
         key = self._epoch_keys.get(epoch)
         if key is None:
             raise SeedsNotReady(f"no key held for epoch {epoch}")
-        return derive_seeds(key, epoch, family_id, BENCHMARK_TOTAL_SEED_COUNT)
+        return derive_seeds(key, epoch, family_id, epoch_seed_count(family_id))
 
-    def _file_stamp(self, epoch: int) -> Tuple[str, Optional[str]]:
+    def _file_stamp(self, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> Tuple[str, Optional[str]]:
         """The scheme name and key fingerprint a seed file for this epoch must carry."""
         key = self._epoch_keys.get(epoch)
-        if not self.uses_derived_seeds() or key is None:
+        if not self.uses_derived_seeds(family_id) or key is None:
             return _RANDOM_SCHEME, None
         return SEED_SCHEME_VERSION, key_fingerprint(key)
 
@@ -255,19 +268,19 @@ class BenchmarkSeedManager:
         """
         if not path.exists():
             return None
-        if not self.seeds_ready(epoch):
+        if not self.seeds_ready(epoch, family_id):
             # Without the key there is no list this file could legitimately be, and loading it
             # would put seeds in memory for an epoch the manager has just said it cannot build.
             return None
         try:
             data = self._load_epoch_payload(path)
-            scheme, fingerprint = self._file_stamp(epoch)
+            scheme, fingerprint = self._file_stamp(epoch, family_id)
             if (
                 data.get("epoch_number") == epoch
                 and str(data.get("family_id") or DEFAULT_RUNTIME_FAMILY_ID) == family_id
                 and str(data.get("scheme") or _RANDOM_SCHEME) == scheme
                 and data.get("key_fingerprint") == fingerprint
-                and len(data.get("seeds", [])) == BENCHMARK_TOTAL_SEED_COUNT
+                and len(data.get("seeds", [])) == epoch_seed_count(family_id)
             ):
                 return [int(seed) for seed in data["seeds"]]
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
@@ -300,7 +313,7 @@ class BenchmarkSeedManager:
                 invalidate_local_state_on_regenerate
             )
         self._save_epoch_file(epoch, family_id, seeds, published=False)
-        source = "derived" if self.uses_derived_seeds() else "random"
+        source = "derived" if self.uses_derived_seeds(family_id) else "random"
         # The identity is logged so the fleet can be checked without switching anything on:
         # read this line off every validator and the strings either all match or they do not.
         # It is a hash of the commitment, so it names the list without revealing a single map.
@@ -344,7 +357,7 @@ class BenchmarkSeedManager:
     ) -> None:
         """Write a seed set with its epoch window and publication state, atomically."""
         start, end = self.epoch_time_range(epoch)
-        scheme, fingerprint = self._file_stamp(epoch)
+        scheme, fingerprint = self._file_stamp(epoch, family_id)
         data = {
             "epoch_number": epoch,
             "family_id": family_id,
@@ -352,7 +365,7 @@ class BenchmarkSeedManager:
             "ended_at": end.isoformat(),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "seed_count": len(seeds),
-            "benchmark_version": BENCHMARK_VERSION,
+            "benchmark_version": get_family_benchmark_version(family_id),
             "scheme": scheme,
             "key_fingerprint": fingerprint,
             "published": published,

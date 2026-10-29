@@ -20,15 +20,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import capnp
 import numpy as np
 import pytest
 
 from swarm.benchmark import engine as bench_full_eval
+from swarm.challenge_families.base import ChallengeFamilyRuntimeProfile
 from swarm.validator import runtime_telemetry
 from swarm.validator.docker import docker_evaluator as de
 from swarm.validator.docker.docker_evaluator_parts import batch
@@ -71,11 +75,17 @@ class _Env:
         time.sleep(0.01)
 
 
-def _fly_one_seed(monkeypatch, step) -> list:
-    """Fly one seed through the real RPC loop against a fake agent and return every record it emitted."""
+def _fly_one_seed(
+    monkeypatch, step, *, delays=(), acts=None, profile=None, speed_factor=None, horizon=0.04, agent_act=None
+) -> list:
+    """Fly one seed through the real RPC loop against a fake agent and return every record it emitted.
+
+    delays holds the seconds each act() call takes, in call order, and the last one repeats; acts, when
+    given, collects one entry per act() call; agent_act, when given, answers act() instead."""
     rpc_mod = de.rpc
     ev = _new_evaluator()
     records: list = []
+    calls: list = [] if acts is None else acts
 
     class _Agent:
         """Capnp agent stand-in answering ping, reset and act with canned replies."""
@@ -89,7 +99,12 @@ def _fly_one_seed(monkeypatch, step) -> list:
             return None
 
         async def act(self, _obs):
-            """Return a zero action of the expected shape."""
+            """Return a zero action of the expected shape, after this call's delay."""
+            if agent_act is not None:
+                return await agent_act(_obs)
+            calls.append(1)
+            if delays:
+                await asyncio.sleep(delays[min(len(calls), len(delays)) - 1])
             tensor = SimpleNamespace(
                 data=np.zeros(5, dtype=np.float32).tobytes(), dtype="float32", shape=[5]
             )
@@ -118,6 +133,10 @@ def _fly_one_seed(monkeypatch, step) -> list:
         """Report a ten millisecond overhead on a reference-speed host."""
         return 0.01, 1.0
 
+    async def _no_overhead(_schema, _timeout):
+        """Report a transport that costs nothing."""
+        return 0.0
+
     client = SimpleNamespace(bootstrap=lambda: SimpleNamespace(cast_as=lambda _schema: _Agent()))
     monkeypatch.setattr(rpc_mod.capnp, "load", lambda _path: SimpleNamespace(Agent=object()))
     monkeypatch.setattr(
@@ -130,15 +149,17 @@ def _fly_one_seed(monkeypatch, step) -> list:
     monkeypatch.setattr(rpc_mod.capnp, "AsyncIoStream", _StreamFactory)
     monkeypatch.setattr(ev, "_serialize_observation", lambda _schema, obs: obs)
     monkeypatch.setattr(ev, "_calibrate_rpc_overhead_async", _fake_calibrate)
+    monkeypatch.setattr(rpc_mod, "_measure_rpc_overhead_via_ping", _no_overhead)
     monkeypatch.setattr(
         rpc_mod, "make_env_with_initial_obs", lambda _task, gui=False: (_Env(step), {"marker": 0})
     )
 
     task = SimpleNamespace(
-        map_seed=77, challenge_type=1, horizon=0.04, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
+        map_seed=77, challenge_type=1, horizon=horizon, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
     )
     ev._run_multi_seed_rpc_sync(
-        [task], uid=9, rpc_port=8000, on_seed_complete=lambda record=None: records.append(record)
+        [task], uid=9, rpc_port=8000, on_seed_complete=lambda record=None: records.append(record),
+        runtime_profile_payload=profile, speed_factor=speed_factor,
     )
     return records
 
@@ -177,6 +198,210 @@ def test_flown_seed_record_carries_every_phase_clock(monkeypatch):
     assert record["cleanup_sec"] >= 0.01
     assert record["fly_sec"] >= record["sim_sec"] > 0.0
     assert record["act_sec"] >= record["act_max_sec"] > 0.0
+
+
+@pytest.mark.parametrize(("budget_sec", "acts_expected"), [(None, 2), (0.1, 3)])
+def test_a_family_step_budget_judges_each_act(monkeypatch, budget_sec, acts_expected):
+    """A 0.3 s act() passes the shared 0.6 s budget, but under a family's 0.1 s it is struck and asked again."""
+    steps: list = []
+
+    def _step(_action):
+        """End the episode on the second step."""
+        steps.append(1)
+        return {"marker": len(steps)}, 0.0, len(steps) == 2, False, {"success": False, "collision": False}
+
+    acts: list = []
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=budget_sec)
+    _fly_one_seed(monkeypatch, _step, delays=(0.0, 0.3), acts=acts, profile=profile.as_dict(), speed_factor=1.0)
+
+    assert len(acts) == acts_expected
+
+
+@pytest.mark.parametrize(
+    ("window_acts", "delays", "acts_expected"),
+    [
+        (5, (0.0, 0.2, 0.05), 3),
+        (5, (0.0, 0.2, 0.25), 4),
+        (2, (0.0, 0.35, 0.35), 3),
+    ],
+    ids=["window-fits", "window-spent", "next-window-refills"],
+)
+def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, acts_expected):
+    """Under 400 ms per window, each act() gets what the window has left: 200 + 250 ms in one window is struck and
+    asked again, while 350 ms in the next window starts from a full budget."""
+    steps: list = []
+
+    def _step(_action):
+        """End the episode on the third step."""
+        steps.append(1)
+        return {"marker": len(steps)}, 0.0, len(steps) == 3, False, {"success": False, "collision": False}
+
+    acts: list = []
+    profile = ChallengeFamilyRuntimeProfile(
+        family_id="cf_autopilot", miner_compute_budget_sec=0.4, miner_compute_window_acts=window_acts
+    )
+    _fly_one_seed(
+        monkeypatch, _step, delays=delays, acts=acts, profile=profile.as_dict(), speed_factor=1.0, horizon=0.06
+    )
+
+    assert len(acts) == acts_expected
+
+
+@pytest.mark.parametrize(("stall_sec", "replay_flown"), [(1.5, False), (0.6, True)], ids=["banked", "honest-late"])
+def test_a_late_first_ask_banks_no_thinking_for_the_second(monkeypatch, stall_sec, replay_flown):
+    """Under 400 ms per decision the validator stops waiting once the first ask is late, so an answer worked out
+    through a 1.5 s stall and handed over at once on the second ask is struck, while a 0.6 s one still flies."""
+    flown: list = []
+
+    def _step(action):
+        """Keep the action flown and end the episode on the second step."""
+        flown.append(np.asarray(action).ravel().copy())
+        return {"marker": len(flown)}, 0.0, len(flown) == 2, False, {"success": False, "collision": False}
+
+    calls: list = []
+    busy_until = [0.0]
+
+    async def _act(_obs):
+        """Answer one call at a time like the template server: the second step's first ask thinks for stall_sec and
+        its second ask returns the finished answer, 0.5 on every axis, at once."""
+        calls.append(1)
+        loop = asyncio.get_running_loop()
+        busy_until[0] = max(loop.time(), busy_until[0]) + (stall_sec if len(calls) == 2 else 0.0)
+        await asyncio.sleep(busy_until[0] - loop.time())
+        value = 0.5 if len(calls) == 3 else 0.0
+        tensor = SimpleNamespace(data=np.full(5, value, dtype=np.float32).tobytes(), dtype="float32", shape=[5])
+        return SimpleNamespace(action=tensor)
+
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=0.4)
+    _fly_one_seed(monkeypatch, _step, profile=profile.as_dict(), speed_factor=1.0, agent_act=_act)
+
+    assert len(calls) == 3
+    assert bool(np.allclose(flown[1], 0.5)) is replay_flown
+
+
+@contextlib.contextmanager
+def _real_miner(ping_delay_sec: float, act_delay_sec: float, acts: list, act_plan=None):
+    """Serve a real Cap'n Proto miner on its own thread and yield its port; only its ping is held for ping_delay_sec.
+
+    act_plan, when given, maps the n-th act() to the seconds its model blocks the server and the value it answers."""
+    schema = capnp.load(str(de.rpc._submission_template_dir() / "agent.capnp"))
+    ready, handles = threading.Event(), {}
+
+    class _Miner(schema.Agent.Server):
+        """Miner whose replies take the scripted times."""
+
+        async def ping(self, message, **kwargs):
+            """Answer pong after the ping delay."""
+            await asyncio.sleep(ping_delay_sec)
+            return "pong"
+
+        async def reset(self, **kwargs):
+            """Accept the reset."""
+
+        async def act(self, obs, **kwargs):
+            """Log the call and return a zero action after the act delay, or as the act plan says."""
+            acts.append(1)
+            value = 0.0
+            if act_plan is None:
+                await asyncio.sleep(act_delay_sec)
+            else:
+                blocking_sec, value = act_plan(len(acts))
+                time.sleep(blocking_sec)
+            response = schema.Tensor.new_message()
+            response.data = np.full(5, value, dtype=np.float32).tobytes()
+            response.shape = [5]
+            response.dtype = "float32"
+            return response
+
+    async def _serve():
+        """Listen on a free port until asked to stop."""
+        async with capnp.kj_loop():
+            async def _connection(stream):
+                """Serve one validator connection until it closes."""
+                await capnp.TwoPartyServer(stream, bootstrap=_Miner()).on_disconnect()
+
+            server = await capnp.AsyncIoStream.create_server(_connection, "127.0.0.1", 0)
+            handles.update(
+                port=server.sockets[0].getsockname()[1], loop=asyncio.get_running_loop(), stop=asyncio.Event()
+            )
+            ready.set()
+            async with server:
+                await handles["stop"].wait()
+
+    thread = threading.Thread(target=asyncio.run, args=(_serve(),), daemon=True)
+    thread.start()
+    assert ready.wait(10.0)
+    try:
+        yield handles["port"]
+    finally:
+        handles["loop"].call_soon_threadsafe(handles["stop"].set)
+        thread.join(10.0)
+
+
+@pytest.mark.parametrize("ping_delay_sec", [0.0, 0.1], ids=["honest", "slowed-ping"])
+def test_a_slowed_ping_buys_no_act_time(monkeypatch, ping_delay_sec):
+    """A miner holding every ping for 100 ms is charged the same transport overhead as one answering at once,
+    so its 80 ms act is struck under a 50 ms budget and asked again exactly like the honest miner's."""
+    steps: list = []
+    acts: list = []
+    records: list = []
+
+    def _step(_action):
+        """End the episode on the second step."""
+        steps.append(1)
+        return {"marker": [len(steps)]}, 0.0, len(steps) == 2, False, {"success": False, "collision": False}
+
+    rpc_mod = de.rpc
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        rpc_mod, "make_env_with_initial_obs", lambda _task, gui=False: (_Env(_step), {"marker": [0]})
+    )
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=0.05)
+    task = SimpleNamespace(
+        map_seed=77, challenge_type=1, horizon=0.04, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
+    )
+    with _real_miner(ping_delay_sec, 0.08, acts) as port:
+        ev._run_multi_seed_rpc_sync(
+            [task], uid=9, rpc_port=port, on_seed_complete=lambda record=None: records.append(record),
+            runtime_profile_payload=profile.as_dict(), speed_factor=1.0,
+        )
+
+    assert records[0]["calibration_overhead_sec"] < 0.02
+    assert len(acts) == 3
+
+
+@pytest.mark.parametrize(("stall_sec", "replay_flown"), [(1.5, False), (0.6, True)], ids=["banked", "honest-late"])
+def test_a_real_miner_cannot_bank_a_late_answer(monkeypatch, stall_sec, replay_flown):
+    """Through a real Cap'n Proto miner that runs its model inline like the template server, an answer worked out
+    through a 1.5 s stall and handed over at once on the second ask is struck under 400 ms, while 0.6 s still flies."""
+    flown: list = []
+    acts: list = []
+
+    def _step(action):
+        """Keep the action flown and end the episode on the second step."""
+        flown.append(np.asarray(action).ravel().copy())
+        return {"marker": [len(flown)]}, 0.0, len(flown) == 2, False, {"success": False, "collision": False}
+
+    def _plan(n):
+        """The second step's first ask blocks for stall_sec; its second ask answers 0.5 on every axis at once."""
+        return (stall_sec if n == 2 else 0.0), (0.5 if n == 3 else 0.0)
+
+    ev = _new_evaluator()
+    monkeypatch.setattr(
+        de.rpc, "make_env_with_initial_obs", lambda _task, gui=False: (_Env(_step), {"marker": [0]})
+    )
+    profile = ChallengeFamilyRuntimeProfile(family_id="cf_autopilot", miner_compute_budget_sec=0.4)
+    task = SimpleNamespace(
+        map_seed=77, challenge_type=1, horizon=0.04, start=(0.0, 0.0, 1.0), goal=(1.0, 1.0, 1.0)
+    )
+    with _real_miner(0.0, 0.0, acts, act_plan=_plan) as port:
+        ev._run_multi_seed_rpc_sync(
+            [task], uid=9, rpc_port=port, on_seed_complete=lambda record=None: None,
+            runtime_profile_payload=profile.as_dict(), speed_factor=1.0,
+        )
+
+    assert len(acts) == 3
+    assert bool(np.allclose(flown[1], 0.5)) is replay_flown
 
 
 def test_failed_seed_record_still_carries_its_clocks(monkeypatch):

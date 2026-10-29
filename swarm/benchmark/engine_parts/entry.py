@@ -202,7 +202,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         if not _workers.host_timings_normalized:
             print(
-                f"[{_ts()}] Timings are UNNORMALIZED — host calibration did not run. "
+                f"[{_ts()}] Timings are UNNORMALIZED: the host has no usable speed factor. "
                 f"Scores are valid; act times are raw and not comparable to the "
                 f"validator budget.",
                 flush=True,
@@ -223,6 +223,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     eval_start,
                     launched_workers,
                     host_parallelism="process",
+                    family_id=args.family_id,
                 )
             except BaseException as exc:
                 report_error = exc

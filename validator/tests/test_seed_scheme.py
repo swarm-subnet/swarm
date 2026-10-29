@@ -81,3 +81,8 @@ def test_the_scheme_starts_exactly_at_its_version():
 def test_one_index_is_one_mission():
     """Proves a single index resolves to the same seed as the full list's entry."""
     assert derive_seed(KEY, EPOCH, FAMILY, 7) == derive_seeds(KEY, EPOCH, FAMILY, 8)[7]
+
+
+def test_a_longer_list_starts_with_the_shorter_one():
+    """Proves asking for more seeds never moves the first ones, so a family can grow without changing its old maps."""
+    assert derive_seeds(KEY, EPOCH, FAMILY, 2000)[:1000] == derive_seeds(KEY, EPOCH, FAMILY, 1000)

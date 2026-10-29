@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # The MIT License (MIT)
 # Copyright © 2026 Swarm
 
@@ -16,15 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Baseline PPO starter for cf_autopilot: fly to the goal pad and land."""
+"""Solar Patrol: a dock-based drone patrol of a solar park, one module per piece of the challenge."""
 
-import sys
-from pathlib import Path
+from .family import SolarPatrolChallengeFamily
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from common import train_family
-
-if __name__ == "__main__":
-    train_family("cf_autopilot")
+__all__ = ["SolarPatrolChallengeFamily"]

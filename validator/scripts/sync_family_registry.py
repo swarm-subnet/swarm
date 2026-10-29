@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,7 +40,12 @@ def _validate_registry(payload: dict) -> None:
         ("family_state", set(enums["family_state"])),
         ("emissions_state", set(enums["emissions_state"])),
     )
+    if set(payload["challenge_families"]) != set(payload["entity_types"]["challenge_family"]["ids"]):
+        raise SystemExit("challenge family IDs differ from the registry enum")
     for family_id, family in payload["challenge_families"].items():
+        value = family.get("benchmark_version")
+        if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
+            raise SystemExit(f"{family_id}: invalid benchmark_version {value!r}")
         for field, allowed in checks:
             value = family.get(field)
             if value not in allowed:

@@ -1,0 +1,287 @@
+# The MIT License (MIT)
+# Copyright © 2026 Swarm
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+"""Solar Patrol zoom lenses: the 3x and 7x close-up answers the box the model drew, once the link brings it back.
+
+The patrols here fly the M4TD over the flat stand-in park and put a red marker on the ground in view of the wide
+camera; the model's box is drawn on the marker as it shows in the wide frame, and the zoom frame must centre it.
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import math
+from types import SimpleNamespace
+
+import numpy as np
+import pybullet as p
+import pytest
+
+from swarm.challenge_families import build_benchmark_tasks
+from swarm.challenge_families.solar_patrol import camera, zoom
+from swarm.challenge_families.solar_patrol.contract import (
+    DECISION_STEPS,
+    FAMILY_ID,
+    MAX_ZOOMS,
+    STATE_SLICES,
+    ZOOM_SHAPE,
+    Box,
+    decode_action,
+)
+from swarm.challenge_families.solar_patrol.episode import SolarEpisode
+from swarm.constants import SIM_DT
+from swarm.utils.env_factory import make_env_with_initial_obs
+from validator.tests.test_solar_camera import _box, _Env, _moon
+from validator.tests.test_solar_patrol_family import _M4TD_SHIPPED, _action
+from validator.tests.test_solar_patrol_family import flat_park as _flat_park  # noqa: F401
+
+_TILT = -0.5                                   # gimbal 45 degrees down
+_CENTRE = (ZOOM_SHAPE[1] / 2.0, ZOOM_SHAPE[0] / 2.0)
+_CENTRED_PX = 8.0
+
+
+def _view(vertical_fov_deg=40.0, width=640, height=480):
+    """A camera looking north from 20 m up, level, with the given lens and image size."""
+    return camera.View(feed="colour", eye=(0.0, 0.0, 20.0), forward=(0.0, 1.0, 0.0), up=(0.0, 0.0, 1.0),
+                       width=width, height=height, vertical_fov_deg=vertical_fov_deg, sees=True, step=0)
+
+
+def _red(frame):
+    """Centre (x, y) in pixels and size in pixels of the red marker in a frame, or None when it is not there."""
+    mask = (frame[..., 0] > 0.25) & (frame[..., 0] > 1.5 * np.maximum(frame[..., 1], frame[..., 2]))
+    if not mask.any():
+        return None
+    ys, xs = np.nonzero(mask)
+    return float(xs.mean() + 0.5), float(ys.mean() + 0.5), int(mask.sum())
+
+
+class _Flight:
+    """An M4TD patrol flown decision by decision, hovering at the patrol height with the gimbal 45 degrees down."""
+
+    def __init__(self, seed):
+        """Build the patrol, take off, and wait until the dock hands the aircraft over."""
+        if not _M4TD_SHIPPED:
+            pytest.skip("the installed swarm-worlds has no M4TD yet")
+        task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.env, self.obs = make_env_with_initial_obs(task)
+        self.step(_action(take_off=1.0))
+        while int(self.obs["state"][STATE_SLICES["flight_phase"]][0]) != 2:
+            self.step(_action())
+        for _ in range(20):
+            self.step(_action(gimbal_tilt=_TILT))
+
+    def step(self, action):
+        """One decision; the patrol must still be running after it."""
+        self.obs, _reward, terminated, truncated, _info = self.env.step(action[None, :])
+        assert not (terminated or truncated)
+        return self.obs
+
+    def place_marker(self, ahead_m, left_m, **flying):
+        """Stand a red 1 m block on the ground this far ahead of the aircraft and to its left, then fly on until the
+        wide camera takes its next frame."""
+        cli = self.env.CLIENT
+        x, y, height = np.asarray(self.env.pos[0], dtype=float)
+        yaw = float(self.env.rpy[0][2])
+        spot = [x + ahead_m * math.cos(yaw) - left_m * math.sin(yaw), y + ahead_m * math.sin(yaw) + left_m * math.cos(yaw), 0.5]
+        shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.5, 0.5, 0.5], physicsClientId=cli)
+        visual = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.5, 0.5, 0.5], rgbaColor=[0.9, 0.05, 0.05, 1.0],
+                                     physicsClientId=cli)
+        p.createMultiBody(0, shape, visual, spot, physicsClientId=cli)
+        self.step(_action(gimbal_tilt=_TILT, **flying))
+        while self.obs["state"][STATE_SLICES["frame_age_s"]][0] > 0.05:
+            self.step(_action(gimbal_tilt=_TILT, **flying))
+
+    def zoom_on_marker(self, lens, **flying):
+        """Box the marker where the wide frame shows it, press zoom with a lens, and return the observation that
+        brings the close-up: the next one when the link's delay lets it through, else the one after."""
+        found = _red(self.obs["rgb"])
+        assert found is not None, "the marker is not in the wide frame"
+        obs = self.step(_action(gimbal_tilt=_TILT, zoom=1.0, zoom_lens=float(lens == 7), zoom_cx=found[0] / 640.0,
+                                zoom_cy=found[1] / 480.0, zoom_w=0.05, zoom_h=0.05, **flying))
+        if obs["state"][STATE_SLICES["zoom_lens"]][0] != lens:
+            obs = self.step(_action(gimbal_tilt=_TILT, **flying))
+        return obs
+
+    def close(self):
+        """Close the environment."""
+        self.env.close()
+
+
+def test_the_tele_lenses_see_the_decided_angles():
+    """3x covers 35 degrees and 7x 15 degrees across the diagonal of the 640 x 480 zoom frame."""
+    height, width = ZOOM_SHAPE[:2]
+    for lens, diagonal in ((3, 35.0), (7, 15.0)):
+        half_v = math.tan(math.radians(camera.vertical_fov_deg(zoom.LENS_DIAGONAL_FOV_DEG[lens], width, height)) / 2)
+        assert 2 * math.degrees(math.atan(half_v * math.hypot(width, height) / height)) == pytest.approx(diagonal)
+    assert camera.vertical_fov_deg(35.0, width, height) == pytest.approx(21.43, abs=0.01)
+    assert camera.vertical_fov_deg(15.0, width, height) == pytest.approx(9.03, abs=0.01)
+
+
+@pytest.mark.skipif(not hasattr(p, "ER_SWARM_CREASE_FILL"), reason="engine without outline smoothing and crease fill")
+def test_a_zoom_frame_smooths_every_edge(monkeypatch):
+    """The engine is asked for a zoom frame with every edge smoothed and creases filled, a wide frame with outlines only."""
+    sent = []
+
+    def record(width, height, *_args, flags=0, **_kwargs):
+        """Keep the flags a frame was asked with and hand back a blank one."""
+        sent.append(flags)
+        return width, height, np.zeros(width * height * 4, dtype=np.uint8), None, np.zeros(width * height, dtype=np.int32)
+
+    monkeypatch.setattr(zoom.theft, "show", lambda *args: None)
+    monkeypatch.setattr(camera, "night", lambda env: False)
+    monkeypatch.setattr(camera, "night_camera", lambda *args, **kwargs: (0, {}))
+    monkeypatch.setattr(p, "getCameraImage", record)
+    env = _Env(0, 0)
+    ep = SimpleNamespace(zoom={"night_vision": False, "night_mode": "off"}, seed=0, outcome=SimpleNamespace(zooms_used=0))
+    zoom._draw(env, ep, _view(), 7)
+    camera.colour_frame(env, _view())
+    close, wide = sent
+    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE | camera.NO_DEPTH
+    assert close & p.ER_SWARM_CREASE_FILL and close & p.ER_EDGE_ANTIALIAS and not close & p.ER_SWARM_EDGE_OUTLINE
+    assert wide & p.ER_SWARM_EDGE_OUTLINE and wide & p.ER_EDGE_ANTIALIAS and not wide & p.ER_SWARM_CREASE_FILL
+
+
+def test_a_box_turns_into_the_ray_through_its_centre():
+    """The centre of the frame looks straight ahead, and each edge half the lens's angle off it, top up and left left."""
+    seen = _view(vertical_fov_deg=40.0)
+    assert zoom.box_ray(seen, Box(0.5, 0.5, 0.1, 0.1)) == pytest.approx([0.0, 1.0, 0.0])
+    top = zoom.box_ray(seen, Box(0.5, 0.0, 0.0, 0.0))
+    assert math.degrees(math.atan2(top[2], top[1])) == pytest.approx(20.0)
+    left = zoom.box_ray(seen, Box(0.0, 0.5, 0.0, 0.0))
+    half_h = math.degrees(math.atan(math.tan(math.radians(20.0)) * 640 / 480))
+    assert math.degrees(math.atan2(-left[0], left[1])) == pytest.approx(half_h)
+    assert zoom.box_ray(seen, Box(0.5, 0.5, 0.0, 0.0)) == pytest.approx(zoom.box_ray(seen, Box(0.5, 0.5, 1.0, 1.0)))
+
+
+def test_the_patrol_has_80_zooms_and_each_keeps_the_frame_it_was_boxed_on():
+    """Every press up to 80 is queued with the view of the frame shown; the 81st is refused and changes nothing."""
+    env = SimpleNamespace()
+    ep = SolarEpisode(seed=0)
+    camera.reset(env, ep)
+    zoom.reset(env, ep)
+    ep.camera["view"] = _view()
+    press = decode_action(_action(zoom=1.0, zoom_lens=1.0, zoom_cx=0.2, zoom_cy=0.7), None)
+    for i in range(MAX_ZOOMS):
+        ep.step = i
+        zoom.request(env, ep, press)
+    assert ep.outcome.zooms_used == MAX_ZOOMS
+    assert ep.zoom["pending"] == press.zoom and ep.zoom["seen"] == _view()
+    ep.step = MAX_ZOOMS
+    zoom.request(env, ep, press)
+    assert ep.outcome.zooms_used == MAX_ZOOMS and ep.zoom["pending_step"] == MAX_ZOOMS - 1
+
+
+@pytest.mark.skipif(not camera.LOW_LIGHT, reason="engine without the low-light camera")
+def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
+    """Under a crescent the 5.7 degree beam lights the middle of a 7x frame looking down from 40 m, about as wide as
+    the beam, and from 140 m, past its reach, the middle is no brighter than the rest; by day the frame is only grey."""
+    cli = p.connect(p.DIRECT)
+    try:
+        _box(cli, [300.0, 300.0, 0.1], [0.0, 0.0, -0.1], [0.5, 0.5, 0.5, 1.0])
+        env = _Env(cli, 0)
+        _moon(env, 0.0, 30.0)
+        ep = SolarEpisode(seed=11)
+        zoom.reset(env, ep)
+        ep.zoom["night_vision"] = True
+        vertical = camera.vertical_fov_deg(zoom.LENS_DIAGONAL_FOV_DEG[7], 640, 480)
+
+        def frame(height_m):
+            """A 7x night vision frame looking straight down from this height."""
+            shot = camera.View(feed="colour", eye=(0.0, 0.0, height_m), forward=(0.0, 0.0, -1.0), up=(0.0, 1.0, 0.0),
+                               width=640, height=480, vertical_fov_deg=vertical, sees=True, step=0)
+            return zoom._draw(env, ep, shot, 7)[0]
+
+        near = frame(40.0)
+        assert np.array_equal(near[..., 0], near[..., 1]) and np.array_equal(near[..., 1], near[..., 2])
+        grey = near[..., 0]
+        assert float(grey[230:250, 310:330].mean()) > 3.0 * float(grey[:40, :40].mean())
+        beam_px = math.tan(math.radians(zoom.NIGHT_VISION_BEAM_DEG / 2)) / math.tan(math.radians(vertical / 2)) * 240
+        row = ((grey[240].astype(float) + 0.055) / 1.055) ** 2.4
+        lit = np.nonzero(row > 0.5 * float(row[300:340].mean()))[0]
+        assert (lit[-1] - lit[0] + 1) / 2 == pytest.approx(beam_px, rel=0.25)
+        far = frame(140.0)[..., 0]
+        assert float(far[230:250, 310:330].mean()) < 1.5 * float(far[:40, :40].mean()) + 0.02
+        env._sun = None
+        day = frame(40.0)
+        assert np.array_equal(day[..., 0], day[..., 1]) and np.array_equal(day[..., 1], day[..., 2])
+    finally:
+        p.disconnect(cli)
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.usefixtures("_flat_park")
+def test_a_zoom_centres_what_was_boxed_once_the_link_brings_it_back():
+    """Nothing shows before the press; within two observations the close-up arrives, with the boxed marker in its
+    middle on both lenses and 7x showing it (7/3)^2 larger in area than 3x, as the lenses' angles give."""
+    flight = _Flight(seed=31)  # a day seed: with night mode off a night frame is too dark to find the marker in
+    try:
+        flight.place_marker(ahead_m=20.0, left_m=5.0)
+        assert not flight.obs["zoom"].any()
+        assert flight.obs["state"][STATE_SLICES["zoom_lens"]][0] == 0
+        sizes = {}
+        for lens in (3, 7):
+            pressed_step = flight.env._solar.step
+            obs = flight.zoom_on_marker(lens)
+            assert obs["state"][STATE_SLICES["zoom_lens"]][0] == lens
+            # The request reaches the aircraft a control step after the press and the frame is drawn on arrival.
+            assert obs["state"][STATE_SLICES["zoom_age_s"]][0] <= DECISION_STEPS * SIM_DT + 1e-6
+            assert zoom.view(flight.env._solar).step == pressed_step + 2
+            found = _red(obs["zoom"])
+            assert found is not None
+            assert math.hypot(found[0] - _CENTRE[0], found[1] - _CENTRE[1]) < _CENTRED_PX
+            sizes[lens] = found[2]
+            flight.step(_action(gimbal_tilt=_TILT))
+        tele, medium = (math.tan(math.radians(camera.vertical_fov_deg(zoom.LENS_DIAGONAL_FOV_DEG[k], 640, 480)) / 2)
+                        for k in (7, 3))
+        assert sizes[7] / sizes[3] == pytest.approx((medium / tele) ** 2, rel=0.1)
+        assert flight.env._solar.outcome.zooms_used == 2
+    finally:
+        flight.close()
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.usefixtures("_flat_park")
+def test_a_zoom_boxed_on_an_old_frame_while_flying_and_turning_still_finds_its_target():
+    """The box drawn on a wide frame 0.4 s old, pressed while the aircraft flies at 3 m/s and turns at 45 deg/s,
+    still brings the marker to the middle of the 7x frame."""
+    flight = _Flight(seed=22)
+    flying = {"move_forward": 0.6, "turn": -0.5}
+    try:
+        flight.place_marker(ahead_m=24.0, left_m=6.0, **flying)
+        while flight.obs["state"][STATE_SLICES["frame_age_s"]][0] < 0.35:
+            flight.step(_action(gimbal_tilt=_TILT, **flying))
+        found = _red(flight.zoom_on_marker(7, **flying)["zoom"])
+        assert found is not None
+        assert math.hypot(found[0] - _CENTRE[0], found[1] - _CENTRE[1]) < _CENTRED_PX
+    finally:
+        flight.close()
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.usefixtures("_flat_park")
+def test_the_same_patrol_draws_the_same_zoom():
+    """Two runs of one seed with the same actions give the same zoom frame, pixel for pixel."""
+    frames = []
+    for _ in range(2):
+        flight = _Flight(seed=23)
+        try:
+            flight.place_marker(ahead_m=20.0, left_m=-4.0)
+            frames.append(flight.zoom_on_marker(3)["zoom"].copy())
+        finally:
+            flight.close()
+    assert frames[0].any() and np.array_equal(frames[0], frames[1])

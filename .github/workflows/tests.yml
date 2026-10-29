@@ -24,6 +24,29 @@ env:
   VALIDATOR_TEST_IMAGE: ghcr.io/swarm-subnet/swarm-validator:ci
 
 jobs:
+  family-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Validate family release declarations
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base="$PR_BASE" ;;
+            merge_group) base="$MERGE_BASE" ;;
+            push) base="$PUSH_BASE" ;;
+          esac
+          python3 validator/scripts/check_family_versions.py --base "$base"
+
   # Rebuilds the test image when the Dockerfile or requirements changed, so the jobs
   # below run on the image this commit describes rather than whichever one was pushed last.
   push-docker-image:

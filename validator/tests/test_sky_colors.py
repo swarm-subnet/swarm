@@ -32,11 +32,13 @@ def _env_for_sun(monkeypatch, sun, sky_from_sun=True, sky_clouds=False, seed=77)
 
 
 def test_no_family_paints_a_sky_today():
-    """Every registered family keeps the white background, so existing pixels are untouched."""
+    """Every registered family keeps the white background, so existing pixels are untouched; only Swarm Sentinel
+    lights its sky from the sun, and only when the installed engine can."""
     for family_id in list_registered_challenge_families():
         family = get_challenge_family(family_id)
         assert family.sky_colors(task=None) is None
-        assert not family.sky_from_sun and not family.sky_clouds, family_id
+        assert not family.sky_clouds, family_id
+        assert family.sky_from_sun == (family_id == "cf_solar_patrol" and hasattr(p, "ER_SWARM_SKY_SUN")), family_id
 
 
 def test_base_runtime_defaults_to_no_sky():

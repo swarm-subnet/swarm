@@ -46,6 +46,7 @@ _ALIAS_ROOT = re.compile(r"^_REPO_ROOT\s*=\s*_SCRIPT_DIR((?:\.parents\[\d\]|\.pa
 # "SIBLING" is the swarm-backend checkout beside the repository, not inside it.
 EXPECTED: dict[str, list[str]] = {
     "scripts/bench_full_eval.py": ["REPO_ROOT"],
+    "scripts/check_family_versions.py": ["REPO_ROOT"],
     "scripts/compare_render_masks.py": ["REPO_ROOT"],
     "scripts/cross_machine_check.py": ["REPO_ROOT"],
     "scripts/dump_depth_frame.py": ["REPO_ROOT"],
@@ -63,6 +64,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_benchmark_default_model_fixed_seeds.py": ["REPO_ROOT"],
     "tests/test_challenge_family_boundaries.py": ["REPO_ROOT"],
     "tests/test_cli.py": ["REPO_ROOT"],
+    "tests/test_cli_visualize_video.py": ["REPO_ROOT"],
     "tests/test_docker_evaluator.py": ["REPO_ROOT", "REPO_ROOT"],
     "tests/test_docstring_linter.py": ["REPO_ROOT"],
     "tests/test_env_check.py": ["REPO_ROOT"],
@@ -70,6 +72,7 @@ EXPECTED: dict[str, list[str]] = {
     "tests/test_github.py": ["REPO_ROOT"] * 3,
     "tests/test_scripts_shell.py": ["REPO_ROOT"],
     "tests/test_simulation_doc.py": ["REPO_ROOT"],
+    "tests/test_solar_install.py": ["REPO_ROOT"],
     "tests/test_submission_manifest.py": ["REPO_ROOT", "SIBLING"],
     "tests/test_validator_image.py": ["REPO_ROOT"],
     "tests/test_swarm_autopilot_regression.py": ["validator/tests"],

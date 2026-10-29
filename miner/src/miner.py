@@ -22,7 +22,7 @@ Swarm Miner — commit a model to the Bittensor chain.
 Private track (the default for every family; `swarm model submit` wraps this):
     python miner/src/miner.py --netuid 124 \
         --wallet.name miner --wallet.hotkey default \
-        --family_id cf_autopilot \
+        --family_id cf_search_and_rescue \
         --artifact ./submission.zip
 
 The artifact's sha256 is committed on-chain and the archive is uploaded to the

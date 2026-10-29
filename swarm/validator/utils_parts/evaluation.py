@@ -19,6 +19,7 @@
 
 import asyncio
 import time
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -30,11 +31,11 @@ from swarm.challenge_families import (
     build_benchmark_tasks,
     build_random_task,
     build_screening_tasks,
+    deferred_seed_checks,
 )
 from swarm.constants import (
     BENCHMARK_FULL_SEED_COUNT,
     BENCHMARK_SCREENING_SEED_COUNT,
-    BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     RE_AUTH_INTERVAL_SEC,
     SCORE_UPLOAD_GRACE_SEC,
@@ -47,7 +48,7 @@ from swarm.core.submission_policy import (
     RUNNER_ABI,
     profile_digest,
 )
-from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
+from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES, get_family_benchmark_version
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import (
@@ -102,6 +103,19 @@ def _runtime_details_field(metrics: Any) -> Dict[str, Any]:
     return {"runtime_details": details} if details else {}
 
 
+_SEED_MISTAKE_FIELDS = ("missed_threats", "false_alarms")
+
+
+def _seed_mistakes(metrics: Any) -> Dict[str, int]:
+    """The seed's missed threats and false alarms for the backend's cross-seed penalty, or nothing when its family counts none."""
+    if not isinstance(metrics, dict):
+        return {}
+    counts = [metrics.get(key) for key in _SEED_MISTAKE_FIELDS]
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
+        return {}
+    return {key: max(0, int(value)) for key, value in zip(_SEED_MISTAKE_FIELDS, counts)}
+
+
 def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
     """Provenance fields the backend seed-score schema requires on every upload.
 
@@ -133,9 +147,7 @@ def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
 
 def _utils_facade():
     """The swarm.validator.utils module, imported on call so the lookup goes through the facade."""
-    from swarm.validator import utils as validator_utils
-
-    return validator_utils
+    return import_module("swarm.validator.utils")
 
 
 def _empty_per_type() -> Dict[str, List[float]]:
@@ -196,8 +208,7 @@ async def _evaluate_seeds(
 
     model_hash_short = ""
     try:
-        from swarm.utils.hash import sha256sum as _sha
-        model_hash_short = _sha(model_path)[:12]
+        model_hash_short = sha256sum(model_path)[:12]
     except Exception:
         pass
     bt.logging.info(f"━━━ {description.upper()} UID {uid} | {model_hash_short} ━━━")
@@ -208,11 +219,12 @@ async def _evaluate_seeds(
         tasks = []
         for seed in seeds:
             try:
-                task = build_random_task(
-                    sim_dt=SIM_DT,
-                    seed=seed,
-                    family_id=family_id,
-                )
+                with deferred_seed_checks():
+                    task = build_random_task(
+                        sim_dt=SIM_DT,
+                        seed=seed,
+                        family_id=family_id,
+                    )
                 tasks.append(task)
             except Exception as e:
                 bt.logging.warning(f"Failed to create a seed task: {e}")
@@ -247,6 +259,7 @@ async def _evaluate_seeds(
                 ),
                 "moving_platform": bool(getattr(task, "moving_platform", False)),
                 "runtime_details": _runtime_details(getattr(result, "metrics", None)),
+                **_seed_mistakes(getattr(result, "metrics", None)),
             },
         )
 
@@ -428,6 +441,7 @@ async def _run_streaming_phase(
                     model_uid=uid, epoch_number=epoch_number, scores=batch,
                     task_id=task_id,
                     family_id=family_id,
+                    benchmark_version=get_family_benchmark_version(family_id),
                     provenance=provenance,
                     seed_set_id=_seed_set_id(self, family_id, epoch_number),
                 )
@@ -540,6 +554,7 @@ async def _run_streaming_phase(
             }
             if detail.get("runtime_details"):
                 row["runtime_details"] = dict(detail["runtime_details"])
+            row.update(_seed_mistakes(detail))
             upload_queue.put_nowait(row)
         if len(completed_scores) % chunk_size == 0:
             _fire_chunk_complete()
@@ -625,6 +640,7 @@ async def _run_streaming_phase(
                     "map_type": detail["map_type"],
                     "failure_reason": detail.get("failure_reason", "NONE"),
                     **_runtime_details_field(detail.get("metrics")),
+                    **_seed_mistakes(detail.get("metrics")),
                 }
                 for j, detail in enumerate(all_details)
                 if (detail.get("metric_key") or detail.get("map_type")) != "unknown"
@@ -648,6 +664,7 @@ async def _run_streaming_phase(
                         model_uid=uid, epoch_number=epoch_number, scores=batch,
                         task_id=task_id,
                         family_id=family_id,
+                        benchmark_version=get_family_benchmark_version(family_id),
                         provenance=provenance,
                         seed_set_id=_seed_set_id(self, family_id, epoch_number),
                     )
@@ -730,13 +747,14 @@ async def _run_screening(
 
     screening_tasks: List = []
     try:
-        screening_tasks = build_screening_tasks(
-            sim_dt=SIM_DT,
-            seeds=screening_seeds,
-            family_id=family_id,
-            offset=seeds_from,
-            total_seed_count=len(full_seeds),
-        )
+        with deferred_seed_checks():
+            screening_tasks = build_screening_tasks(
+                sim_dt=SIM_DT,
+                seeds=screening_seeds,
+                family_id=family_id,
+                offset=seeds_from,
+                total_seed_count=len(full_seeds),
+            )
     except Exception as e:
         bt.logging.warning(f"Failed to create screening tasks: {e}")
         screening_tasks = [None for _ in screening_seeds]
@@ -761,7 +779,7 @@ async def _run_screening(
         "assignment_id": task_id,
         "family_id": family_id,
         "epoch_number": epoch,
-        "benchmark_version": BENCHMARK_VERSION,
+        "benchmark_version": get_family_benchmark_version(family_id),
         "batch_id": batch_id,
     }
     hb.start(
@@ -909,16 +927,18 @@ async def _run_full_benchmark(
                         full_screening_seeds = _seed_manager_call(
                             self.seed_manager, "get_screening_seeds", family_id, epoch_number
                         )
-                    task = build_screening_tasks(
-                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
-                        offset=abs_idx, total_seed_count=len(full_screening_seeds),
-                    )[0]
+                    with deferred_seed_checks():
+                        task = build_screening_tasks(
+                            sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                            offset=abs_idx, total_seed_count=len(full_screening_seeds),
+                        )[0]
                 else:
-                    task = build_benchmark_tasks(
-                        sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
-                        offset=abs_idx - BENCHMARK_SCREENING_SEED_COUNT,
-                        total_seed_count=BENCHMARK_FULL_SEED_COUNT,
-                    )[0]
+                    with deferred_seed_checks():
+                        task = build_benchmark_tasks(
+                            sim_dt=SIM_DT, seeds=[seed], family_id=family_id,
+                            offset=abs_idx - BENCHMARK_SCREENING_SEED_COUNT,
+                            total_seed_count=BENCHMARK_FULL_SEED_COUNT,
+                        )[0]
             except Exception as e:
                 bt.logging.warning(
                     f"Failed to create benchmark task idx {abs_idx}: {e}"
@@ -954,7 +974,7 @@ async def _run_full_benchmark(
         "assignment_id": task_id,
         "family_id": family_id,
         "epoch_number": epoch,
-        "benchmark_version": BENCHMARK_VERSION,
+        "benchmark_version": get_family_benchmark_version(family_id),
         "batch_id": batch_id,
     }
     hb.start(

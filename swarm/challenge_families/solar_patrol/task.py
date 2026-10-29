@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # The MIT License (MIT)
 # Copyright © 2026 Swarm
 
@@ -16,15 +15,31 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Baseline PPO starter for cf_swarm_autopilot: one shared policy lands every drone on its pad."""
+"""The patrol task one seed describes: its clock, its map type and its wind.
 
-import sys
-from pathlib import Path
+The dock's place is not known here: the seed decides it when the world is built, and the environment writes it
+back into the task as the start and the goal.
+"""
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from __future__ import annotations
 
-from common import train_family
+from swarm.protocol import SCHEMA_VERSION, MapTask
 
-if __name__ == "__main__":
-    train_family("cf_swarm_autopilot", supports_drone_count=True)
+from . import wind
+from .contract import CHALLENGE_TYPE, FAMILY_ID, HORIZON_S
+
+
+def solar_patrol_task(*, seed: int, sim_dt: float) -> MapTask:
+    """One patrol of the solar park for a seed."""
+    return MapTask(
+        map_seed=int(seed),
+        start=(0.0, 0.0, 0.0),
+        goal=(0.0, 0.0, 0.0),
+        sim_dt=float(sim_dt),
+        horizon=HORIZON_S,
+        challenge_type=CHALLENGE_TYPE,
+        family_id=FAMILY_ID,
+        version=SCHEMA_VERSION,
+        moving_platform=False,
+        **wind.for_seed(int(seed)),
+    )

@@ -63,6 +63,8 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type3_mountain": 2300.0,
     "type6_forest": 2400.0,
     "type7_office": 1900.0,
+    # A patrol peaked at 3,344 MB over 100 runs; about 10% on top.
+    "type8_solar": 3700.0,
 }
 _DEFAULT_RAM_ESTIMATE_MB = max(_GROUP_RAM_ESTIMATES_MB.values())
 _RESOURCE_POLL_INTERVAL_SEC = 2.0
@@ -80,7 +82,6 @@ _RPC_TRANSPORT_RETRY_STATUSES = frozenset(
     {
         "rpc_connect_failed",
         "rpc_ping_timeout",
-        "seed_rpc_disconnected",
     }
 )
 _INFRA_FAILURE_STATUSES = frozenset(
@@ -202,7 +203,7 @@ def _is_timeout_retry_status(status: str) -> bool:
 
 
 def _is_rpc_transport_status(status: str) -> bool:
-    """True when the link to the model container broke: connect refused, ping unanswered, or the socket died mid-seed."""
+    """True when the link to the model container never came up: connect refused or ping unanswered before the seed."""
     return status in _RPC_TRANSPORT_RETRY_STATUSES
 
 
@@ -246,6 +247,8 @@ class _RamWorkerScheduler:
     ram_reserve_mb: float = field(init=False)
     latest_snapshot: Optional[_ResourceSnapshot] = None
     group_dispatch_counts: Counter = field(default_factory=Counter)
+    ram_started_since_snapshot_mb: float = 0.0
+    memory_warned_groups: set = field(default_factory=set)
 
     def __post_init__(self) -> None:
         """Resolve vCPUs and installed memory, then cap the slots at what the lightest seed prior fits in the budget."""
@@ -325,6 +328,7 @@ class _RamWorkerScheduler:
     def refresh_resources(self) -> None:
         """Store a fresh reading so the next admission decision weighs current free memory."""
         self.latest_snapshot = self._snapshot_from_provider()
+        self.ram_started_since_snapshot_mb = 0.0
 
     def _status_dict(self, snapshot: Optional[_ResourceSnapshot]) -> Dict[str, Any]:
         """Worker caps alongside the reading's CPU, load and free memory, zeros where no reading was taken."""
@@ -368,7 +372,7 @@ class _RamWorkerScheduler:
         return self._format_status_line(self.live_status_dict())
 
     def describe_configuration_lines(self) -> List[str]:
-        """Startup banner: vCPUs, installed and reserved memory, worker slots, then one entry per group prior."""
+        """Startup banner: vCPUs, installed and reserved memory, worker slots, then each group's prior and how many fit at once."""
         lines = [
             (
                 "Scheduler machine: "
@@ -381,7 +385,8 @@ class _RamWorkerScheduler:
         lines.extend(
             (
                 "Scheduler RAM prior: "
-                f"group={row['group']} ram={row['ram_mb']:.0f}MiB"
+                f"group={row['group']} ram={row['ram_mb']:.0f}MiB "
+                f"at_once={self.seeds_at_once(row['group'])}"
             )
             for row in self.cost_model()
         )
@@ -390,6 +395,23 @@ class _RamWorkerScheduler:
     def note_group_dispatched(self, group_name: str) -> None:
         """Count one more batch sent out for that map type, which feeds the fairness term of the sort key."""
         self.group_dispatch_counts[str(group_name)] += 1
+
+    def note_group_started(self, group_name: str, *, alone: bool) -> Optional[str]:
+        """Charge a started seed's prior against the last reading; return a warning, once per map type, when it started alone short of memory."""
+        group_name = str(group_name)
+        warning = None
+        if alone and group_name not in self.memory_warned_groups and not self._ram_fits(group_name, []):
+            self.memory_warned_groups.add(group_name)
+            snapshot = self.latest_snapshot
+            free_mb = snapshot.mem_available_mb if snapshot is not None else 0.0
+            warning = (
+                f"Low memory for {group_name}: a seed needs about "
+                f"{_ram_estimate_for_group(group_name):.0f}MiB, the host has "
+                f"{self.machine_total_ram_mb:.0f}MiB with {free_mb:.0f}MiB free and "
+                f"{self.ram_reserve_mb:.0f}MiB kept back; running its seeds one at a time"
+            )
+        self.ram_started_since_snapshot_mb += _ram_estimate_for_group(group_name)
+        return warning
 
     def dispatch_sort_key(
         self,
@@ -414,11 +436,13 @@ class _RamWorkerScheduler:
         """Sum of the memory priors for the map types currently in flight."""
         return sum(_ram_estimate_for_group(group) for group in active_groups)
 
-    def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
-        """True only when a slot is free, the priors of everything in flight still fit the budget, and the host has the memory spare."""
-        if len(active_groups) >= self.active_worker_cap:
-            return False
+    def seeds_at_once(self, group_name: str) -> int:
+        """How many seeds of that map type the memory budget holds side by side, never fewer than one."""
+        fits = int(self._ram_budget_mb() // _ram_estimate_for_group(group_name))
+        return max(1, min(self.max_worker_cap, fits))
 
+    def _ram_fits(self, group_name: str, active_groups: List[str]) -> bool:
+        """True when the seed's prior fits beside the priors in flight and in free memory less the seeds started since the reading."""
         seed_ram_mb = _ram_estimate_for_group(group_name)
         if (
             self._reserved_ram_mb(active_groups) + seed_ram_mb
@@ -430,10 +454,19 @@ class _RamWorkerScheduler:
         if (
             snapshot is not None
             and snapshot.mem_available_mb > 0.0
-            and snapshot.mem_available_mb - self.ram_reserve_mb < seed_ram_mb
+            and snapshot.mem_available_mb
+            - self.ram_reserve_mb
+            - self.ram_started_since_snapshot_mb
+            < seed_ram_mb
         ):
             return False
         return True
+
+    def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
+        """True when a slot is free and the seed fits in memory, or when nothing is in flight, so a short host runs seeds one at a time instead of stalling."""
+        if len(active_groups) >= self.active_worker_cap:
+            return False
+        return not active_groups or self._ram_fits(group_name, active_groups)
 
 
 def _select_next_batch_index(

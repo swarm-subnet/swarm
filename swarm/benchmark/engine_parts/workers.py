@@ -23,11 +23,12 @@ import ctypes
 import os
 import signal
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
 from swarm.config import HostWorkerRuntimeSettings, env_bool
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
     MINER_COMPUTE_BUDGET_SEC,
+    SPEED_FACTOR_MAX_ELIGIBLE,
     WARM_CONTAINER_GRACE_SEC,
 )
 from swarm.validator.calibration.speed_factor import baseline_model_available
@@ -142,31 +143,44 @@ async def _precalibrate_host(worker_count: int) -> bool:
     leaves a cache the workers can read, which is what the validator already does.
 
     Returns whether the timings that follow are baseline-normalized. Nothing is at
-    stake in a local run, so an unmeasurable host still gets its scores and its raw
-    act times; only the comparison against the validator's budget is withheld.
+    stake in a local run, so a host that cannot be measured, or measures too slow
+    for a validator, still gets its scores and its raw act times; only the
+    comparison against the validator's budget is withheld.
     """
-    global host_timings_normalized
     requested = max(1, int(worker_count))
-    if not baseline_model_available() or host_speed_factor_is_fresh(requested):
+    if not baseline_model_available():
+        return _fly_raw("the reference model for the host speed check is missing")
+    if host_speed_factor_is_fresh(requested):
         return True
     print(f"[{_ts()}] Calibrating host speed across {requested} worker(s)...", flush=True)
     speed = await _ensure_host_speed_factor(
         _create_prepared_benchmark_evaluator(), requested
     )
     if speed is None:
-        host_timings_normalized = False
-        print(
-            f"[{_ts()}] WARNING: host speed calibration failed. Scores are unaffected, "
-            f"but act times below are raw and cannot be compared to the "
-            f"{MINER_COMPUTE_BUDGET_SEC * 1000:.0f}ms validator budget.",
-            flush=True,
+        return _fly_raw("host speed calibration failed")
+    if not speed.eligible:
+        return _fly_raw(
+            f"host speed factor {speed.factor:.2f}x is past the "
+            f"{SPEED_FACTOR_MAX_ELIGIBLE:.1f}x limit a validator scores at"
         )
-        return False
     return True
 
 
-def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
-    """Flatten a ValidationResult into the plain tuple that survives the queue back to the parent."""
+def _fly_raw(reason: str) -> bool:
+    """Mark the run's timings as raw, say why, and return False for the precalibration result."""
+    global host_timings_normalized
+    host_timings_normalized = False
+    print(
+        f"[{_ts()}] WARNING: {reason}. Scores are unaffected, "
+        f"but act times below are raw and cannot be compared to the "
+        f"{MINER_COMPUTE_BUDGET_SEC * 1000:.0f}ms validator budget.",
+        flush=True,
+    )
+    return False
+
+
+def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str, Dict[str, Any]]:
+    """Flatten a ValidationResult into the plain tuple that survives the queue back to the parent, metrics included."""
     reason = getattr(result, "failure_reason", "NONE")
     reason_str = reason.value if hasattr(reason, "value") else str(reason)
     return (
@@ -175,11 +189,12 @@ def _pack_validation_result(result: Any) -> Tuple[int, bool, float, float, str]:
         float(getattr(result, "time_sec")),
         float(getattr(result, "score")),
         reason_str,
+        dict(getattr(result, "metrics", None) or {}),
     )
 
 
 def _unpack_validation_result(packed):
-    """Rebuild a ValidationResult from a queued tuple, taking the failure reason when one was sent."""
+    """Rebuild a ValidationResult from a queued tuple, taking the failure reason and metrics when they were sent."""
     from swarm.protocol import ValidationResult
     if len(packed) >= 5:
         return ValidationResult(
@@ -188,6 +203,7 @@ def _unpack_validation_result(packed):
             float(packed[2]),
             float(packed[3]),
             failure_reason=str(packed[4]),
+            metrics=dict(packed[5]) if len(packed) > 5 else {},
         )
     return ValidationResult(*packed)
 
@@ -355,8 +371,12 @@ def _benchmark_worker_main(
                         warm_container=warm,
                         on_container_ready=_prewarm_next,
                         cancel_event=cancel_event,
+                        raw_timing=getattr(request, "raw_timing", False),
                     )
                 )
+                # The parent reads this process's RSS for its recycle check as soon as the result lands.
+                gc.collect()
+                _release_freed_memory()
                 result_queue.put(
                     _ProcessBatchResult(
                         worker_id=process_slot,
@@ -384,8 +404,6 @@ def _benchmark_worker_main(
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)
-                gc.collect()
-                _release_freed_memory()
 
             # The result is already on its way; only the next request needs the spare.
             if "start" in next_start:
@@ -410,7 +428,7 @@ async def _run_benchmark_process_mode(
 ) -> int:
     """Run the batch plan over a pool of worker processes with RAM-aware admission."""
     engine = _engine_facade()
-    await _precalibrate_host(effective_workers)
+    raw_timing = not await _precalibrate_host(effective_workers)
     ctx = engine._benchmark_mp_context()
     task_queue = ctx.Queue()
     result_queue = ctx.Queue()
@@ -541,9 +559,14 @@ async def _run_benchmark_process_mode(
                 model_path=str(model_path),
                 task_total=len(all_tasks),
                 prewarm_next=bool(pending_batch_ids),
+                raw_timing=raw_timing,
             )
+            started_alone = not inflight_batches
             inflight_batches[batch_index] = request
             scheduler.note_group_dispatched(group_name)
+            memory_warning = scheduler.note_group_started(group_name, alone=started_alone)
+            if memory_warning:
+                print(f"[{_ts()}] {memory_warning}", flush=True)
             task_queue.put(request)
 
     def _check_for_stalled_workers() -> int:
@@ -698,6 +721,7 @@ async def _run_benchmark(
 
     all_tasks = []
     task_meta: List[Dict[str, Any]] = []
+    require_runtime_family(family_id).prepare_seeds([s for seeds in type_seeds.values() for s in seeds])
     for group_name, seeds in type_seeds.items():
         for s in seeds:
             task = build_random_task(

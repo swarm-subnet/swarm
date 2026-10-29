@@ -11,7 +11,7 @@ How emissions are distributed on Swarm Subnet 124.
   <ol>
     <li><a href="#what-koth-is">What KotH is</a></li>
     <li><a href="#why-it-exists">Why it exists</a></li>
-    <li><a href="#the-5-king-window">The 5-king window</a></li>
+    <li><a href="#the-king-window">The king window</a></li>
     <li><a href="#how-each-kings-share-is-calculated">How each king's share is calculated</a></li>
     <li><a href="#rank-weighting">Rank weighting</a></li>
     <li><a href="#taking-the-throne--the-dynamic-floor">Taking the throne: the dynamic floor</a></li>
@@ -26,10 +26,10 @@ How emissions are distributed on Swarm Subnet 124.
 
 ## What KotH is
 
-Swarm runs **one King of the Hill per challenge family** (e.g. Autopilot, Search-and-Rescue). Each family keeps its own lineage of champions, and **the last 5 champions of that family share that family's slice of emissions**, with each one's slice proportional to how much they improved the family's best score when they took the throne.
+Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **its most recent champions share that family's slice of emissions**: the last 10 in Swarm Sentinel, the last 5 in every other family. Within the window each one's slice is set first by how recently they took the throne, and lifted by up to 30% by how much they improved the family's best score.
 
 - The **current champion** of a family is always at the top of that family's lineage.
-- The **four most recent past champions** of the family keep earning until they age out of the window.
+- The **most recent past champions** of the family (nine in Swarm Sentinel, four elsewhere) keep earning until they age out of the window.
 - Each king's gain is locked at crowning; the rank weight shifts as newer kings arrive, moving share toward the freshest champions.
 
 How the family slices add up is covered in [Per-family emissions](#per-family-emissions). The within-a-family split below is identical to the original single-competition design.
@@ -42,9 +42,9 @@ How the family slices add up is covered in [Per-family emissions](#per-family-em
 
 Winner-take-all has two failure modes that KotH addresses:
 
-1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add just enough noise to clear the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, that miner's tiny jump translates to a tiny share: most of the emissions stay with the past kings whose jumps were larger.
+1. **Copycat models.** Under winner-take-all, a miner can clone the current champion, add just enough noise to clear the crowning floor, and take 100% of emissions without contributing real innovation. Under KotH, the crowning floor makes that jump cost a real improvement (`0.015`, falling to `0.005` near the top), and a copycat who clears it still shares the family's slice with the kings before it instead of taking it all.
 
-2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that 0.07 jump keeps paying (proportional to the real contribution) for up to four more dethronings.
+2. **Innovation goes unpaid.** Under winner-take-all, the miner who pushed the network from 0.85 to 0.92 is forgotten the moment someone nudges it to 0.93. Under KotH, that king keeps a seat and keeps earning for up to four more dethronings (nine in Swarm Sentinel): each seat earns 70% of the one above it, and the size of the jump that won it adds up to 30% on top.
 
 KotH rewards **the act of moving the frontier**, not just the act of sitting on it.
 
@@ -52,9 +52,11 @@ KotH rewards **the act of moving the frontier**, not just the act of sitting on 
 
 ---
 
-## The 5-king window
+## The king window
 
-The window holds **exactly 5 entries**: the current king plus the four most recent past kings.
+A family's window holds **5 entries**: the current king plus the four most recent past kings. Swarm Sentinel, which carries the largest slice, holds **10**: the current king plus the nine most recent past kings. The size is the `king_window` field of the family's registry entry; a family without one keeps 5.
+
+A 5-king window:
 
 ```text
 Rank        Slot                          Earning
@@ -66,11 +68,13 @@ Rank        Slot                          Earning
 −4          4 dethronings ago             yes (leaves on next crowning)
 ```
 
-After the next crowning, the king at slot `−4` leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
+In Swarm Sentinel the same ladder runs on to slot `−9`.
 
-Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until five newer crownings push it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
+After the next crowning, the king in the last slot (`−4`, or `−9` in Swarm Sentinel) leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-A seat stops paying before it ages out if it fails the [payout eligibility check](#who-a-seat-can-pay): a dead or unreachable repo, or a missing artifact. An ineligible seat keeps its window slot (no sixth king is backfilled) but it is skipped at payout, so its slice renormalizes onto the family's surviving kings. Taper ranks are assigned among the **payable** kings only, ordered by crowning recency, so the kings behind a skipped seat move up one taper step; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
+Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until a full window of newer crownings (five, or ten in Swarm Sentinel) pushes it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
+
+A seat stops paying before it ages out if it fails the [payout eligibility check](#who-a-seat-can-pay): a dead or unreachable repo, or a missing artifact. An ineligible seat keeps its window slot (no older king is backfilled) but it is skipped at payout, so its slice renormalizes onto the family's surviving kings. Taper ranks are assigned among the **payable** kings only, ordered by crowning recency, so the kings behind a skipped seat move up one taper step; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
 
 <p align="right">(<a href="#koth-top">back to top</a>)</p>
 
@@ -89,7 +93,7 @@ The gain recognises that improving from `0.20 → 0.25` is easier than improving
 
 ### The formula
 
-For each king `i` in the 5-king window, with their score `score_i` and the previous king's score `prev_i` (both clamped to `[0, 1]`; non-finite values become `0`):
+For each king `i` in the family's window, with their score `score_i` and the previous king's score `prev_i` (both clamped to `[0, 1]`; non-finite values become `0`):
 
 ```text
 gain_i   = log( max(1 − prev_i, 0.01) / max(1 − score_i, 0.01) )   # 0 when score_i ≤ prev_i
@@ -116,10 +120,10 @@ A king's seat is weighted by where it sits in the family lineage. The reigning c
 
 ```text
 weight = 0.7 ^ rank
-   rank 0 (champion) → 1.0     rank 2 → 0.49     rank 4 (oldest) → 0.24
+   rank 0 (champion) → 1.0     rank 2 → 0.49     rank 4 → 0.24     rank 9 (oldest in Swarm Sentinel) → 0.04
 ```
 
-So the freshest champions earn the most, and a king fades **as new champions are crowned and push it down the window**, not by any clock, and with no hard age cutoff. Every king in the window keeps a share (down to ~24% weight at the bottom); a king only stops earning once a sixth crowning pushes it out of the window entirely.
+So the freshest champions earn the most, and a king fades **as new champions are crowned and push it down the window**, not by any clock, and with no hard age cutoff. Every king in the window keeps a share (down to ~24% weight at the bottom of a 5-king window, ~4% at the bottom of Swarm Sentinel's 10); a king only stops earning once a newer crowning pushes it out of the window entirely.
 
 Because rank outranks gain, repeatedly improving the family score keeps you on the freshest seats — each crowning needs a fresh hotkey and must clear the crowning floor, so seats are bought with real improvements, not spam.
 
@@ -133,25 +137,22 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 
 ## Taking the throne: the dynamic floor
 
-Every submission runs the full 1000-seed benchmark. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
+Every submission runs its family's full benchmark: 1,000 seeds, or 2,000 for Swarm Sentinel. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
 
 ```text
 s ≤ 0.5      floor = floor_max                                (flat, anti-noise while scores are low)
 s > 0.5      floor = floor_min + (floor_max − floor_min) × (1 − t²),   t = (s − 0.5) / 0.5
 ```
 
-The decay is convex: the floor stays near `floor_max` just past `0.5` and falls off toward `floor_min` as the champion approaches `1.0`, since every point near the top is hard-won. So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster.
+The decay is front-loaded: the floor stays near `floor_max` just past `0.5` and falls off toward `floor_min` as the champion approaches `1.0`, since every point near the top is hard-won. So a frozen top of the board becomes easier to dethrone, and champions cycle through the window faster.
 
 The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family carries them:
 
 | Family | floor_max (champion ≤ 0.5) | floor_min (champion → 1.0) |
 |---|---|---|
-| Autopilot | 0.015 | 0.005 |
 | Search-and-Rescue | 0.015 | 0.005 |
-| Swarm Autopilot | 0.015 | 0.005 |
 | Swarm SAR | 0.015 | 0.005 |
-| Interceptor | 0.015 | 0.005 |
-| Office Interceptor | 0.015 | 0.005 |
+| Swarm Sentinel | 0.015 | 0.005 |
 
 The registry can still override them per family; nothing does today.
 
@@ -165,7 +166,7 @@ A screening pre-phase exists in the code behind a build-time constant, but it is
 
 ## Per-family emissions
 
-Each family runs its own 5-king window. Two levels decide a UID's final weight:
+Each family runs its own king window: 10 kings in Swarm Sentinel, 5 in the others. Two levels decide a UID's final weight:
 
 ```text
 1.  family_share(f)   = how big a slice family f gets of the emission pool
@@ -182,12 +183,11 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
+| Swarm Sentinel (`cf_solar_patrol`) | 0.85 |
+| Swarm SAR | 0.10 |
+| Search-and-Rescue | 0.05 |
 | Interceptor | 0.00 (historical 0.30) |
-| Office Interceptor (`cf_interceptor_office`) | 0.30 |
-| Swarm Autopilot | 0.20 |
-| Swarm SAR | 0.20 |
-| Autopilot | 0.15 |
-| Search-and-Rescue | 0.15 |
+| Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (completed) |
 
 Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
@@ -198,7 +198,7 @@ active / saturated / incubating / regression   1.0
 archived                                       0.0   (out of payout)
 ```
 
-Five families are currently `active`; Interceptor is `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
+Three families are currently `active`: Swarm Sentinel, Swarm SAR and Search-and-Rescue. Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
 ### Unpaid slices burn
 
@@ -209,7 +209,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: four active families payable, Office Interceptor has no king yet — the other four keep exactly their own allocations (`0.20 + 0.20 + 0.15 + 0.15 = 0.70`) and Office Interceptor's `0.30` burns. The moment Office Interceptor crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: Swarm SAR and Search-and-Rescue are payable and Swarm Sentinel has no king yet. The two keep exactly their own allocations (`0.10 + 0.05 = 0.15`) and Swarm Sentinel's `0.85` burns. The moment Swarm Sentinel crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
 
@@ -255,7 +255,7 @@ Your gain is computed at the moment of crowning and locked: the epoch re-eval ne
 
 ### What if I get dethroned?
 
-You slide down one rung (70% of the seat above) and keep earning, dropping another rung with each new crowning down to `0.7^4 ≈ 24%` weight. The fifth crowning after yours pushes you out of the 5-king window, and you stop earning.
+You slide down one rung (70% of the seat above) and keep earning, dropping another rung with each new crowning down to `0.7^4 ≈ 24%` weight (`0.7^9 ≈ 4%` in Swarm Sentinel). The fifth crowning after yours (the tenth in Swarm Sentinel) pushes you out of the window, and you stop earning.
 
 ### Can I become king twice?
 
@@ -288,17 +288,17 @@ The active family slices are set by the team, not derived automatically, so a ne
 | Term | Meaning |
 |---|---|
 | **King** | A model that took the throne by passing the full benchmark and clearing the dynamic crowning floor. |
-| **Challenge family** | An independent competition (e.g. Autopilot, Search-and-Rescue), each with its own lineage, window, and emission slice. |
+| **Challenge family** | An independent competition (e.g. Search-and-Rescue, Swarm Sentinel), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
-| **Active window** | A family's current 5 kings whose shares are summed and used for that family's slice. |
+| **Active window** | A family's current kings (10 in Swarm Sentinel, 5 elsewhere) whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
 | **Payable seat** | A window seat that passes the eligibility check: the crowned archive still in the backend vault (private track) or an intact and accessible repo (public track). |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |
 | **Jump** | The absolute score improvement when a king was crowned (`score − prev_score`). |
 | **Log-headroom gain** | `log((1 − prev) / (1 − score))`, with headroom floored at `0.01` to prevent singularity; zero when the score does not exceed the previous king's. Feeds the seat bonus, capped at `1.0`. |
 | **Rank weighting** | `0.7^rank × (1 + 0.3 × min(gain, 1.0))`; the champion holds the top seat and each older king keeps 70% of the seat above. Ranks run over the payable seats by crowning recency. |
-| **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's 5 active kings sum to that family's slice, not to 100%. |
-| **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne) and leaves the window. |
+| **Share** | The fraction of emissions a king receives (`family_share × koth_share`). A family's active kings sum to that family's slice, not to 100%. |
+| **Aging out** | When a king reaches rank `−5` (i.e., five dethronings have happened since they took the throne; `−10` in Swarm Sentinel) and leaves the window. |
 | **Crowning floor** | The minimum improvement required to dethrone the champion: flat up to a champion score of 0.5, then decaying, `0.015 → 0.005` for every family. |
 | **Solved family** | A family whose champion cleared the secret solve threshold; it crowns no new kings and is archived once its victory window closes, its slice no longer paying from then on. |
 

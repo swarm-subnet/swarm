@@ -37,14 +37,16 @@ from typing import Any, Dict
 import bittensor as bt
 import numpy as np
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
-from swarm.constants import CLAIM_GIVE_UP_SEC
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
+from swarm.challenge_families.base import IncompleteInstall
+from swarm.constants import CLAIM_GIVE_UP_SEC, INSTALL_REFUSAL_LOG_SEC, SEED_PREPARATION_RETRY_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
+from swarm.domain_model import OPEN_CHALLENGE_FAMILY_IDS, get_family_benchmark_seed_count, validate_family_task_version
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
 
-from .evaluation import _run_full_benchmark, _run_screening
+from .evaluation import _run_full_benchmark, _run_screening, _seed_manager_call
 from .model_fetch import _ensure_models_from_backend, _set_private_marker, stored_model_path
 
 
@@ -81,10 +83,80 @@ def _adopt_task_seed_key(seed_manager, task: Dict[str, Any], epoch: int) -> None
     )
 
 
-def _seeds_ready(seed_manager, epoch: int) -> bool:
+def _seeds_ready(seed_manager, epoch: int, family_id: str) -> bool:
     """Whether this epoch's seeds can be built; a manager outside the shared scheme always can."""
     check = getattr(seed_manager, "seeds_ready", None)
-    return True if check is None else bool(check(epoch))
+    return True if check is None else bool(check(epoch, family_id=family_id))
+
+
+def install_refusal(self, family_id: str) -> str:
+    """Why this machine cannot run the family as the rest of the fleet does, or "" when it can. The reason is logged
+    when first found and then at most every INSTALL_REFUSAL_LOG_SEC, so a refused family does not flood the log."""
+    found = require_runtime_family(family_id).install_problems()
+    if not found:
+        return ""
+    reason = "; ".join(found)
+    next_log = self.__dict__.setdefault("_install_refusal_logged_until", {})
+    if time.monotonic() >= next_log.get(family_id, float("-inf")):
+        bt.logging.error(
+            f"Refusing {family_id} tasks, this install cannot run them as the rest of the fleet does: {reason}. "
+            "Repair the install and restart the validator"
+        )
+        next_log[family_id] = time.monotonic() + INSTALL_REFUSAL_LOG_SEC
+    return reason
+
+
+def start_seed_preparations(self, epoch: int) -> None:
+    """Start judging this epoch's seeds ahead, in the background, for every open family that prepares them. Nothing
+    waits for it: a seed still unjudged when it is handed out is judged just before it flies."""
+    for family_id in OPEN_CHALLENGE_FAMILY_IDS:
+        # A flight on an install that cannot run the family judges the machine, not the seed.
+        if require_runtime_family(family_id).prepares_seeds and not install_refusal(self, family_id):
+            _start_seed_preparation(self, family_id, epoch)
+
+
+def _start_seed_preparation(self, family_id: str, epoch: int) -> None:
+    """Judge the family's epoch seeds in a worker thread at the lowest CPU priority, unless they are judged, being
+    judged, or failed too recently."""
+    key = (family_id, int(epoch))
+    prepared = self.__dict__.setdefault("_seeds_prepared", set())
+    running = self.__dict__.setdefault("_seed_preparations", {})
+    retry_at = self.__dict__.setdefault("_seed_preparation_retry_at", {})
+    job = running.get(key)
+    if key in prepared or (job is not None and not job.done()) or time.monotonic() < retry_at.get(key, 0.0):
+        return
+    runtime = require_runtime_family(family_id)
+    try:
+        seeds = list(_seed_manager_call(self.seed_manager, "get_all_seeds", family_id, epoch))
+        # The backend hands out only the family's first seeds, so the rest are never flown and need no preparation.
+        seeds = seeds[:get_family_benchmark_seed_count(family_id) or len(seeds)]
+        if runtime.seeds_prepared(seeds):
+            prepared.add(key)
+            return
+    except Exception as exc:
+        retry_at[key] = time.monotonic() + SEED_PREPARATION_RETRY_SEC
+        bt.logging.warning(f"Cannot judge {family_id} seeds for epoch {epoch} ahead ({exc}); they are judged as they fly")
+        return
+    bt.logging.info(f"Judging {len(seeds)} {family_id} seeds for epoch {epoch} in the background; tasks run meanwhile")
+    # Highest first: the pool hands seeds out lowest first, and those are judged just in time as they fly.
+    job = asyncio.create_task(asyncio.to_thread(runtime.prepare_seeds, seeds[::-1], background=True))
+    job.add_done_callback(lambda done: _seed_preparation_ended(self, key, done))
+    running[key] = job
+
+
+def _seed_preparation_ended(self, key: tuple, job: asyncio.Task) -> None:
+    """Log how a background preparation ended; a failed one may start again once the retry delay has passed."""
+    family_id, epoch = key
+    if job.cancelled():
+        return
+    if job.exception() is None:
+        bt.logging.info(f"{family_id} seeds for epoch {epoch} are all judged")
+        return
+    self._seed_preparation_retry_at[key] = time.monotonic() + SEED_PREPARATION_RETRY_SEC
+    bt.logging.error(
+        f"Judging {family_id} seeds for epoch {epoch} failed, starting again in {SEED_PREPARATION_RETRY_SEC:.0f}s "
+        f"(seeds are still judged as they fly): {job.exception()}"
+    )
 
 
 def _task_epoch(seed_manager, task: Dict[str, Any]) -> int:
@@ -102,7 +174,8 @@ async def run_task(
     cancel_flag: asyncio.Event,
     wake_flag: asyncio.Event,
 ) -> None:
-    """Fetch and hash-check the miner model for one backend task, run its phase, and wipe private bytes afterwards."""
+    """Fetch and hash-check the miner model for one backend task, run its phase, and wipe private bytes afterwards.
+    Raises IncompleteInstall, before anything is fetched or flown, for a family this install cannot run."""
     uid = int(task.get("uid", -1))
     phase = str(task.get("phase", ""))
     task_id = task.get("task_id")
@@ -115,10 +188,20 @@ async def run_task(
         bt.logging.warning(f"run_task: malformed task payload {task}")
         return
 
+    try:
+        validate_family_task_version(family_id, task.get("benchmark_version"))
+    except (KeyError, ValueError) as exc:
+        bt.logging.warning(f"run_task: refusing incompatible task: {exc}")
+        return
+
+    refusal = install_refusal(self, family_id)
+    if refusal:
+        raise IncompleteInstall(refusal)
+
     seed_manager = getattr(self, "seed_manager", None)
     epoch = _task_epoch(seed_manager, task)
     _adopt_task_seed_key(seed_manager, task, epoch)
-    if not _seeds_ready(seed_manager, epoch):
+    if not _seeds_ready(seed_manager, epoch, family_id):
         bt.logging.warning(
             f"run_task: no seeds for epoch {epoch}; leaving UID {uid} to a validator that has them"
         )
@@ -172,6 +255,7 @@ async def _run_phase(
     cancel_flag: asyncio.Event,
 ) -> None:
     """Dispatch to the screening or the benchmark evaluator, then submit the sanity score, seed count and per-type means."""
+    benchmark_version = validate_family_task_version(family_id, task.get("benchmark_version"))
     seeds_from = int(task.get("seeds_from", 0))
     seeds_to_raw = task.get("seeds_to")
     seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
@@ -211,6 +295,9 @@ async def _run_phase(
                     + ("backend unreachable too long, wrapping up" if gave_up else "will ask again")
                 )
                 return [], gave_up
+            if resp.get("benchmark_version", benchmark_version) != benchmark_version:
+                bt.logging.warning(f"[seed-flow] UID {uid}: refusing a claim for a different family version")
+                return [], True
             unreachable_since.clear()
             if "granted" not in resp or "pending" not in resp:
                 # Only a reply that states the pool's size may declare it empty.
@@ -324,6 +411,8 @@ async def _run_phase(
             seeds_evaluated=int(seeds_evaluated),
             early_failed=bool(early_failed),
             epoch_number=int(epoch),
+            family_id=family_id,
+            benchmark_version=benchmark_version,
         )
     except BackendRejectedError as exc:
         bt.logging.warning(f"run_task: backend refused the result for UID {uid}: {exc}")

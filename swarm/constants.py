@@ -42,6 +42,9 @@ DUPLICATE_SESSION_RETRY_SEC = 15.0      # Wait between startup heartbeats while 
 DUPLICATE_SESSION_WAIT_SEC = 240.0      # Startup gives up on a duplicate-session rejection after this long
 STAND_DOWN_TIMEOUT_SEC = 1.2            # Time allowed for the hand-back heartbeat before the process exits
 CLAIM_GIVE_UP_SEC = 600.0               # A task stops asking for seeds after the backend stays unreachable this long
+SEED_PREPARATION_RETRY_SEC = 600.0      # A failed background seed preparation starts again after this long
+INSTALL_REFUSAL_IDLE_SEC = 60.0         # After refusing a family this install cannot run, wait this long before asking for work
+INSTALL_REFUSAL_LOG_SEC = 600.0         # Why a family is refused is logged again at most this often
 RESULT_SUBMIT_ATTEMPTS = 8              # Tries for a task result before it is given up as undelivered
 RESULT_SUBMIT_BASE_DELAY_SEC = 2.0      # First wait between result tries; doubles each time
 RESULT_SUBMIT_MAX_DELAY_SEC = 60.0      # Longest wait between result tries
@@ -132,6 +135,8 @@ MAX_MODEL_BYTES = _POLICY_MAX_BYTES
 # Docker worker auto-sizing
 DOCKER_WORKER_MEMORY = "6g"             # Memory limit per Docker worker container
 DOCKER_WORKER_CPUS = "2"                # CPU limit per Docker worker container
+SUBMISSION_DIR_MAX_BYTES = 256 * 1024 * 1024  # The model's folder, its code included; held in the container's memory
+SUBMISSION_DIR_MAX_FILES = 2000               # Files and folders the model's folder may hold
 
 
 def available_vcpu_count() -> int:

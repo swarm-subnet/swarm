@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 import gymnasium.spaces as spaces
 import numpy as np
+import pytest
 
 from swarm.utils import env_factory
 
@@ -131,6 +132,31 @@ def test_make_env_with_initial_obs_returns_first_observation(monkeypatch) -> Non
     assert isinstance(env, _DummyEnv)
     assert tuple(obs["depth"].shape) == (4, 4, 1)
     assert tuple(obs["state"].shape) == (4,)
+
+
+def test_a_world_that_fails_to_build_is_closed(monkeypatch) -> None:
+    """When the first reset raises, the half-built env is closed before the error reaches the caller."""
+    closed = []
+
+    class _BrokenEnv(_DummyEnv):
+        """Aviary stub whose world cannot be built."""
+
+        def reset(self, seed: int):
+            """Fail the way a seed without open ground for the dock does."""
+            raise RuntimeError(f"no open ground for the dock in seed {seed}")
+
+        def close(self) -> None:
+            """Record that the env was closed."""
+            closed.append(self)
+
+    monkeypatch.setattr(env_factory, "MovingDroneAviary", _BrokenEnv)
+    monkeypatch.setattr(env_factory, "p", _DummyPyBullet())
+    monkeypatch.setattr(env_factory.pybullet_data, "getDataPath", lambda: "/tmp")
+
+    task = SimpleNamespace(sim_dt=0.1, map_seed=123, version="5.0.0", family_id="cf_search_and_rescue")
+    with pytest.raises(RuntimeError, match="no open ground"):
+        env_factory.make_env_with_initial_obs(task, gui=False)
+    assert len(closed) == 1
 
 
 def test_make_env_with_initial_obs_uses_family_runtime_kwargs(monkeypatch) -> None:

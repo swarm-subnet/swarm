@@ -34,7 +34,7 @@ from swarm.constants import (
     SWARM_SAR_SEARCH_RADIUS,
 )
 from swarm.protocol import MapTask
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator import task_gen
 
 
@@ -83,9 +83,8 @@ def _rollout(seed, steps=50):
         sim_dt=1 / 30, seed=seed, challenge_type=2, family_id="cf_swarm_sar",
     )
     family = runtime_family_for_task(task)
-    env = make_env(task, gui=False)
+    env, obs = make_env_with_initial_obs(task, gui=False)
     try:
-        obs, info = env.reset(seed=task.map_seed)
         n = env.NUM_DRONES
         assert SWARM_MIN_DRONES <= n <= SWARM_MAX_DRONES
         assert obs["depth"].shape[0] == n
@@ -155,7 +154,6 @@ def test_swarm_sar_shared_clue_and_single_victim():
     )
     env = make_env(task, gui=False)
     try:
-        env.reset(seed=task.map_seed)
         n = env.NUM_DRONES
         assert env.sar_world is not None
         assert hasattr(env, "_search_area_center")

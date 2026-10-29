@@ -51,7 +51,7 @@ from swarm.constants import (
 from swarm.core.maps.office import OFFICE_CEILING_M, OFFICE_X_RANGE, OFFICE_Y_RANGE
 from swarm.core.moving_drone import rc_sticks_to_world_velocity
 from swarm.domain_model import get_policy_interface_contract
-from swarm.utils.env_factory import make_env
+from swarm.utils.env_factory import make_env, make_env_with_initial_obs
 from swarm.validator import task_gen
 
 _BLANK_FRAME = np.zeros((256, 256, 3), dtype=np.float32)
@@ -358,7 +358,6 @@ def test_office_spawn_heading_random_and_yaw_relative(office_env):
     for seed in (11, 12, 13):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         e2 = make_env(task)
-        e2.reset(seed=task.map_seed)
         headings.add(round(float(e2._office_spawn_yaw), 3))
         e2.close()
     assert len(headings) == 3, "each seed must deal its own heading"
@@ -457,7 +456,6 @@ def test_office_telemetry_deterministic():
     streams = []
     for _ in range(2):
         env = _blind(make_env(task))
-        env.reset(seed=task.map_seed)
         states = []
         for i in range(3 * OFFICE_TELEM_PERIOD_STEPS):
             obs, *_ = env.step(np.array([[0.2, 0.5, 0.3, 0.1]], dtype=np.float32))
@@ -494,7 +492,6 @@ def test_office_velocity_reading_carries_a_bias(monkeypatch):
     for seed in (5, 6):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         packets = _packets(env, 60, np.array([[0.0, 0.4, 0.2, 0.0]], dtype=np.float32))
         env.close()
         assert len(packets) >= 8
@@ -545,7 +542,6 @@ def test_office_target_flight_deterministic_and_clear():
     trajs = []
     for _ in range(2):
         env = _blind(make_env(task))
-        env.reset(seed=task.map_seed)
         hover = np.zeros((1, 4), dtype=np.float32)
         pts = []
         for _ in range(400):
@@ -926,7 +922,6 @@ def test_office_detector_deterministic():
     streams = []
     for _ in range(2):
         env = _blind(make_env(task))
-        env.reset(seed=task.map_seed)
         rows = []
         for _ in range(150):
             obs, *_ = env.step(np.array([[0.1, 0.0, 0.2, 0.3]], dtype=np.float32))
@@ -941,8 +936,7 @@ def test_office_rgb_deterministic_and_isolated():
     task = task_gen.random_task(1 / 50, 91, family_id="cf_interceptor_office")
     streams = []
     for _ in range(2):
-        env = make_env(task)
-        obs, _ = env.reset(seed=task.map_seed)
+        env, obs = make_env_with_initial_obs(task)
         rows = [obs["rgb"].copy()]
         for _ in range(10):
             obs, *_ = env.step(np.array([[0.0, 0.0, 0.3, 0.2]], dtype=np.float32))
@@ -960,8 +954,7 @@ def test_office_rgb_appearance_varies_by_seed():
     frames = []
     for seed in (91, 92):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
-        env = make_env(task)
-        obs, _ = env.reset(seed=task.map_seed)
+        env, obs = make_env_with_initial_obs(task)
         frames.append(obs["rgb"].copy())
         env.close()
     diff = float(np.abs(frames[0] - frames[1]).mean())
@@ -1098,7 +1091,6 @@ def test_office_airframe_differs_per_episode():
     for seed in (11, 12, 13):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         seen.add((round(env.SPEED_LIMIT, 6), round(env._rc_dead_zone, 6),
                   round(env._rc_max_step, 6), round(env._office_motor_alpha, 6)))
         assert abs(env.SPEED_LIMIT - OFFICE_RC_SPEED) / OFFICE_RC_SPEED <= OFFICE_ACTUATOR_JITTER + 1e-9
@@ -1112,7 +1104,6 @@ def test_office_airframe_is_deterministic():
     for _ in range(2):
         task = task_gen.random_task(1 / 50, 21, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         draws.append((env.SPEED_LIMIT, env._rc_dead_zone, env._rc_max_step,
                       env._office_motor_alpha))
         env.close()
@@ -1129,7 +1120,6 @@ def test_office_target_size_varies_per_episode():
     for seed in (31, 32, 33):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         w, h = env._office_target_w_m, env._office_target_h_m
         assert (w, h) == office_target_silhouette(seed)
         sizes.add((round(w, 6), round(h, 6)))
@@ -1155,7 +1145,6 @@ def test_office_spawns_spread_over_the_floor():
     for seed in range(40, 64):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         s = np.array(env.task.start, dtype=float)
         g = np.array(env.task.goal, dtype=float)
         gap = float(np.linalg.norm(s[:2] - g[:2]))
@@ -1217,7 +1206,6 @@ def test_office_room_size_varies_and_bounds_follow():
     for seed in (101, 102, 103):
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         sx, sy, sz = env._office_scale
         for axis in (sx, sy, sz):
             assert 0.02 - 1e-9 <= abs(axis - 1.0) <= 0.05 + 1e-9, f"scale {axis} off spec"
@@ -1295,7 +1283,6 @@ def test_office_par_follows_the_dealt_airframe():
     for seed in seeds:
         task = task_gen.random_task(1 / 50, seed, family_id="cf_interceptor_office")
         env = make_env(task)
-        env.reset(seed=task.map_seed)
         chaser = office_airframe_profile(seed)["speed"]
         assert env.SPEED_LIMIT == pytest.approx(chaser), "env and reward disagree on the airframe"
         prof = office_target_profile(seed)

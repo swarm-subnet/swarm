@@ -120,3 +120,23 @@ def test_the_wheel_source_copy_survives_a_stray_dangling_symlink(tmp_path):
     )
 
     assert (tmp_path / "copy" / "pyproject.toml").is_file()
+
+
+def test_the_wheel_source_copy_skips_the_runtime_state(tmp_path):
+    """Other tests write terrain caches into the gitignored state folders while the wheel copy runs, so a cache file
+    that vanishes mid-copy must never be part of it; the package beside them still is."""
+    repo = tmp_path / "repo"
+    (repo / "swarm" / "state" / "open_terrain").mkdir(parents=True)
+    (repo / "swarm" / "state" / "open_terrain" / "open_terrain_v3_s1.obj.20.part").write_text("")
+    (repo / "state").mkdir()
+    (repo / "swarm" / "core.py").write_text("")
+    (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+
+    shutil.copytree(
+        repo, tmp_path / "copy",
+        ignore=wheel_source_ignore(), ignore_dangling_symlinks=True,
+    )
+
+    assert not (tmp_path / "copy" / "swarm" / "state").exists()
+    assert not (tmp_path / "copy" / "state").exists()
+    assert (tmp_path / "copy" / "swarm" / "core.py").is_file()

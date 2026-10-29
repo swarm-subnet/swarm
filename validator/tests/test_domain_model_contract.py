@@ -27,10 +27,12 @@ from swarm.domain_model import (
     CHALLENGE_INSTANCE_KEY_FIELDS,
     CHALLENGE_TYPE_TO_BENCHMARK_GROUP,
     CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
+    DEFAULT_CLI_FAMILY_ID,
     EMISSIONS_STATES,
     ENVIRONMENT_TYPES,
     FAMILY_STATES,
     MARKET_VERTICAL_IDS,
+    OPEN_CHALLENGE_FAMILY_IDS,
     SKILL_IDS,
     UnknownChallengeFamilyError,
     domain_model_schema_path,
@@ -51,6 +53,7 @@ def test_domain_model_schema_snapshot():
             "cf_interceptor",
             "cf_interceptor_office",
             "cf_search_and_rescue",
+            "cf_solar_patrol",
             "cf_swarm_autopilot",
             "cf_swarm_sar",
         ],
@@ -88,6 +91,7 @@ def test_domain_model_schema_snapshot():
             "warehouse",
             "forest",
             "office",
+            "solar",
         ],
         "challenge_type_to_environment_type": {
             1: "city",
@@ -97,6 +101,7 @@ def test_domain_model_schema_snapshot():
             5: "warehouse",
             6: "forest",
             7: "office",
+            8: "solar",
         },
         "challenge_type_to_benchmark_group": {
             1: "type1_city",
@@ -106,6 +111,7 @@ def test_domain_model_schema_snapshot():
             5: "type5_warehouse",
             6: "type6_forest",
             7: "type7_office",
+            8: "type8_solar",
         },
         "benchmark_group_order": [
             "type1_city",
@@ -115,6 +121,7 @@ def test_domain_model_schema_snapshot():
             "type5_warehouse",
             "type6_forest",
             "type7_office",
+            "type8_solar",
         ],
     }
 
@@ -157,8 +164,8 @@ def test_challenge_family_registry_contains_canonical_metadata():
     sar = get_challenge_family_definition("cf_search_and_rescue", registry=registry)
 
     assert autopilot["display"]["label"] == "Autopilot / Navigation"
-    assert autopilot["family_state"] == "active"
-    assert autopilot["emissions_state"] == "active"
+    assert autopilot["family_state"] == "completed"
+    assert autopilot["emissions_state"] == "archived"
     assert autopilot["score_schema_id"] == "ss_navigation_v1"
     assert list(get_supported_interface_versions("cf_autopilot", registry=registry)) == [
         "submission_zip.v1"
@@ -176,10 +183,25 @@ def test_challenge_family_registry_contains_canonical_metadata():
         "cf_interceptor": ("submission_zip.v1",),
         "cf_interceptor_office": ("submission_zip.v1",),
         "cf_search_and_rescue": ("submission_zip.v1",),
+        "cf_solar_patrol": ("submission_zip.v1",),
         "cf_swarm_autopilot": ("submission_zip.v1",),
         "cf_swarm_sar": ("submission_zip.v1",),
     }
 
+
+def test_retired_families_are_closed_and_unpaid():
+    """Autopilot, Swarm Autopilot and Office Interceptor are completed with archived emissions; only the three paying families stay open."""
+    for family_id in ("cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office"):
+        definition = get_challenge_family_definition(family_id)
+        assert definition["family_state"] == "completed"
+        assert definition["emissions_state"] == "archived"
+        assert definition["emission_allocation"] == 0.0
+    assert OPEN_CHALLENGE_FAMILY_IDS == (
+        "cf_search_and_rescue",
+        "cf_solar_patrol",
+        "cf_swarm_sar",
+    )
+    assert DEFAULT_CLI_FAMILY_ID in OPEN_CHALLENGE_FAMILY_IDS
 
 def test_get_challenge_family_definition_rejects_unknown_family():
     """An id outside the registry raises UnknownChallengeFamilyError, never a silent default."""

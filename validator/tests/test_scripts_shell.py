@@ -124,7 +124,9 @@ def test_the_miner_tests_are_actually_collected():
         # -n 0 overrides the `-n auto` in addopts: this only lists tests, and
         # starting a worker per core to do it changes the output as well as the cost.
         [sys.executable, "-m", "pytest", "--collect-only", "-q",
-         "-p", "no:cacheprovider", "-n", "0"],
+         "-p", "no:cacheprovider", "-n", "0",
+         # the validator files are skipped because importing them all is the whole cost of this check
+         "--ignore-glob=validator/tests/*"],
         cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300,
     )
     assert result.returncode == 0, (

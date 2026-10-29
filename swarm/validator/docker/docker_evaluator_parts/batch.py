@@ -24,6 +24,7 @@ import multiprocessing as mp
 import os
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,7 @@ from typing import Any, Callable, Optional
 
 import bittensor as bt
 
+from swarm.challenge_families import runtime_family_for_task
 from swarm.config import DockerBatchTimeoutSettings, DockerRuntimeSettings, RpcTraceSettings
 from swarm.constants import (
     AGENT_STARTUP_WALL_SEC,
@@ -49,6 +51,8 @@ from swarm.constants import (
     SIM_DT,
     SPEED_FACTOR_MAX_ELIGIBLE,
     SPEED_FACTOR_MIN,
+    SUBMISSION_DIR_MAX_BYTES,
+    SUBMISSION_DIR_MAX_FILES,
 )
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
@@ -525,6 +529,8 @@ class _BatchContext:
     runtime_profile: Optional[Any] = None
 
     connected: bool = False
+    container_pid: Optional[int] = None
+    submission_dir_filled: bool = False
     container_started_at: Optional[float] = None
     container_startup_sec: Optional[float] = None
 
@@ -544,7 +550,7 @@ class _BatchContext:
 _CONTAINER_FIELDS = (
     "container_name", "host_port", "tmpdir", "submission_dir", "run_image",
     "current_uid", "current_gid", "worker_limits", "docker_envs", "validator_ip",
-    "runtime_profile", "connected", "container_started_at", "container_startup_sec",
+    "runtime_profile", "connected", "container_pid", "container_started_at", "container_startup_sec",
     "setup_sec", "launch_sec", "lockdown_sec", "serve_sec",
 )
 
@@ -805,18 +811,26 @@ def _setup_pretry_state(ctx: _BatchContext) -> None:
 OBS_SHM_BYTES = 32 * 1024 * 1024
 
 
-def _legal_thinking_sec(tasks: list, speed_factor: Optional[float]) -> float:
+def _legal_thinking_sec(
+    tasks: list,
+    speed_factor: Optional[float],
+    budget_sec: float = MINER_COMPUTE_BUDGET_SEC,
+    window_acts: int = 1,
+) -> float:
     """Wall time the miner may spend in act() across these seeds without breaking the per-step budget.
 
-    Every step grants MINER_COMPUTE_BUDGET_SEC scaled by the host speed factor, so the batch
-    clock has to hold that on top of the family's simulation allowance; otherwise a slow but
-    legal model runs out of clock and is booked as an infrastructure fault."""
-    steps = 0
+    Every window of window_acts act() calls grants budget_sec scaled by the host speed factor, so
+    the batch clock has to hold that on top of the family's simulation allowance; otherwise a slow
+    but legal model runs out of clock and is booked as an infrastructure fault. A family that holds
+    one decision for several physics steps is asked for one act() per decision."""
+    windows = 0
     for task in tasks:
         sim_dt = float(getattr(task, "sim_dt", 0.0) or SIM_DT)
-        steps += math.ceil(float(getattr(task, "horizon", 0.0)) / sim_dt)
+        decision_sec = sim_dt * int(runtime_family_for_task(task).decision_steps)
+        acts = math.ceil(float(getattr(task, "horizon", 0.0)) / decision_sec)
+        windows += math.ceil(acts / max(1, int(window_acts)))
     factor = max(float(speed_factor or SPEED_FACTOR_MIN), SPEED_FACTOR_MIN)
-    return steps * MINER_COMPUTE_BUDGET_SEC * factor
+    return windows * budget_sec * factor
 
 
 def _obs_shm_host_path(host_port: int) -> str:
@@ -882,7 +896,13 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             else 1.0
         )
         timeout_multiplier = timeout_settings.multiplier * profile_timeout_multiplier
-        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor)
+        budget_sec = (
+            float(runtime_profile.miner_compute_budget_sec)
+            if runtime_profile is not None and runtime_profile.miner_compute_budget_sec is not None
+            else MINER_COMPUTE_BUDGET_SEC
+        )
+        window_acts = runtime_profile.miner_compute_window_acts if runtime_profile is not None else 1
+        thinking_allowance = _legal_thinking_sec(tasks, ctx.speed_factor, budget_sec, window_acts)
         batch_timeout = base_batch_timeout * timeout_multiplier + thinking_allowance
         if profile_cap_sec > 0:
             batch_timeout = min(batch_timeout, profile_cap_sec)
@@ -958,6 +978,15 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
             if _cancel_requested(ctx):
                 cancelled = True
                 break
+            if not ctx.submission_dir_filled and _submission_dir_full(ctx.container_pid):
+                ctx.submission_dir_filled = True
+                bt.logging.warning(
+                    f"[Worker {worker_id}] UID {uid} filled its folder; stopping its container"
+                )
+                _phase("model filled its folder; container stopped")
+                await asyncio.to_thread(
+                    _run_docker_cmd_quiet, ["docker", "kill", container_name]
+                )
             now = time.time()
             try:
                 last_ts = max(eval_start, float(progress_state.get("ts", eval_start)))
@@ -1128,6 +1157,9 @@ async def _run_rpc_phase(ctx: _BatchContext) -> list:
         if not isinstance(results_obj, list):
             raise RuntimeError("RPC worker returned invalid results payload")
         results = results_obj
+        if ctx.submission_dir_filled or _submission_dir_full(ctx.container_pid):
+            _phase("model filled its folder; its seeds fail as the model's own exit")
+            results = _charge_filled_folder(results)
 
         valid_results = []
         for r in results:
@@ -1536,6 +1568,10 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[ReasonCode]:
 
 _GRAPH_ARTIFACT_NAME = "model_graph.zip"
 _START_GATE_PATH = "/tmp/swarm_start.gate"
+_START_GATE_TIMEOUT_SEC = 120.0
+_START_GATE_POLL_SEC = 0.05
+_SUBMISSION_MOUNT = "/workspace/submission"
+_BUNDLE_MOUNT = "/workspace/bundle"
 
 
 def _open_start_gate(container_name: str) -> bool:
@@ -1549,6 +1585,30 @@ def _open_start_gate(container_name: str) -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+def _gated_runner_command(
+    entry: str,
+    gate: str = _START_GATE_PATH,
+    timeout_sec: float = _START_GATE_TIMEOUT_SEC,
+    prepare: str = "",
+) -> list[str]:
+    """Container command that starts Python on ``entry`` only once the start gate exists.
+
+    The shell waits instead of the runner because Python imports from the
+    submission folder as it starts, and the network is open until the gate.
+    ``prepare`` runs first, before the wait, and a failure there ends the start."""
+    polls = max(1, math.ceil(timeout_sec / _START_GATE_POLL_SEC))
+    script = (
+        f"n=0; until [ -e {shlex.quote(gate)} ]; do "
+        f"n=$((n+1)); if [ $n -gt {polls} ]; then "
+        "echo 'start gate never opened; refusing to start the runner' >&2; exit 1; fi; "
+        f"sleep {_START_GATE_POLL_SEC}; done; "
+        f"exec python {shlex.quote(entry)}"
+    )
+    if prepare:
+        script = f"{prepare} || exit 1; {script}"
+    return ["sh", "-c", script]
 
 
 def _container_is_gone(container_name: str) -> bool:
@@ -1572,6 +1632,33 @@ def _container_is_gone(container_name: str) -> bool:
         return False
 
 
+def _submission_dir_full(container_pid: Optional[int]) -> bool:
+    """True once the model's folder has no room left, in bytes or in files.
+
+    Read from the host through the container's root, out of the model's reach.
+    A folder that cannot be read, the agent already gone, is left to the RPC to report.
+    """
+    if not container_pid:
+        return False
+    try:
+        usage = os.statvfs(f"/proc/{container_pid}/root{_SUBMISSION_MOUNT}")
+    except OSError:
+        return False
+    return usage.f_bavail == 0 or usage.f_favail == 0
+
+
+def _charge_filled_folder(results: list) -> list:
+    """Every seed of a container whose model filled its folder, failed as the model's own exit."""
+    return [
+        ValidationResult(
+            r.uid, False, r.time_sec, 0.0,
+            failure_reason=FailureReason.AGENT_EXITED.value,
+            metrics=r.metrics,
+        )
+        for r in results
+    ]
+
+
 def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[ReasonCode]:
     """Start the sandbox container detached; the agent waits behind the start gate.
 
@@ -1587,8 +1674,14 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
         "--ulimit", "fsize=52428800:52428800", "--security-opt", "no-new-privileges",
         "--cap-drop", "ALL", "--network", "bridge", "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+        # the model's folder lives in memory with a fixed size, so its writes never reach the host disk
+        "--tmpfs", (
+            f"{_SUBMISSION_MOUNT}:rw,nosuid,size={SUBMISSION_DIR_MAX_BYTES},"
+            f"nr_inodes={SUBMISSION_DIR_MAX_FILES},"
+            f"uid={ctx.current_uid},gid={ctx.current_gid},mode=0700"
+        ),
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
-        "-v", f"{ctx.submission_dir}:/workspace/submission:rw",
+        "-v", f"{ctx.submission_dir}:{_BUNDLE_MOUNT}:ro",
     ]
     if warm:
         cmd.extend([f"--cpus={_WARM_CPU_LIMIT}", f"--cpu-shares={_WARM_CPU_SHARES}"])
@@ -1601,7 +1694,13 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
     if obs_shm_path:
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
-    cmd.extend([ctx.run_image, "python", "/workspace/submission/main.py"])
+    cmd.extend([
+        ctx.run_image,
+        *_gated_runner_command(
+            f"{_SUBMISSION_MOUNT}/main.py",
+            prepare=f"cp -R {_BUNDLE_MOUNT}/. {_SUBMISSION_MOUNT}/",
+        ),
+    ])
     ctx.container_started_at = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     ctx.launch_sec = time.monotonic() - ctx.container_started_at
@@ -1624,6 +1723,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     ):
         ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
         return ReasonCode.INFRA_DOCKER
+    ctx.container_pid = container_pid
     gate_opened_at = time.monotonic()
     ctx.lockdown_sec = gate_opened_at - t_lockdown
     deadline = gate_opened_at + AGENT_STARTUP_WALL_SEC
@@ -1824,6 +1924,7 @@ async def evaluate_seeds_batch(
     warm_container: Optional[WarmContainer] = None,
     on_container_ready: Optional[Callable[[], None]] = None,
     cancel_event: Optional[Any] = None,
+    raw_timing: bool = False,
 ) -> list:
     """Evaluate multiple seeds in a single container.
 
@@ -1836,6 +1937,8 @@ async def evaluate_seeds_batch(
         warm_container: A spare started ahead of time; adopted instead of a fresh start
         on_container_ready: Called once the container serves, before the first seed flies
         cancel_event: Set by the dispatcher to abandon the batch; unfinished seeds report a stop status
+        raw_timing: Fly on the per-step timeout with no host speed factor instead of measuring the host;
+            only the local benchmark sets it, after its own speed check found no usable factor
 
     Returns:
         List of ValidationResult objects (one per seed)
@@ -1869,7 +1972,7 @@ async def evaluate_seeds_batch(
         discard_warm_container(warm_container)
         return early
 
-    if not is_calibration_run:
+    if not is_calibration_run and not raw_timing:
         speed = None
         if host_speed_factor is not None:
             try:

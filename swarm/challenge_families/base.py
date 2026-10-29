@@ -19,9 +19,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import inspect
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SWARM_MAX_DRONES, SWARM_MIN_DRONES
 from swarm.domain_model import (
@@ -30,6 +32,23 @@ from swarm.domain_model import (
     get_policy_interface_contract,
     get_supported_interface_versions,
 )
+
+_SEED_CHECKS_DEFERRED: contextvars.ContextVar[bool] = contextvars.ContextVar("seed_checks_deferred", default=False)
+
+
+@contextlib.contextmanager
+def deferred_seed_checks() -> Iterator[None]:
+    """Build tasks without judging their seeds first; the caller passes each one through check_seed before it flies."""
+    token = _SEED_CHECKS_DEFERRED.set(True)
+    try:
+        yield
+    finally:
+        _SEED_CHECKS_DEFERRED.reset(token)
+
+
+def seed_checks_deferred() -> bool:
+    """Whether the tasks being built may leave their seed checks to the caller."""
+    return _SEED_CHECKS_DEFERRED.get()
 
 
 def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
@@ -99,6 +118,11 @@ class ChallengeFamilyRuntimeError(ValueError):
     """Raised when a challenge family runtime cannot service a request."""
 
 
+class IncompleteInstall(Exception):
+    """This machine lacks something a family needs to run as the rest of the fleet does. Deliberately not a
+    RuntimeError, which a seed's own world may raise: it is the machine's failure, never a seed's or a model's."""
+
+
 @dataclass(frozen=True)
 class ChallengeFamilyEvaluation:
     """One scored rollout: the outcome flag, the final score, the failure reason and both metric dicts."""
@@ -127,10 +151,16 @@ class ChallengeFamilyRuntimeProfile:
     rpc_reset_timeout_sec: Optional[float] = None
     rpc_first_step_timeout_sec: Optional[float] = None
     rpc_step_timeout_sec: Optional[float] = None
+    # Baseline-equivalent compute one window of act() calls may share; None keeps the shared MINER_COMPUTE_BUDGET_SEC.
+    miner_compute_budget_sec: Optional[float] = None
+    # Consecutive act() calls that share that budget, counted from the start of the episode.
+    miner_compute_window_acts: int = 1
     global_eval_base_sec: Optional[float] = None
     global_eval_per_seed_sec: Optional[float] = None
     global_eval_cap_sec: Optional[float] = None
     batch_timeout_multiplier: float = 1.0
+    # Resident memory, MiB, past which an idle host worker is replaced; None keeps the evaluator's default.
+    worker_recycle_rss_mb: Optional[float] = None
 
     def as_dict(self) -> Dict[str, Any]:
         """Flatten the profile into a plain mapping, the form sent across a process or RPC boundary."""
@@ -166,6 +196,12 @@ class ChallengeFamilyRuntimeProfile:
             rpc_step_timeout_sec=(
                 None if payload.get("rpc_step_timeout_sec") is None else float(payload.get("rpc_step_timeout_sec"))
             ),
+            miner_compute_budget_sec=(
+                None
+                if payload.get("miner_compute_budget_sec") is None
+                else float(payload.get("miner_compute_budget_sec"))
+            ),
+            miner_compute_window_acts=int(payload.get("miner_compute_window_acts") or 1),
             global_eval_base_sec=(
                 None if payload.get("global_eval_base_sec") is None else float(payload.get("global_eval_base_sec"))
             ),
@@ -178,6 +214,9 @@ class ChallengeFamilyRuntimeProfile:
                 None if payload.get("global_eval_cap_sec") is None else float(payload.get("global_eval_cap_sec"))
             ),
             batch_timeout_multiplier=float(payload.get("batch_timeout_multiplier", 1.0)),
+            worker_recycle_rss_mb=(
+                None if payload.get("worker_recycle_rss_mb") is None else float(payload.get("worker_recycle_rss_mb"))
+            ),
         )
 
 
@@ -201,6 +240,35 @@ class ChallengeFamilyRuntime:
     # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,
     # "pyb_gnd_drag_dw" adds the URDF's air drag, ground effect and downwash.
     physics_mode: str = "pyb"
+    # Control steps one model decision holds for; each env.step runs this many.
+    decision_steps: int = 1
+    # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
+    prepares_seeds: bool = False
+    # Send the next observation to the model while the last decision's control steps finish (see observation_fixed).
+    observation_ahead: bool = False
+    # Whether each step measures the drone's closest approach to obstacles, for a score that reads min_clearance.
+    clearance_metric: bool = True
+
+    def install_problems(self) -> list[str]:
+        """What this machine lacks to run the family as the rest of the fleet does, in words; none by default."""
+        return []
+
+    def stalled_rollout_metrics(self, task: Any, info: Dict[str, Any]) -> Dict[str, Any]:
+        """Metrics a seed keeps when the model stalls out of it on slow-act strikes; none by default."""
+        _ = task, info
+        return {}
+
+    def slow_step_action(self, previous: Any) -> Any | None:
+        """The action flown for a decision the model did not give in time, from the last action flown (None before the
+        first); None flies the all-zero action."""
+        _ = previous
+        return None
+
+    def outcome_fixed(self, env: Any) -> bool:
+        """True once nothing the model does can change the seed's result, so the evaluator stops asking it while the
+        world finishes; False by default."""
+        _ = env
+        return False
 
     def screening_policy(self) -> Dict[str, Any]:
         """Registry thresholds that decide when a model survives screening: improvement floors and early-fail checkpoints."""
@@ -255,6 +323,21 @@ class ChallengeFamilyRuntime:
         _ = task
         return 3
 
+    def drone_urdf(self, env: Any) -> Optional[str]:
+        """The staged URDF the family's drone flies with, or None for the environment's default body."""
+        _ = env
+        return None
+
+    def action_space(self, env: Any) -> Any | None:
+        """The family's own action space, or None where the environment's default applies."""
+        _ = env
+        return None
+
+    def preprocess_action(self, env: Any, action: Any) -> Any | None:
+        """Rotor speeds for one control step from the family's own action, or None where the default applies."""
+        _ = env, action
+        return None
+
     def initialise_env_state(self, env: Any, *, requested_mode: bool = False) -> None:
         """Attach the family's own attributes to a freshly constructed env; a plain flight needs none."""
         _ = env, requested_mode
@@ -271,6 +354,11 @@ class ChallengeFamilyRuntime:
         """Refresh family-owned bookkeeping after the control step's physics has run, such as dwell timers."""
         _ = env
 
+    def observation_fixed(self, env: Any) -> bool:
+        """True once nothing left in the decision's control steps can change the next decision's observation."""
+        _ = env
+        return False
+
     def advance_world(self, env: Any) -> None:
         """Per control step, before physics: advance family-owned world entities
         (e.g. the interceptor target drone). No-op for families without one."""
@@ -281,6 +369,12 @@ class ChallengeFamilyRuntime:
         bodies (e.g. the interceptor target's rotors) or disturbance forces on the
         miner drones (e.g. the office VPS drift). No-op by default."""
         _ = env
+
+    def felt_wind(self, env: Any, nth_drone: int, wind: Any) -> Any:
+        """The wind a miner drone feels where it flies, given the map's wind for the control step: the same wind at
+        every height by default."""
+        _ = env, nth_drone
+        return wind
 
     def protected_body_uids(self, env: Any) -> set[int]:
         """PyBullet uids excluded from the fatal-collision check, the obstacle cull and the clearance metric."""
@@ -329,6 +423,23 @@ class ChallengeFamilyRuntime:
     def build_random_task(self, *, sim_dt: float, seed: Optional[int]) -> Any:
         """Draw one freely sampled task for the given seed; unimplemented here, every family defines it."""
         raise NotImplementedError
+
+    def seeds_prepared(self, seeds: list[int]) -> bool:
+        """Whether tasks for these seeds can be built at once; true for a family that works nothing out first."""
+        return True
+
+    def prepare_seeds(self, seeds: list[int], *, background: bool = False) -> None:
+        """Work out ahead, off the validator's loop, whatever building these seeds' tasks needs; nothing by default.
+        In the background it takes only the cores nothing else wants."""
+
+    def awaits_seed_check(self, task: Any) -> bool:
+        """Whether a task built under deferred_seed_checks must pass through check_seed before it flies; never here."""
+        return False
+
+    def check_seed(self, task: Any) -> Any:
+        """The task to fly in place of one built under deferred_seed_checks, its seed judged first when that is still
+        to do, which can take minutes; the task itself here."""
+        return task
 
     def _build_template_tasks(
         self,
@@ -418,8 +529,11 @@ class ChallengeFamilyRuntime:
         min_clearance: Optional[float],
         collision: bool,
         failure_reason: str,
+        info: Optional[Dict[str, Any]] = None,
     ) -> ChallengeFamilyEvaluation:
         """Score a finished flight: collect the raw metrics, normalize them, and package final_score with both dicts."""
+        # info is the flight's last step info, for a family whose score needs more than its clock and flags.
+        _ = info
         metrics = self.build_rollout_metrics(
             task=task,
             success=success,

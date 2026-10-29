@@ -58,7 +58,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS  # noqa: E402
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID  # noqa: E402
 
 _FOLLOW_CAMERA_FOV = 45.0
 
@@ -89,15 +89,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         required=True,
-        choices=[1, 2, 3, 4, 5, 6, 7],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office).",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar).",
     )
     parser.add_argument(
         "--family-id",
         type=str,
-        default="cf_autopilot",
+        default=DEFAULT_CLI_FAMILY_ID,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help="Challenge family whose world-building logic to use (default: cf_autopilot).",
+        help=f"Challenge family whose world-building logic to use (default: {DEFAULT_CLI_FAMILY_ID}).",
     )
     parser.add_argument(
         "--randomize-appearance",
@@ -207,17 +207,14 @@ def _sync_observation_space(env, obs) -> None:
     if actual_state_dim == env._state_dim:
         return
     env._state_dim = actual_state_dim
-    env.observation_space = spaces.Dict(
-        {
-            "depth": env.observation_space["depth"],
-            "state": spaces.Box(
-                low=-np.inf,
-                high=np.inf,
-                shape=(actual_state_dim,),
-                dtype=np.float32,
-            ),
-        }
+    fields = dict(env.observation_space.spaces)
+    fields["state"] = spaces.Box(
+        low=-np.inf,
+        high=np.inf,
+        shape=(actual_state_dim,),
+        dtype=np.float32,
     )
+    env.observation_space = spaces.Dict(fields)
 
 
 def _motion_from_pressed_keys(
@@ -314,6 +311,12 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
         7: _MapVisualProfile(
             render_scale=0.75,
             render_distance=30.0,
+            render_fps=20.0,
+            sim_fps=20.0,
+        ),
+        8: _MapVisualProfile(
+            render_scale=0.65,
+            render_distance=100.0,
             render_fps=20.0,
             sim_fps=20.0,
         ),
