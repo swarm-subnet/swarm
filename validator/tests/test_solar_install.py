@@ -48,6 +48,7 @@ from swarm.challenge_families.solar_patrol.seed_checks import Verdict
 from swarm.challenge_families.solar_patrol.task import solar_patrol_task
 from swarm.constants import INSTALL_REFUSAL_IDLE_SEC, INSTALL_REFUSAL_LOG_SEC, SIM_DT
 from swarm.core.maps.solar import builder
+from swarm.domain_model import get_family_benchmark_version
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator import forward as forward_mod
 from swarm.validator.utils_parts import run_task as run_task_module
@@ -287,7 +288,7 @@ async def test_a_sentinel_task_is_refused_before_its_model_is_fetched(no_thieves
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", fetch)
     with pytest.raises(IncompleteInstall, match="intruders/intruders.json"):
         await run_task_module.run_task(
-            _validator(), {"benchmark_version": "5.1.6", "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID,
+            _validator(), {"benchmark_version": get_family_benchmark_version(FAMILY_ID), "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID,
                            "model_hash": "0" * 64},
             cancel_flag=asyncio.Event(), wake_flag=asyncio.Event())
 

@@ -51,7 +51,7 @@ from swarm.challenge_families.solar_patrol import (
 from swarm.challenge_families.solar_patrol.contract import FAMILY_ID, HORIZON_S
 from swarm.challenge_families.solar_patrol.seed_checks import CHECK_TRIES, SeedCheckError, Verdict, candidates
 from swarm.constants import SIM_DT
-from swarm.domain_model import get_family_benchmark_seed_count
+from swarm.domain_model import get_family_benchmark_seed_count, get_family_benchmark_version
 from swarm.protocol import FailureReason
 from swarm.validator import forward as forward_mod
 from swarm.validator.docker import docker_evaluator as de
@@ -586,7 +586,7 @@ async def test_a_solar_task_starts_while_its_seeds_are_still_judged(monkeypatch)
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", fetch)
     await run_task_module.run_task(
         _validator_with_seeds([11]),
-        {"benchmark_version": "5.1.6", "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
+        {"benchmark_version": get_family_benchmark_version(FAMILY_ID), "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
          "model_hash": "0" * 64},
         cancel_flag=asyncio.Event(), wake_flag=asyncio.Event())
     assert [model["uid"] for models in fetched for model in models] == [42]
