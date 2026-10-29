@@ -36,7 +36,8 @@ IMAGE="${SWARM_VALIDATOR_IMAGE:-ghcr.io/swarm-subnet/swarm-validator}:${SWARM_VA
 STATE_DIR="$(mktemp -d /tmp/swarm-lockdown-check.XXXXXX)"
 TARGET="swarm_lockdown_check_$$"
 trap 'docker rm -f "$TARGET" >/dev/null 2>&1 || true; rm -rf "$STATE_DIR"' EXIT
-mkdir -p "$STATE_DIR/state" "$STATE_DIR/swarm-state"
+# Created here so the daemon does not create them as root.
+mkdir -p "$STATE_DIR/state" "$STATE_DIR/swarm-state" "$REPO_ROOT/state" "$REPO_ROOT/swarm/state"
 SWARM_UID="${SWARM_UID:-$(id -u)}"
 SWARM_GID="${SWARM_GID:-$SWARM_UID}"
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"

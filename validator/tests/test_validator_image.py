@@ -156,6 +156,7 @@ def test_ci_locks_a_container_down_through_the_image() -> None:
     script = LOCKDOWN_CHECK.read_text()
     assert "_apply_network_lockdown" in script
     assert '[[ "$SWARM_UID" != "0" ]]' in script, "root needs no capability, so it would pass falsely"
+    assert '"$REPO_ROOT/state" "$REPO_ROOT/swarm/state"' in script, "else the daemon creates them as root"
 
 
 def test_the_runner_image_inputs_are_untouched() -> None:
