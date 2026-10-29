@@ -24,7 +24,7 @@ from pathlib import Path
 # Render threads sleep between pictures instead of spinning on cores the other workers share; pictures never depend on it.
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
-__version__ = "5.1.6.5"
+__version__ = "6.0.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 

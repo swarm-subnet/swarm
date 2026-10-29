@@ -22,13 +22,16 @@ import json
 
 import pytest
 
-from swarm.constants import BENCHMARK_TOTAL_SEED_COUNT
-from swarm.validator.seed_scheme import derive_seeds, key_fingerprint
+from swarm.constants import BENCHMARK_SCREENING_SEED_COUNT, BENCHMARK_TOTAL_SEED_COUNT
+from swarm.validator.seed_scheme import derive_seed, derive_seeds, key_fingerprint
 
 KEY = "11" * 32
 OTHER_KEY = "22" * 32
 EPOCH = 22
 FAMILY = "cf_autopilot"
+SENTINEL = "cf_solar_patrol"
+SENTINEL_SEED_COUNT = 2000
+OTHER_FAMILY = "cf_search_and_rescue"
 # Below this validator's own version, so the manager treats itself as on the shared scheme.
 LIVE_FROM = "5.0.0"
 
@@ -230,3 +233,107 @@ def test_changing_the_scheme_drops_what_the_other_one_cached(manager):
 
     assert manager.uses_derived_seeds()
     assert manager.get_all_seeds(FAMILY) != random_seeds
+
+
+def test_sentinel_flies_a_list_of_two_thousand_seeds(manager):
+    """Proves Swarm Sentinel's epoch list is 2,000 long and its indexes 1000 to 1999 resolve to the derived seeds."""
+    _go_live(manager)
+
+    seeds = manager.get_all_seeds(SENTINEL)
+
+    assert seeds == derive_seeds(KEY, EPOCH, SENTINEL, SENTINEL_SEED_COUNT)
+    assert seeds[1000:] == [derive_seed(KEY, EPOCH, SENTINEL, index) for index in range(1000, SENTINEL_SEED_COUNT)]
+    assert len(manager.get_screening_seeds(SENTINEL)) == BENCHMARK_SCREENING_SEED_COUNT
+    assert manager.get_benchmark_seeds(SENTINEL) == seeds[BENCHMARK_SCREENING_SEED_COUNT:]
+
+
+def test_other_families_keep_one_thousand_seeds_and_their_values(manager):
+    """Proves a family with no seed count of its own still gets 1,000 seeds, split 300 and 700, unchanged."""
+    _go_live(manager)
+
+    seeds = manager.get_all_seeds(OTHER_FAMILY)
+
+    assert seeds == derive_seeds(KEY, EPOCH, OTHER_FAMILY, BENCHMARK_TOTAL_SEED_COUNT)
+    assert len(manager.get_screening_seeds(OTHER_FAMILY)) == BENCHMARK_SCREENING_SEED_COUNT
+    assert len(manager.get_benchmark_seeds(OTHER_FAMILY)) == BENCHMARK_TOTAL_SEED_COUNT - BENCHMARK_SCREENING_SEED_COUNT
+
+
+@pytest.mark.parametrize("family_id, expected", [(FAMILY, 1000), (OTHER_FAMILY, 1000), (SENTINEL, 2000)])
+def test_a_stored_file_of_the_families_length_is_reused(manager, seed_manager_module, family_id, expected):
+    """Proves a cached epoch file with the family's own length is accepted, not rebuilt."""
+    module = seed_manager_module
+    _go_live(manager)
+    first = manager.get_all_seeds(family_id)
+    assert len(first) == expected
+    manager._family_seeds = {}
+    manager._build_seeds = lambda *_: pytest.fail("a file of the right length must not be rebuilt")
+
+    assert manager.get_all_seeds(family_id) == first == json.loads(_stored_file(module, family_id=family_id).read_text())["seeds"]
+
+
+def test_sentinel_file_from_before_the_growth_is_rebuilt_with_the_same_first_seeds(manager, seed_manager_module):
+    """Proves a 1,000 seed Sentinel file is replaced by the 2,000 list, which starts with the same seeds."""
+    module = seed_manager_module
+    _go_live(manager)
+    old = derive_seeds(KEY, EPOCH, SENTINEL, BENCHMARK_TOTAL_SEED_COUNT)
+    path = _stored_file(module, family_id=SENTINEL)
+    manager._save_epoch_file(EPOCH, SENTINEL, old, published=False)
+    assert path.exists()
+
+    rebuilt = manager.get_all_seeds(SENTINEL)
+
+    assert len(rebuilt) == SENTINEL_SEED_COUNT
+    assert rebuilt[:BENCHMARK_TOTAL_SEED_COUNT] == old
+
+
+def test_without_the_shared_scheme_sentinel_still_rolls_two_thousand_seeds(manager):
+    """Proves a validator on its own random seeds also gets a 2,000 seed list for Sentinel and 1,000 for the rest."""
+    assert len(manager.get_all_seeds(SENTINEL)) == SENTINEL_SEED_COUNT
+    assert len(manager.get_all_seeds(OTHER_FAMILY)) == BENCHMARK_TOTAL_SEED_COUNT
+
+
+def test_epoch_seed_count_is_the_larger_of_the_shared_total_and_the_family_count(seed_manager_module):
+    """Proves Sentinel's list holds its own 2,000 seeds while other and unknown families hold the 1,000 total."""
+    count = seed_manager_module.epoch_seed_count
+
+    assert count(SENTINEL) == SENTINEL_SEED_COUNT
+    assert count(OTHER_FAMILY) == BENCHMARK_TOTAL_SEED_COUNT
+    assert count("cf_not_a_family") == BENCHMARK_TOTAL_SEED_COUNT
+
+
+def test_family_bump_keeps_seed_bytes_and_publication_provenance(manager, seed_manager_module, monkeypatch):
+    """Another family's bump preserves seed files; even this family's bump retains stored seed identity and provenance."""
+    module = seed_manager_module
+    _go_live(manager)
+    versions = {FAMILY: '5.1.6', OTHER_FAMILY: '5.1.6', SENTINEL: '5.1.6'}
+    monkeypatch.setattr(module, 'get_family_benchmark_version', versions.__getitem__)
+    first = manager.get_all_seeds(OTHER_FAMILY)
+    path = _stored_file(module, family_id=OTHER_FAMILY)
+    original = path.read_bytes()
+    versions[SENTINEL] = '6.0.0'
+    manager._family_seeds.clear()
+    assert manager.get_all_seeds(OTHER_FAMILY) == first
+    assert path.read_bytes() == original
+    solar = manager.get_all_seeds(SENTINEL)
+    assert json.loads(_stored_file(module, family_id=SENTINEL).read_text())['benchmark_version'] == '6.0.0'
+    versions[SENTINEL] = '6.0.1'
+    manager._family_seeds.clear()
+    assert manager.get_all_seeds(SENTINEL) == solar
+    assert json.loads(_stored_file(module, family_id=SENTINEL).read_text())['benchmark_version'] == '6.0.0'
+    manager._publish_unpublished_epochs()
+    manager.epoch_number = EPOCH + 1
+    manager._publish_unpublished_epochs()
+    publication = next(item for item in manager.get_pending_publications() if item['family_id'] == SENTINEL)
+    assert publication['benchmark_version'] == '6.0.0'
+    assert publication['seeds'] == solar
+
+
+def test_seed_scheme_uses_the_named_familys_version(manager, seed_manager_module, monkeypatch):
+    """A global release cannot opt unchanged families into a different seed scheme."""
+    versions = {FAMILY: '5.1.6', OTHER_FAMILY: '5.1.6', SENTINEL: '6.0.0'}
+    monkeypatch.setattr(seed_manager_module, 'get_family_benchmark_version', versions.__getitem__)
+    manager.apply_backend_scheme('6.0.0', {})
+    assert not manager.uses_derived_seeds(OTHER_FAMILY)
+    assert manager.uses_derived_seeds(SENTINEL)
+    assert manager.seeds_ready(EPOCH, OTHER_FAMILY)
+    assert not manager.seeds_ready(EPOCH, SENTINEL)

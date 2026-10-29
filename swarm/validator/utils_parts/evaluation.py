@@ -19,6 +19,7 @@
 
 import asyncio
 import time
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -35,7 +36,6 @@ from swarm.challenge_families import (
 from swarm.constants import (
     BENCHMARK_FULL_SEED_COUNT,
     BENCHMARK_SCREENING_SEED_COUNT,
-    BENCHMARK_VERSION,
     MAX_INFLIGHT_SEED_UPLOADS,
     RE_AUTH_INTERVAL_SEC,
     SCORE_UPLOAD_GRACE_SEC,
@@ -48,7 +48,7 @@ from swarm.core.submission_policy import (
     RUNNER_ABI,
     profile_digest,
 )
-from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES
+from swarm.domain_model import CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE, ENVIRONMENT_TYPES, get_family_benchmark_version
 from swarm.protocol import FailureReason
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import (
@@ -147,9 +147,7 @@ def _seed_upload_provenance(self, model_path: Path) -> Dict[str, Any]:
 
 def _utils_facade():
     """The swarm.validator.utils module, imported on call so the lookup goes through the facade."""
-    from swarm.validator import utils as validator_utils
-
-    return validator_utils
+    return import_module("swarm.validator.utils")
 
 
 def _empty_per_type() -> Dict[str, List[float]]:
@@ -210,8 +208,7 @@ async def _evaluate_seeds(
 
     model_hash_short = ""
     try:
-        from swarm.utils.hash import sha256sum as _sha
-        model_hash_short = _sha(model_path)[:12]
+        model_hash_short = sha256sum(model_path)[:12]
     except Exception:
         pass
     bt.logging.info(f"━━━ {description.upper()} UID {uid} | {model_hash_short} ━━━")
@@ -444,6 +441,7 @@ async def _run_streaming_phase(
                     model_uid=uid, epoch_number=epoch_number, scores=batch,
                     task_id=task_id,
                     family_id=family_id,
+                    benchmark_version=get_family_benchmark_version(family_id),
                     provenance=provenance,
                     seed_set_id=_seed_set_id(self, family_id, epoch_number),
                 )
@@ -666,6 +664,7 @@ async def _run_streaming_phase(
                         model_uid=uid, epoch_number=epoch_number, scores=batch,
                         task_id=task_id,
                         family_id=family_id,
+                        benchmark_version=get_family_benchmark_version(family_id),
                         provenance=provenance,
                         seed_set_id=_seed_set_id(self, family_id, epoch_number),
                     )
@@ -780,7 +779,7 @@ async def _run_screening(
         "assignment_id": task_id,
         "family_id": family_id,
         "epoch_number": epoch,
-        "benchmark_version": BENCHMARK_VERSION,
+        "benchmark_version": get_family_benchmark_version(family_id),
         "batch_id": batch_id,
     }
     hb.start(
@@ -975,7 +974,7 @@ async def _run_full_benchmark(
         "assignment_id": task_id,
         "family_id": family_id,
         "epoch_number": epoch,
-        "benchmark_version": BENCHMARK_VERSION,
+        "benchmark_version": get_family_benchmark_version(family_id),
         "batch_id": batch_id,
     }
     hb.start(

@@ -54,9 +54,9 @@ Swarm is three separate competitions, each with its own champion and its own sha
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Swarm Sentinel](docs/families/solar_patrol.md)** | Patrol a solar park from its drone dock by day and by night, report every intruder, and land back in the dock | <img src="https://img.shields.io/badge/65%25-F5D400?style=flat-square" alt="65%" /> |
-| **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/20%25-F5D400?style=flat-square" alt="20%" /> |
-| **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/15%25-F5D400?style=flat-square" alt="15%" /> |
+| **[Swarm Sentinel](docs/families/solar_patrol.md)** | Patrol a solar park from its drone dock by day and by night, report every intruder, and land back in the dock | <img src="https://img.shields.io/badge/85%25-F5D400?style=flat-square" alt="85%" /> |
+| **[Swarm Search and Rescue](docs/families/swarm_sar.md)** | Send a team of drones to sweep the area and find the victim together | <img src="https://img.shields.io/badge/10%25-F5D400?style=flat-square" alt="10%" /> |
+| **[Search and Rescue](docs/families/search_and_rescue.md)** | Find a lost person and hold a steady hover above them | <img src="https://img.shields.io/badge/5%25-F5D400?style=flat-square" alt="5%" /> |
 
 <p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
 
@@ -118,7 +118,7 @@ In the rescue missions the drone sees the world through a depth camera, can ask 
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives its fresh seeds across its supported map types (**1,000** for the rescue missions, **250** for Swarm Sentinel), the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives its fresh seeds across its supported map types (**1,000** for the rescue missions, **2,000** for Swarm Sentinel), the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
 
 <table>
 <tr>
@@ -181,7 +181,7 @@ The standard score from 0 to 1 uses three things:
 </tr>
 </table>
 
-A drone's rank is its **average across every world of the epoch**, so steady skill beats a few lucky runs. (Swarm Sentinel scores detection, coverage and flight instead, and every missed intruder or false alarm turns 10 of its best worlds to 0; see [its guide](docs/families/solar_patrol.md#scoring).)
+A drone's rank is its **average across every world of the epoch**, so steady skill beats a few lucky runs. (Swarm Sentinel scores detection, coverage and flight instead, and every missed intruder or false alarm turns 5 of its best worlds to 0; see [its guide](docs/families/solar_patrol.md#scoring).)
 
 Rewards run on **King of the Hill**. Each mission pays its **last champions** (10 in Swarm Sentinel, 5 in the others), not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
 

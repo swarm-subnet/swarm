@@ -185,7 +185,7 @@ def test_submit_task_result_retries_through_an_outage(make_client):
     )
     result = asyncio.run(client.submit_task_result(
         5, score=0.5, per_type_scores={}, seeds_evaluated=10,
-        early_failed=False, epoch_number=3,
+        early_failed=False, benchmark_version="5.1.6", epoch_number=3,
     ))
     assert result == recorded
     assert len(http.calls) == 3
@@ -198,7 +198,7 @@ def test_submit_task_result_gives_up_after_its_attempt_budget(make_client, monke
     with pytest.raises(BackendTransportError):
         asyncio.run(client.submit_task_result(
             5, score=0.5, per_type_scores={}, seeds_evaluated=10,
-            early_failed=False, epoch_number=3,
+            early_failed=False, benchmark_version="5.1.6", epoch_number=3,
         ))
     assert len(http.calls) == 4
 
@@ -209,7 +209,7 @@ def test_submit_task_result_does_not_retry_a_refusal(make_client):
     with pytest.raises(BackendRejectedError) as caught:
         asyncio.run(client.submit_task_result(
             5, score=0.5, per_type_scores={}, seeds_evaluated=10,
-            early_failed=False, epoch_number=3,
+            early_failed=False, benchmark_version="5.1.6", epoch_number=3,
         ))
     assert caught.value.status_code == 410
     assert len(http.calls) == 1
@@ -220,6 +220,7 @@ def test_seed_scores_retry_an_outage_then_raise(make_client):
     client, http = make_client([_reply(502, "bad gateway")])
     with pytest.raises(BackendTransportError):
         asyncio.run(client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=1, epoch_number=1,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
             retries=3,
@@ -232,6 +233,7 @@ def test_seed_scores_do_not_retry_a_refusal(make_client):
     client, http = make_client([_reply(409, {"detail": "Submission provenance mismatch"})])
     with pytest.raises(BackendRejectedError):
         asyncio.run(client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=1, epoch_number=1,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
         ))
@@ -244,6 +246,7 @@ def test_seed_scores_recover_after_a_short_outage(make_client):
         [httpx.ConnectError("refused"), _reply(200, {"recorded": 1, "message": "ok"})]
     )
     result = asyncio.run(client.post_seed_scores_batch(
+        benchmark_version="5.1.6",
         model_uid=1, epoch_number=1,
         scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
     ))

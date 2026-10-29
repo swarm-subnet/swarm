@@ -47,6 +47,8 @@ REQUIREMENTS = REPO_ROOT / "requirements.txt"
 # Set before re-executing, so a pin that cannot be satisfied costs one restart and not
 # an endless loop of them.
 REPAIRED_MARKER = "SWARM_ENV_REPAIRED"
+# Room for a wheel built from source, while a stalled index or git fetch still ends as a failed repair.
+REPAIR_TIMEOUT_S = 1800
 # What a package installed editable from a folder reports: someone's working copy, which the repair leaves alone.
 LOCAL_CHECKOUT = "a local checkout"
 # `name==version`, ignoring extras, markers and anything that is not an exact pin.
@@ -146,11 +148,16 @@ def _install(pins: List[Tuple[str, str, str]], requirements: Path = REQUIREMENTS
         if not targets:
             continue
         bt.logging.warning(f"Installing {', '.join(targets)}")
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--quiet", *options, *targets],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", *options, *targets],
+                capture_output=True,
+                text=True,
+                timeout=REPAIR_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            bt.logging.error(f"Could not repair the environment: pip gave no answer in {REPAIR_TIMEOUT_S} s")
+            return False
         if result.returncode != 0:
             bt.logging.error(f"Could not repair the environment: {result.stderr.strip()[-500:]}")
             return False

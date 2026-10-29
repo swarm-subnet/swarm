@@ -30,8 +30,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import bittensor as bt
 import numpy as np
 
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
 from swarm.constants import (
-    BENCHMARK_VERSION,
     LEGACY_MODEL_DIR,
     MAX_MODEL_BYTES,
     MODEL_DIR,
@@ -49,6 +49,7 @@ from swarm.core.submission_policy import (
     check_safety,
     validate_submission_zip,
 )
+from swarm.domain_model import get_family_benchmark_version
 from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
 from swarm.protocol import PolicyRef
 from swarm.utils.github import (

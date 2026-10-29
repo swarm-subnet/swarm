@@ -203,7 +203,7 @@ def test_swarm_camera_fov_does_not_reveal_the_clue_offset():
         )
         env = make_env(task, gui=False)
         try:
-            radius =random.Random((seed + 888888) & 0xFFFFFFFF).uniform(SEARCH_RADIUS_MIN, SWARM_SEARCH_RADIUS)
+            radius = random.Random((seed + 888888) & 0xFFFFFFFF).uniform(SEARCH_RADIUS_MIN, SWARM_SEARCH_RADIUS)
             centroid = np.asarray(env.GOAL_POSES, dtype=float).mean(axis=0)
             clue_dy = float(env._search_area_center[1] - centroid[1])
             from_fov = radius * (float(env._fov) - 90.0) / 2.0

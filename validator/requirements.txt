@@ -11,7 +11,7 @@ numpy==2.4.6
 loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
-swarm-bullet3==2.0.0.3
+swarm-bullet3==2.0.0.5
 bittensor==10.5.0
 async-substrate-interface==2.2.1
 msgpack==1.1.2
@@ -29,4 +29,4 @@ requests==2.34.2
 httpx==0.28.1
 pycapnp==2.2.2
 swarm-drone-gym==2.0.0.3
-swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.0.0
+swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.1.0

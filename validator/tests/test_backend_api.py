@@ -528,3 +528,55 @@ def test_authorize_with_retry_raises_after_exhausting_transients():
     else:
         raise AssertionError("expected BackendTransportError")
     assert calls["n"] == 3
+
+
+def test_signed_requests_report_only_bundled_runtime_versions(monkeypatch, tmp_path):
+    """Capabilities include implemented runtimes, sorted and compact, without trusting backend versions."""
+    monkeypatch.setattr(backend_api, 'list_registered_challenge_families', lambda: ('cf_swarm_sar', 'cf_solar_patrol', 'cf_future'))
+    monkeypatch.setattr(backend_api, 'get_challenge_family', lambda family: type('Runtime', (), {'runtime_supported': family != 'cf_future'})())
+    versions = {'cf_swarm_sar': '5.1.6', 'cf_solar_patrol': '6.0.0'}
+    monkeypatch.setattr(backend_api, 'get_family_benchmark_version', versions.__getitem__)
+    client = _build_client(monkeypatch, tmp_path, wallet=_DummyWallet())
+    try:
+        for method, endpoint in [('POST', '/validators/heartbeat'), ('GET', '/validators/next-task'), ('GET', '/validators/events')]:
+            headers = client._sign_request(method, endpoint, b'')
+            assert headers['X-Swarm-Family-Versions'] == '{"cf_solar_patrol":"6.0.0","cf_swarm_sar":"5.1.6"}'
+            assert headers['X-Code-Version'] == backend_api.CODE_VERSION
+    finally:
+        _run(client.close())
+
+
+def test_uploads_use_the_family_version_and_refuse_relabelling(monkeypatch, tmp_path):
+    """Seed uploads and final results carry their validated family scope even after another family bumps."""
+    client = _build_client(monkeypatch, tmp_path)
+    captured = []
+
+    async def post(endpoint, data):
+        """Capture request bodies without contacting a backend."""
+        captured.append((endpoint, data))
+        return {'recorded': True}
+
+    monkeypatch.setattr(client, '_post_signed', post)
+    monkeypatch.setattr(backend_api, 'BENCHMARK_VERSION', '6.0.0')
+    try:
+        _run(client.post_seed_scores_batch(1, 10, [], family_id='cf_swarm_sar', benchmark_version='5.1.6'))
+        _run(client.submit_task_result(1, score=0.5, per_type_scores={}, seeds_evaluated=1, early_failed=False,
+                                       epoch_number=10, family_id='cf_swarm_sar', benchmark_version='5.1.6'))
+        assert [data['benchmark_version'] for _, data in captured] == ['5.1.6', '5.1.6']
+        for version in (None, '6.0.0'):
+            try:
+                _run(client.post_seed_scores_batch(1, 10, [], family_id='cf_swarm_sar', benchmark_version=version))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('mismatched seed upload accepted')
+            try:
+                _run(client.submit_task_result(1, score=0.5, per_type_scores={}, seeds_evaluated=1, early_failed=False,
+                                               epoch_number=10, family_id='cf_swarm_sar', benchmark_version=version))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('mismatched result accepted')
+        assert len(captured) == 2
+    finally:
+        _run(client.close())

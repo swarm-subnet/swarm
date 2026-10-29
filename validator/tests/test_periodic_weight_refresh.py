@@ -107,6 +107,7 @@ def _king(uid, hotkey, score, prev_score, *, crowned_at_epoch=1):
         "prev_score": prev_score,
         "weight": 0.0,
         "crowned_at_epoch": crowned_at_epoch,
+        "family_id": "cf_autopilot",
     }
 
 

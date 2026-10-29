@@ -266,7 +266,7 @@ def night_camera(env: Any, lens: int, shot: View, night_scene: bool, seed: int, 
         "sensorPhotons": _digits(electrons * NOISE_REDUCTION_FRAMES),
         "sensorReadNoise": _digits(READ_NOISE_E * math.sqrt(BINNED_PIXELS / pixels * NOISE_REDUCTION_FRAMES)),
         "sensorGainCap": _digits(electrons * iso / (100.0 * FULL_WELL_E_PER_UM2 * pixel_um2)),
-        "sensorSeed": (int(seed) * 1000003 + int(index)) & 0x7FFFFFFF ^ NIGHT_GRAIN_STREAM,
+        "sensorSeed": ((int(seed) * 1000003 + int(index)) & 0x7FFFFFFF) ^ NIGHT_GRAIN_STREAM,
     }
     if not beam:
         return p.ER_SWARM_LOW_LIGHT, kwargs

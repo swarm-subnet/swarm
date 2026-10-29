@@ -179,7 +179,7 @@ def test_submit_task_result_posts_signed_payload(monkeypatch):
         score=0.42,
         per_type_scores={"city": 0.4, "open": 0.5},
         seeds_evaluated=200,
-        early_failed=False,
+        early_failed=False, benchmark_version="5.1.6",
         epoch_number=5,
     ))
 

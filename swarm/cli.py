@@ -624,7 +624,7 @@ def _lookup_seed_type_in_seed_file(
     return unique[0]
 
 
-def _infer_benchmark_type_from_seed(seed: int, family_id: str = "cf_autopilot") -> int:
+def _infer_benchmark_type_from_seed(seed: int, family_id: str = DEFAULT_CLI_FAMILY_ID) -> int:
     """Return Solar's fixed type or rebuild the legacy task to read its map type."""
     if family_id == "cf_solar_patrol":
         return 8

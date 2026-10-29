@@ -116,6 +116,7 @@ class HeartbeatManager:
                 if matched is not None:
                     self._active_task = {
                         "uid": uid,
+                        "family_id": matched.get("family_id"),
                         "phase": matched.get("phase"),
                         "assignment_id": matched.get("assignment_id"),
                         "epoch_number": matched.get("epoch_number"),

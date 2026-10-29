@@ -8,7 +8,7 @@ numpy==2.4.6
 loguru==0.7.3
 xmldiff==2.7.0
 filelock==3.25.2
-swarm-bullet3==2.0.0.3
+swarm-bullet3==2.0.0.5
 # Canonical SDK version for validator/miner environments. 10.2.0 and older cannot
 # decode the chain's NetUid type and fail to connect at all.
 bittensor==10.5.0
@@ -33,7 +33,7 @@ shapely==2.1.2
 swarm-drone-gym==2.0.0.3
 # Maps, robot descriptions and textures. The tag is a release of the assets; a
 # new tag can change flight results and follows the same bump rules as scoring.
-swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.0.0
+swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.1.0
 pygame==2.6.1
 pytest==8.4.2
 pytest-xdist==3.8.0

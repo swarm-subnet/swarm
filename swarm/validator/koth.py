@@ -84,6 +84,10 @@ class KingEntry:
             crowned_at_epoch = int(data["crowned_at_epoch"])
             lineage_id_raw = data.get("lineage_id")
             lineage_id = int(lineage_id_raw) if lineage_id_raw is not None else None
+            family_raw = data["family_id"]
+            if family_raw is None or str(family_raw).strip() == "":
+                raise ValueError("empty family_id")
+            family_id = str(family_raw)
         except (KeyError, TypeError, ValueError) as exc:
             raise MalformedKingEntry(
                 f"invalid king sync entry: {exc} (data={dict(data)!r})"
@@ -97,7 +101,7 @@ class KingEntry:
             crowned_at_epoch=crowned_at_epoch,
             lineage_id=lineage_id,
             manual_override_drop=manual_override_drop,
-            family_id=str(data.get("family_id", "cf_autopilot")),
+            family_id=family_id,
         )
 
 

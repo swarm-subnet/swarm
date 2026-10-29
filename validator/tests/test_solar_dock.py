@@ -292,7 +292,7 @@ def test_each_seed_has_its_own_spot_and_keeps_it(world):
 
 def test_a_park_with_no_room_says_so(world):
     """When nothing inside the fence is open, the seed fails loudly instead of standing the dock anywhere."""
-    with pytest.raises(RuntimeError, match="no open ground"):
+    with pytest.raises(dock.NoDockGround, match="no open ground"):
         dock.find_site(world, 0, _SQUARE, _ground(world), np.array([[50.0, 50.0, 80.0]]))
 
 

@@ -23,6 +23,7 @@ one thing each. The distance tests stand flat terrain, a panel and a thief in th
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -106,6 +107,14 @@ def test_valid_reports_never_count_past_the_threats():
 def test_height_is_free_to_22_m_and_falls_in_a_straight_line_to_0_at_30_m(peak, height_part):
     """The height half of the flight term is full up to 22 m above the ground, low flying included, and 0 from 30 m."""
     assert score.score(None, _metrics(max_height_m=peak))["flight_term"] == pytest.approx(0.5 + 0.5 * height_part)
+
+
+@pytest.mark.parametrize("peak", [float("nan"), float("inf")])
+def test_a_height_that_is_not_a_number_counts_as_too_high(peak):
+    """A non-finite peak height leaves the height half empty and the seed score a real number, never NaN."""
+    terms = score.score(None, _metrics(max_height_m=peak))
+    assert terms["flight_term"] == pytest.approx(0.5)
+    assert math.isfinite(terms["final_score"])
 
 
 @pytest.mark.parametrize("end", [

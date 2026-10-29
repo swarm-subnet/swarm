@@ -10,10 +10,10 @@ Swarm runs **three active challenge families**; Interceptor, Autopilot, Swarm Au
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Search and Rescue](../../docs/families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 15% |
-| [Swarm Search and Rescue](../../docs/families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 20% |
+| [Search and Rescue](../../docs/families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 5% |
+| [Swarm Search and Rescue](../../docs/families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 10% |
 | [Interceptor](../../docs/families/completed/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
-| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 65% |
+| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 85% |
 
 Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB.
 
@@ -399,8 +399,8 @@ rebuilds anything it finds missing there on its next cycle.
 2. **Fetch the model**
    Fetch the archive from the backend vault (every family is on the private track) and verify its SHA-256 against the backend record. The bytes are written owner-only, never kept for forensics, and deleted once the task is done. A public-track family, if one is ever reopened, is downloaded from the miner's GitHub repo instead.
 
-3. **Full benchmark (1,000 seeds; 250 for Swarm Sentinel)**
-   Every new model runs its family's full benchmark (1,000 seeds; 250 for Swarm Sentinel) in parallel Docker containers. As workers free up, the validator claims up to that many pending seeds from the backend's shared pool, so validators of different speeds share one model without long idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
+3. **Full benchmark (1,000 seeds; 2,000 for Swarm Sentinel)**
+   Every new model runs its family's full benchmark (1,000 seeds; 2,000 for Swarm Sentinel) in parallel Docker containers. As workers free up, the validator claims up to that many pending seeds from the backend's shared pool, so validators of different speeds share one model without long idle tails. The task metadata carries the family and phase, so no local configuration is needed. A screening pre-phase (the first 300 seeds, with a pass bar tied to the champion's score) exists behind a backend constant but is off by default: submissions go straight to the full benchmark.
 
 4. **Report scores**
    Per-seed and aggregate scores are submitted to the backend as they are computed.
@@ -413,7 +413,7 @@ rebuilds anything it finds missing there on its next cycle.
 
 ### Shared Epoch Seeds
 
-Every validator flies the same seeds per family per epoch (1,000; 250 for Swarm Sentinel). The backend holds one secret key per epoch and serves it to trusted validators over `/validators/sync`; each seed is `HMAC-SHA256(key, "v1|<family>|<epoch>|<index>")` truncated to 32 bits, so the whole network derives an identical list without any of it being predictable in advance. Seed index N is therefore the same mission everywhere, and two models in one epoch are compared on the same maps rather than on two different draws.
+Every validator flies the same seeds per family per epoch (1,000; 2,000 for Swarm Sentinel). The backend holds one secret key per epoch and serves it to trusted validators over `/validators/sync`; each seed is `HMAC-SHA256(key, "v1|<family>|<epoch>|<index>")` truncated to 32 bits, so the whole network derives an identical list without any of it being predictable in advance. Seed index N is therefore the same mission everywhere, and two models in one epoch are compared on the same maps rather than on two different draws.
 
 The key is never needed by hand: it arrives with the regular sync, and a task assigned for a future epoch carries that epoch's key with it. A validator holding no key for an epoch takes no work for it rather than falling back to its own seeds.
 

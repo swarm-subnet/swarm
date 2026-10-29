@@ -62,7 +62,7 @@ Verifies: Python version (3.11+), Docker (binary + daemon), sandbox lockdown bin
 
 ### `swarm benchmark`
 
-Runs a local benchmark for the selected family (`cf_search_and_rescue` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,000 seeds per family per epoch (250 for `cf_solar_patrol`).
+Runs a local benchmark for the selected family (`cf_search_and_rescue` by default). `--family-id` selects the family and its supported environment groups; `--seeds-per-group` controls how many seeds run in each group (default: 3). Validators run 1,000 seeds per family per epoch (2,000 for `cf_solar_patrol`).
 
 ```bash
 # Default-family benchmark (3 seeds per environment group)
@@ -78,7 +78,7 @@ swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts --rpc-verbosity low
 ```
 
-If `--model` is omitted, the champion of the family given by `--family-id` is downloaded (with SHA-256 verification) and benchmarked instead. Without `--family-id` the backend returns the highest-scoring champion across all families.
+If `--model` is omitted, the champion of the family given by `--family-id` is downloaded (with SHA-256 verification) and benchmarked instead. Without `--family-id` the backend returns the highest-scoring champion across the families whose champions are published. Swarm Sentinel champions are not published, so a Swarm Sentinel benchmark always needs `--model`.
 
 Useful options:
 
@@ -272,7 +272,7 @@ If those files do not exist yet, start the validator first so telemetry can be w
 
 ### `swarm champion`
 
-Downloads the current champion model.
+Downloads the current champion model. Swarm Sentinel champions are not published, so they cannot be downloaded.
 
 ```bash
 # Download the champion
@@ -288,7 +288,7 @@ swarm champion --family-id cf_search_and_rescue
 Options:
 
 - `--output <path>`: output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
-- `--family-id <id>`: challenge family to download the champion for. Without it the backend returns the highest-scoring champion across all families, which is rarely the one you are working on. With it, the output file defaults to `champion_{family_id}_UID_{uid}.zip` so champions from different families do not overwrite each other.
+- `--family-id <id>`: challenge family to download the champion for. Without it the backend returns the highest-scoring champion across the families whose champions are published, which is rarely the one you are working on. With it, the output file defaults to `champion_{family_id}_UID_{uid}.zip` so champions from different families do not overwrite each other.
 - `--backend-url <url>`: override the backend API URL (defaults to the public API).
 
 The download includes SHA-256 integrity verification against the hash reported by the backend.

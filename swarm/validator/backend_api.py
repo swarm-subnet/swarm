@@ -46,6 +46,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -55,7 +56,7 @@ import bittensor as bt
 import httpx
 
 from swarm import __version__ as CODE_VERSION
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, get_challenge_family, list_registered_challenge_families
 from swarm.config import BackendApiSettings
 from swarm.constants import (
     BENCHMARK_VERSION,
@@ -67,6 +68,7 @@ from swarm.constants import (
     RESULT_SUBMIT_MAX_DELAY_SEC,
 )
 from swarm.core.submission_policy import VALIDATOR_CONTRACT
+from swarm.domain_model import get_family_benchmark_version, validate_family_task_version
 
 STATE_DIR = Path(__file__).parent.parent.parent / "state"
 RUNTIME_STATE_FILE = STATE_DIR / "runtime_state.json"
@@ -172,7 +174,6 @@ def _save_runtime_state(state: dict) -> None:
 
 def _scrub_url(text: str) -> str:
     """Strip backend URLs from log messages to prevent leaking via wandb."""
-    import re
     return re.sub(r"https?://[^\s'\"]+", "<backend>", str(text))
 
 
@@ -253,6 +254,12 @@ class BackendApiClient:
             "X-Validator-Session": self.session_id,
             "X-Swarm-Validator-Contract": VALIDATOR_CONTRACT_VERSION,
             "X-Code-Version": CODE_VERSION,
+            "X-Swarm-Family-Versions": json.dumps(
+                {family_id: get_family_benchmark_version(family_id)
+                 for family_id in list_registered_challenge_families()
+                 if get_challenge_family(family_id).runtime_supported},
+                sort_keys=True, separators=(",", ":"),
+            ),
         }
 
     async def _fence_duplicate_instance(self, response: httpx.Response) -> None:
@@ -551,14 +558,17 @@ class BackendApiClient:
         provenance: Optional[Dict[str, Any]] = None,
         seed_set_id: Optional[str] = None,
         retries: int = 3,
+        benchmark_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Upload one batch of per-seed results and return the backend's reply.
 
         Only an outage is retried, up to ``retries`` times, and it raises
         BackendTransportError once they are spent. A refusal raises
         BackendRejectedError at once: asking again cannot change it."""
+        version = validate_family_task_version(family_id, benchmark_version)
         retries = max(retries, 1)
         payload: Dict[str, Any] = {
+            "benchmark_version": version,
             "model_uid": model_uid,
             "epoch_number": epoch_number,
             "family_id": family_id,
@@ -739,12 +749,15 @@ class BackendApiClient:
         seeds_evaluated: int,
         early_failed: bool,
         epoch_number: int,
+        family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
+        benchmark_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Submit a task result. Backend recomputes the authoritative score.
 
         An outage is retried with capped backoff for RESULT_SUBMIT_ATTEMPTS and then
         raises BackendTransportError. The backend answers a repeat of a result it
         already holds with the same reply, so sending twice is safe."""
+        version = validate_family_task_version(family_id, benchmark_version)
         endpoint = f"/validators/tasks/{task_id}/result"
         data: Dict[str, Any] = {
             "score": score,
@@ -752,7 +765,7 @@ class BackendApiClient:
             "per_type_scores": per_type_scores,
             "seeds_evaluated": seeds_evaluated,
             "early_failed": early_failed,
-            "benchmark_version": BENCHMARK_VERSION,
+            "benchmark_version": version,
             "epoch_number": epoch_number,
         }
         delay = RESULT_SUBMIT_BASE_DELAY_SEC

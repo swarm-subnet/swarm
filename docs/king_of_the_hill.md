@@ -137,7 +137,7 @@ Rank weighting is separate from the crowning floor below: the floor decides who 
 
 ## Taking the throne: the dynamic floor
 
-Every submission runs its family's full benchmark: 1,000 seeds, or 250 for Swarm Sentinel. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
+Every submission runs its family's full benchmark: 1,000 seeds, or 2,000 for Swarm Sentinel. To be crowned, a challenger must clear the current champion by an **improvement floor** that *shrinks* as the champion climbs. With champion score `s`:
 
 ```text
 s ≤ 0.5      floor = floor_max                                (flat, anti-noise while scores are low)
@@ -183,9 +183,9 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Swarm Sentinel (`cf_solar_patrol`) | 0.65 |
-| Swarm SAR | 0.20 |
-| Search-and-Rescue | 0.15 |
+| Swarm Sentinel (`cf_solar_patrol`) | 0.85 |
+| Swarm SAR | 0.10 |
+| Search-and-Rescue | 0.05 |
 | Interceptor | 0.00 (historical 0.30) |
 | Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (completed) |
 
@@ -209,7 +209,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: Swarm SAR and Search-and-Rescue are payable and Swarm Sentinel has no king yet. The two keep exactly their own allocations (`0.20 + 0.15 = 0.35`) and Swarm Sentinel's `0.65` burns. The moment Swarm Sentinel crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: Swarm SAR and Search-and-Rescue are payable and Swarm Sentinel has no king yet. The two keep exactly their own allocations (`0.10 + 0.05 = 0.15`) and Swarm Sentinel's `0.85` burns. The moment Swarm Sentinel crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
 
 <a id="who-a-seat-can-pay"></a>
 

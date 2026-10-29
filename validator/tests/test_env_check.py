@@ -139,6 +139,20 @@ def test_a_failed_install_does_not_restart(tmp_path: Path, monkeypatch) -> None:
     env_check.ensure_environment(path)
 
 
+def test_a_stalled_install_ends_as_a_failed_repair(tmp_path: Path, monkeypatch) -> None:
+    """Proves a pip that never answers is cut off at the time limit and reported, so the start never hangs."""
+    limits: list = []
+
+    def _stalls(*args, **kwargs):
+        """Stand in for a pip install that hangs until its timeout fires."""
+        limits.append(kwargs.get("timeout"))
+        raise env_check.subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+    monkeypatch.setattr(env_check.subprocess, "run", _stalls)
+    assert env_check._install([("pytest", "0.0.1", "8.0.0")], _requirements(tmp_path, "pytest==0.0.1\n")) is False
+    assert limits == [env_check.REPAIR_TIMEOUT_S]
+
+
 def test_the_shipped_requirements_pin_numpy() -> None:
     """Proves the one dependency that drifted across the fleet is pinned exactly.
 

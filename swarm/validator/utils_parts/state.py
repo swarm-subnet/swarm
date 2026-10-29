@@ -309,35 +309,36 @@ def save_benchmark_cache(cache: dict) -> None:
         temp_file.unlink(missing_ok=True)
 
 
-def _score_cache_key(model_hash: str, epoch: int) -> str:
-    """Return the key joining a model hash, an epoch number and BENCHMARK_VERSION."""
-    return f"{model_hash}_{epoch}_{BENCHMARK_VERSION}"
+def _score_cache_key(model_hash: str, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> str:
+    """Return a cache key scoped to the local family benchmark."""
+    return f"{family_id}_{model_hash}_{epoch}_{get_family_benchmark_version(family_id)}"
 
 
-def get_cached_score(model_hash: str, epoch: int) -> Optional[Dict[str, Any]]:
+def get_cached_score(model_hash: str, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> Optional[Dict[str, Any]]:
     """Return the stored benchmark result for a hash in an epoch, None when there is none."""
     cache = load_benchmark_cache()
-    key = _score_cache_key(model_hash, epoch)
+    key = _score_cache_key(model_hash, epoch, family_id)
     result = cache.get(key)
     if result:
         bt.logging.debug(f"Cache hit for {model_hash[:16]}...")
     return result
 
 
-def set_cached_score(model_hash: str, epoch: int, result: Dict[str, Any]) -> None:
+def set_cached_score(model_hash: str, epoch: int, result: Dict[str, Any], family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> None:
     """Store a benchmark result under its hash and epoch, stamped with the wall clock time and version."""
     cache = load_benchmark_cache()
-    key = _score_cache_key(model_hash, epoch)
+    key = _score_cache_key(model_hash, epoch, family_id)
     result["cached_at"] = time.time()
-    result["benchmark_version"] = BENCHMARK_VERSION
+    result["family_id"] = family_id
+    result["benchmark_version"] = get_family_benchmark_version(family_id)
     result["epoch_number"] = epoch
     cache[key] = result
     save_benchmark_cache(cache)
     bt.logging.info(f"Cached score for {model_hash[:16]}... (epoch={epoch})")
 
 
-def has_cached_score(model_hash: str, epoch: int) -> bool:
+def has_cached_score(model_hash: str, epoch: int, family_id: str = DEFAULT_RUNTIME_FAMILY_ID) -> bool:
     """Return True when this hash already holds a result for the epoch at the current version."""
     cache = load_benchmark_cache()
-    key = _score_cache_key(model_hash, epoch)
+    key = _score_cache_key(model_hash, epoch, family_id)
     return key in cache

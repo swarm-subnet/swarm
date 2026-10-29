@@ -63,9 +63,9 @@ Swarm runs **three active challenge families**, all paying. Interceptor, Autopil
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 15% | [families/search_and_rescue.md](../../docs/families/search_and_rescue.md) |
-| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 20% | [families/swarm_sar.md](../../docs/families/swarm_sar.md) |
-| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 65% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
+| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 5% | [families/search_and_rescue.md](../../docs/families/search_and_rescue.md) |
+| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](../../docs/families/swarm_sar.md) |
+| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 85% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/completed/interceptor.md](../../docs/families/completed/interceptor.md) |
 
 The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
@@ -265,7 +265,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds per family (250 for Swarm Sentinel). Pass `--family-id` to benchmark a family other than Search and Rescue, the default.
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds per family (2,000 for Swarm Sentinel). Pass `--family-id` to benchmark a family other than Search and Rescue, the default.
 
 ### View Results
 
@@ -370,6 +370,7 @@ Your archive is never public while it competes. It travels from your machine to 
 
 - **Did not win**: the model stays in the backend's vault, forever. No repository, no download, no source. Your own copy is the only one outside the team.
 - **Took the crown**: the model is published, so that everyone can fork and improve it. The download opens on its leaderboard page, and the code and weights are pushed to the [champions repository](https://github.com/swarm-subnet/swarm-champions) under `<family>/<crown date>_uid-<uid>_<hash>/`, with the archive attached to a GitHub Release. Dethroned champions stay published.
+- **Took the crown in Swarm Sentinel**: the model stays in the vault, like a model that did not win. No download, no champions repository. The crown, the score and the payout work exactly as in every other family.
 
 Forking and improving a published champion is allowed and encouraged. Re-submitting a champion with only cosmetic changes is refused at upload, and a real change still has to clear the [crowning floor](#becoming-champion).
 
@@ -391,11 +392,11 @@ score = 0.45 × success + 0.45 × time + 0.10 × safety
 | **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
 | **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
 
-Swarm Sentinel has its own score: 0.70 detection + 0.20 coverage + 0.10 flight per seed, and every missed intruder or false alarm then turns 10 of the model's best seeds to 0. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#scoring).
+Swarm Sentinel has its own score: 0.70 detection + 0.20 coverage + 0.10 flight per seed, and every missed intruder or false alarm then turns 5 of the model's best seeds to 0. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#scoring).
 
 Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
 
-Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (1,000 seeds; 250 for Swarm Sentinel, after its ×10 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
+Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (1,000 seeds; 2,000 for Swarm Sentinel, after its ×5 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
 Every validator flies the same seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
 
@@ -420,7 +421,7 @@ The first evaluated model in a family becomes champion unconditionally. After th
 |----------|------------------------|--------------------------------|
 | All families | +0.015 | +0.005 |
 
-A new champion is published within minutes of its crowning: see [Private Until Crowned](#private-until-crowned).
+A new champion is published within minutes of its crowning, except in Swarm Sentinel, whose champions stay private: see [Private Until Crowned](#private-until-crowned).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -449,8 +450,8 @@ The exact formula, window mechanics, and edge cases are in [king_of_the_hill.md]
 1. **Miner** runs `swarm model submit`: the digest goes on-chain, the archive goes to the backend, then the miner goes offline
 2. **Backend** detects the commit: the chain scanner polls every 3 minutes, so registration lands within minutes of finalization. Once the uploaded bytes match the committed digest and pass the intake checks, it creates one **Pending Benchmark** row
 3. Each family is a **queue lane**: champion epoch re-evals run first, then any queued re-evals, then the oldest pending model; a rotation cursor cycles across families so no lane starves
-4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,000 seeds** per family (250 for Swarm Sentinel), spread over the family's environment types
-5. When the family's whole seed range ([0, 1000), or [0, 250) for Swarm Sentinel) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
+4. **Validators** lease the model's seeds individually from a shared pool, fetch the archive from the backend, verify its hash, and run the agent in a sandboxed Docker container: the full **1,000 seeds** per family (2,000 for Swarm Sentinel), spread over the family's environment types
+5. When the family's whole seed range ([0, 1000), or [0, 2000) for Swarm Sentinel) is covered (by any mix of validators' completed seeds), the stitched mean becomes the model's score and the status flips to **Evaluated**; the champion check then runs
 
 Every submission runs the full benchmark directly. (A 300-seed screening pre-gate exists in the code behind a hardcoded `SCREENING_ENABLED = False`; it is off, and validators offering screening work are refused.)
 
@@ -466,7 +467,7 @@ At rollover, pending models keep their queue position, discard partial results, 
 
 | Parameter | Value |
 |-----------|-------|
-| Seeds per family per epoch | 1,000 (Swarm Sentinel: 250) |
+| Seeds per family per epoch | 1,000 (Swarm Sentinel: 2,000) |
 | Seed claim size | Dynamic: up to the validator's free worker slots (API cap 64) |
 | Chain scanner interval | 3 minutes |
 | Upload window after a commit | 6 hours (a late upload of the same digest is still accepted afterwards) |
@@ -526,7 +527,7 @@ Not on the same hotkey: every hotkey enters exactly one family. To compete in se
 
 ### Can I see other miners' models?
 
-Only champions. Every crowned model is published to the [champions repository](https://github.com/swarm-subnet/swarm-champions) and downloadable from its leaderboard page, so you can study and improve on it. A model that never won stays private.
+Only champions, and not those of Swarm Sentinel. Every other crowned model is published to the [champions repository](https://github.com/swarm-subnet/swarm-champions) and downloadable from its leaderboard page, so you can study and improve on it. A model that never won, and every Swarm Sentinel champion, stays private.
 
 ### I submitted, but I don't see a score yet. What should I check?
 

@@ -51,8 +51,8 @@ def _patrol(seed, score, missed, false_alarms):
 
 
 def test_registry_carries_the_rule_for_swarm_sentinel_only():
-    """Swarm Sentinel zeroes 10 seeds per mistake and a family without the rule reads 0."""
-    assert get_family_seeds_zeroed_per_mistake("cf_solar_patrol") == 10
+    """Swarm Sentinel zeroes 5 seeds per mistake and a family without the rule reads 0."""
+    assert get_family_seeds_zeroed_per_mistake("cf_solar_patrol") == 5
     assert get_family_seeds_zeroed_per_mistake("cf_search_and_rescue") == 0
 
 
@@ -65,7 +65,7 @@ def test_zeroing_takes_the_best_seeds_first_and_ties_go_to_the_earliest():
 
 
 def test_sentinel_run_prints_each_seeds_mistakes_and_the_score_after_the_rule(capsys):
-    """Eleven clean seeds and one missed thief: the table shows the miss and ten of the best seeds go to 0."""
+    """Eleven clean seeds and one missed thief: the table shows the miss and five of the best seeds go to 0."""
     rows = [_patrol(1000 + i, 0.95, 0, 0) for i in range(11)] + [_patrol(2000, 0.28, 1, 0)]
     record = _run(rows, "type8_solar", 8, "cf_solar_patrol")
     out = capsys.readouterr().out
@@ -73,12 +73,12 @@ def test_sentinel_run_prints_each_seeds_mistakes_and_the_score_after_the_rule(ca
     assert "Missed" in out and "FalseAlarms" in out
     seed_line = next(line for line in out.splitlines() if " 2000 " in line)
     assert seed_line.split()[-2:] == ["1", "0"]
-    assert "Seeds set to 0:            10/12" in out
+    assert "Seeds set to 0:            5/12" in out
 
     penalty = record["cross_seed_penalty"]
     assert penalty["missed_threats"] == 1 and penalty["false_alarms"] == 0
     assert penalty["mean_score"] == pytest.approx((0.95 * 11 + 0.28) / 12)
-    assert penalty["penalised_score"] == pytest.approx((0.95 + 0.28) / 12)
+    assert penalty["penalised_score"] == pytest.approx((0.95 * 6 + 0.28) / 12)
     assert f"Score after the rule:      {penalty['penalised_score']:.4f}" in out
     assert record["group_results"]["type8_solar"][-1]["missed_threats"] == 1
 

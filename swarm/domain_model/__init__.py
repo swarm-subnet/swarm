@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -157,6 +158,26 @@ def get_family_benchmark_admission_policy(
     """A family's rules for letting a model into the benchmark, empty when it declares none."""
     family_definition = get_challenge_family_definition(family_id, registry=registry)
     return _deepcopy_mapping(family_definition.get("benchmark_admission_policy", {}))
+
+
+def get_family_benchmark_version(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> str:
+    """Return the bundled benchmark version, refusing unknown or malformed declarations."""
+    value = get_challenge_family_definition(family_id, registry=registry).get("benchmark_version")
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
+        raise ValueError(f"invalid_family_benchmark_version:{family_id}:{value!r}")
+    return value
+
+
+def validate_family_task_version(family_id: str, benchmark_version: str | None) -> str:
+    """Require a task's version to match the local family runtime before executing or uploading."""
+    local_version = get_family_benchmark_version(family_id)
+    if benchmark_version != local_version:
+        raise ValueError(f"family_benchmark_version_mismatch:{family_id}:{benchmark_version!r}:{local_version}")
+    return local_version
 
 
 def get_family_benchmark_seed_count(
@@ -322,6 +343,8 @@ __all__ = [
     "filter_challenge_family_definitions",
     "get_family_benchmark_admission_policy",
     "get_family_benchmark_seed_count",
+    "get_family_benchmark_version",
+    "validate_family_task_version",
     "get_family_king_window",
     "get_challenge_family_definition",
     "get_family_screening_policy",

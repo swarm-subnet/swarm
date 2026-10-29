@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import socket
 import threading
@@ -16,7 +17,7 @@ from swarm.benchmark import engine as bench_full_eval
 from swarm.benchmark.engine_parts import workers
 from swarm.protocol import ValidationResult
 from swarm.validator.docker import docker_evaluator as de
-from swarm.validator.docker.docker_evaluator_parts import batch
+from swarm.validator.docker.docker_evaluator_parts import batch, networking
 from validator.tests.test_docker_evaluator import _ScriptedContext
 
 _LOAD_SEC = 1.0
@@ -96,11 +97,20 @@ class _FakeDocker:
         return [cmd[cmd.index("--name") + 1] for cmd in self.runs]
 
 
+def _port_band_base() -> int:
+    """This test process's own host-port band: every test here plays worker 0, and parallel test processes probing one
+    band could each find the same port free and both bind it, so each process starts its band elsewhere."""
+    worker = os.getenv("PYTEST_XDIST_WORKER", "")
+    index = int(worker[2:]) + 1 if worker.startswith("gw") and worker[2:].isdigit() else 0
+    return networking._PORT_BASE + index * 400
+
+
 @pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
     """Wire the fake daemon into the evaluator and hand back a real, tiny submission."""
     docker = _FakeDocker()
     monkeypatch.setattr(batch.subprocess, "run", docker.run)
+    monkeypatch.setattr(networking, "_PORT_BASE", _port_band_base())
     monkeypatch.setattr(de.DockerSecureEvaluator, "_get_container_pid", lambda self, name: 4242)
     monkeypatch.setattr(de.DockerSecureEvaluator, "_apply_network_lockdown", lambda self, pid, ip: True)
     monkeypatch.setattr(de.DockerSecureEvaluator, "_get_docker_host_ip", lambda self: "172.17.0.1")
@@ -404,3 +414,13 @@ def test_validator_dispatcher_asks_for_a_spare_until_the_last_seed(monkeypatch, 
     )
 
     assert [r.prewarm_next for r in scripted_context.requests] == [True, True, False]
+
+
+def test_parallel_test_processes_take_disjoint_port_bands(monkeypatch):
+    """Two parallel test processes never share a host-port band, so their fake containers cannot bind one port twice."""
+    bases = []
+    for worker in ("gw0", "gw1", "gw7"):
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", worker)
+        bases.append(_port_band_base())
+    assert len(set(bases)) == 3
+    assert all(abs(a - b) >= 20 * networking._PORT_STRIDE for a in bases for b in bases if a != b)

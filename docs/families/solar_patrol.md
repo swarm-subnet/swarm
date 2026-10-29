@@ -6,7 +6,7 @@ Guard a solar park from its drone dock: take off, search by day and by night, re
 
 ---
 
-A DJI Matrice 4TD sits in its DJI Dock 3 inside a fenced solar park. Your model presses take-off, and the dock opens and lifts the drone to 20 m. From there your model flies the patrol: it sweeps the park with a colour camera, a thermal camera and two zoom lenses, and reports each person it finds inside the fence with a box on the image it saw them in. Then it presses return home, and the dock flies the drone back and lands it. Most seeds are empty, and reporting a dog, a passing truck or the same thief twice is a false alarm: across the epoch, every miss and every false alarm wipes out 10 of your best seeds.
+A DJI Matrice 4TD sits in its DJI Dock 3 inside a fenced solar park. Your model presses take-off, and the dock opens and lifts the drone to 20 m. From there your model flies the patrol: it sweeps the park with a colour camera, a thermal camera and two zoom lenses, and reports each person it finds inside the fence with a box on the image it saw them in. Then it presses return home, and the dock flies the drone back and lands it. Most seeds are empty, and reporting a dog, a passing truck or the same thief twice is a false alarm: across the epoch, every miss and every false alarm wipes out 5 of your best seeds.
 
 Everything the model gets is what the real drone gives through its dock: the same controls, the same cameras, the same sensor errors and link delay.
 
@@ -17,8 +17,9 @@ Everything the model gets is what the real drone gives through its dock: the sam
 | Drones | 1 |
 | Decision rate | 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz |
 | Episode horizon | 390 s (up to 3,900 `act()` calls) |
-| Emission allocation | 0.65 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
-| Benchmark | 250 seeds per epoch, one solar park, scored with the cross-seed ×10 rule |
+| Emission allocation | 0.85 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Benchmark | 2,000 seeds per epoch, one solar park, scored with the cross-seed ×5 rule |
+| Champion | Private: crowned and paid like every other family, but never published or downloadable (see [Private Until Crowned](../../miner/docs/miner.md#private-until-crowned)) |
 
 <details>
   <summary><b>Table of Contents</b></summary>
@@ -264,7 +265,7 @@ The 390 s budget is planned as 40 s for take-off, 248 s for the sweep (1.24 km a
 - **The dock** stands on a different open spot each seed, at least 10 m inside the fence and clear of panels and trees.
 - **Day or night**, half and half, with the sun or moon set by the seed.
 - **Wind** is none, light or strong, drawn per seed: by day about 5 %, 70 % and 25 %, by night about 10 %, 80 % and 10 %. Light wind tops out between 2.5 and 6 m/s, strong between 10 and 12 m/s, gusts included. Those are the speeds 20 m up; nearer whatever lies under it the drone feels slower air, down to what the dock's gauge reads close to the ground.
-- **Intruders** are in 1 seed in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when the drone's camera shows them: work on, freeze, drop flat and lie still, or run. Nobody leaves the park before the camera has seen him. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
+- **Intruders** are in 2 seeds in 5: one to three people on foot. They get in through a cut in the fence, the gate or the forest side, are all inside within the first 36 s, and cut and carry off cable among the panel tables. They react when they hear the drone, once it flies within 22 to 32 m of them (about 12 to 26 m across the ground at the 20 m patrol height): work on, freeze, drop flat and lie still, or run. A picture alone never alerts them, so a zoom from further away finds them at work. Nobody leaves the park before the camera has seen him: a runner it has not seen yet drops flat and waits for it. Only a person inside the fence is a threat. Every person in a theft seed counts as a threat from the start, even if the patrol ends before they get in.
 - **Decoys** are in every seed: one to three dogs wandering inside the fence, two to four farmers driving a pickup along the public road outside, one at a time and each at their own hour, and a bird circling high above. None of them is a threat.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
@@ -306,9 +307,9 @@ Every row below lands after its own `return_home` and never flies higher than 22
 | 3 of 3 reported plus 3 false alarms, 93 % searched, landed | 0.64 |
 | Never took off | 0 |
 
-### Across the epoch: the ×10 rule
+### Across the epoch: the ×5 rule
 
-After every seed is scored on its own, **each miss and each false alarm turns 10 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. Over 250 seeds, a strong model at 0.97 that misses one thief drops to 0.93; a model that never reports, or reports everything, ends at 0. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every intruder of the seed as missed, the ones it already reported included, from its very first decision. This rule is for Swarm Sentinel only; the other families keep the plain mean.
+After every seed is scored on its own, **each miss and each false alarm turns 5 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. Over 2,000 seeds, a strong model at 0.97 that misses one thief drops to about 0.968; a model that never reports, or reports everything, ends at 0. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every intruder of the seed as missed, the ones it already reported included, from its very first decision. This rule is for Swarm Sentinel only; the other families keep the plain mean.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 
@@ -328,7 +329,7 @@ Your zip runs as a Cap'n Proto RPC server inside Docker; the validator calls `pi
 | Writable space | Your folder: 256 MiB and 2,000 files and folders in all, your code included, held in the container's memory. `/tmp`: 64 MiB. Everything else is read-only. Filling your folder stops the agent and fails the seed |
 | `ping` / `reset` timeouts | 2.0 s / 5.0 s |
 | First `act` | 2.0 s budget, 3.0 s hard cap (reference time) |
-| Thinking time | **400 ms of baseline-equivalent compute per camera frame**, shared by the five decisions of that frame: decisions 1–5, 6–10 and so on share one budget, and each may use what its window has left. Hard cap per `act` 2.0 s reference + measured RPC overhead + 0.05 s |
+| Thinking time | **500 ms of baseline-equivalent compute per camera frame**, shared by the five decisions of that frame: decisions 1–5, 6–10 and so on share one budget, and each may use what its window has left. Hard cap per `act` 2.0 s reference + measured RPC overhead + 0.05 s |
 | Slow `act` | Counts a strike and is retried once with the same observation. The validator stops waiting for the first call as soon as it is past what the frame has left, plus 0.05 s, and sends the retry at once, judged against the same budget; if your server is still busy with the first call, the retry waits for it and that time counts. If the retry is slow too, your last action is flown again with the four sticks at 0: the drone hovers, the camera keeps its settings, and every button stays where it was, so a held one does not press again. A slow first decision flies all zeros. A decision counts one strike at most |
 | Strikes | 15 strikes or 3 hard-cap hits fail the seed |
 
@@ -352,7 +353,7 @@ swarm benchmark --model Submission/submission.zip --family-id cf_solar_patrol --
 ```
 
 - `swarm model package` stops if `Submission/submission.zip` already exists: add `--overwrite` to package again.
-- Each seed's line shows its missed threats and false alarms, and under the table the benchmark applies the ×10 rule to the seeds it flew: the plain mean beside the score after the rule. On a handful of seeds one mistake zeroes most of them; the leaderboard applies the same rule across the epoch's 250 seeds.
+- Each seed's line shows its missed threats and false alarms, and under the table the benchmark applies the ×5 rule to the seeds it flew: the plain mean beside the score after the rule. On a handful of seeds one mistake zeroes most of them; the leaderboard applies the same rule across the epoch's 2,000 seeds.
 - `--seeds-per-group` sets how many seeds the benchmark flies (default 3). Every seed is first flown once by a scripted reference pilot that checks the seed can be done; the verdict is cached, so a seed costs this check only the first time.
 - To fly one exact seed, pass `--seed-file seeds.json` with `{"schema_version": "challenge_family_seed_file.v1", "family_id": "cf_solar_patrol", "type_seeds": {"type8_solar": [1002]}}`.
 - On a fast desktop CPU the starter's patrol, about 220 s of flight, takes 42 to 50 s to run, and a patrol that flies longer takes longer. The seed check adds about 10 s of CPU the first time a seed is flown, and the first run measures the host's speed once, under two minutes. A worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.

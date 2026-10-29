@@ -52,7 +52,7 @@ image you saw them in, press return home and be landed in the dock before 390 s.
 
 Scoring:
     seed = 0.70 detection + 0.20 coverage + 0.10 flight
-    Every miss and every false alarm then turns 10 of your best seeds to 0.
+    Every miss and every false alarm then turns 5 of your best seeds to 0.
 
 Constraints:
     - The rules count heights from the ground straight under the drone: a frame shows the park closely enough
@@ -60,7 +60,7 @@ Constraints:
       half of the flight score drops, to 0 at 30 m. The state counts heights from the dock, so this agent points
       the camera straight down and holds its height over what the laser meets there.
     - 5 m before the flight limit the patrol ends on the spot, without the landing score.
-    - 400 ms of compute per camera frame, shared by the five decisions of that frame.
+    - 500 ms of compute per camera frame, shared by the five decisions of that frame.
 """
 
 import math

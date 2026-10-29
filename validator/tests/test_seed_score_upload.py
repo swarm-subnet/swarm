@@ -70,6 +70,7 @@ def test_retry_succeeds_on_second_attempt(mock_sleep, client):
 
     result = asyncio.run(
         client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=1,
             epoch_number=1,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
@@ -95,6 +96,7 @@ def test_retry_exhausted_raises_transport_error(mock_sleep, client):
     with pytest.raises(BackendTransportError):
         asyncio.run(
             client.post_seed_scores_batch(
+                benchmark_version="5.1.6",
                 model_uid=1,
                 epoch_number=1,
                 scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
@@ -119,6 +121,7 @@ def test_refusal_is_not_resent(client):
     with pytest.raises(BackendRejectedError):
         asyncio.run(
             client.post_seed_scores_batch(
+                benchmark_version="5.1.6",
                 model_uid=1,
                 epoch_number=1,
                 scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
@@ -140,6 +143,7 @@ def test_task_id_included_in_payload(client):
 
     asyncio.run(
         client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=7,
             epoch_number=11,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
@@ -162,6 +166,7 @@ def test_task_id_omitted_when_not_provided(client):
 
     asyncio.run(
         client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=7,
             epoch_number=11,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],
@@ -183,6 +188,7 @@ def test_family_id_included_in_seed_score_payload(client):
 
     asyncio.run(
         client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=7,
             epoch_number=11,
             family_id="cf_autopilot",
@@ -208,6 +214,7 @@ def test_no_retry_on_success(client):
 
     result = asyncio.run(
         client.post_seed_scores_batch(
+            benchmark_version="5.1.6",
             model_uid=1,
             epoch_number=1,
             scores=[{"seed_index": 0, "score": 0.5, "map_type": "city"}],

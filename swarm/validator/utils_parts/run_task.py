@@ -41,7 +41,7 @@ from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_
 from swarm.challenge_families.base import IncompleteInstall
 from swarm.constants import CLAIM_GIVE_UP_SEC, INSTALL_REFUSAL_LOG_SEC, SEED_PREPARATION_RETRY_SEC
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
-from swarm.domain_model import OPEN_CHALLENGE_FAMILY_IDS, get_family_benchmark_seed_count
+from swarm.domain_model import OPEN_CHALLENGE_FAMILY_IDS, get_family_benchmark_seed_count, validate_family_task_version
 from swarm.utils.hash import sha256sum
 from swarm.validator.backend_api import BackendRejectedError, BackendTransportError
 from swarm.validator.runtime_telemetry import tracker_call
@@ -83,10 +83,10 @@ def _adopt_task_seed_key(seed_manager, task: Dict[str, Any], epoch: int) -> None
     )
 
 
-def _seeds_ready(seed_manager, epoch: int) -> bool:
+def _seeds_ready(seed_manager, epoch: int, family_id: str) -> bool:
     """Whether this epoch's seeds can be built; a manager outside the shared scheme always can."""
     check = getattr(seed_manager, "seeds_ready", None)
-    return True if check is None else bool(check(epoch))
+    return True if check is None else bool(check(epoch, family_id=family_id))
 
 
 def install_refusal(self, family_id: str) -> str:
@@ -188,6 +188,12 @@ async def run_task(
         bt.logging.warning(f"run_task: malformed task payload {task}")
         return
 
+    try:
+        validate_family_task_version(family_id, task.get("benchmark_version"))
+    except (KeyError, ValueError) as exc:
+        bt.logging.warning(f"run_task: refusing incompatible task: {exc}")
+        return
+
     refusal = install_refusal(self, family_id)
     if refusal:
         raise IncompleteInstall(refusal)
@@ -195,7 +201,7 @@ async def run_task(
     seed_manager = getattr(self, "seed_manager", None)
     epoch = _task_epoch(seed_manager, task)
     _adopt_task_seed_key(seed_manager, task, epoch)
-    if not _seeds_ready(seed_manager, epoch):
+    if not _seeds_ready(seed_manager, epoch, family_id):
         bt.logging.warning(
             f"run_task: no seeds for epoch {epoch}; leaving UID {uid} to a validator that has them"
         )
@@ -249,6 +255,7 @@ async def _run_phase(
     cancel_flag: asyncio.Event,
 ) -> None:
     """Dispatch to the screening or the benchmark evaluator, then submit the sanity score, seed count and per-type means."""
+    benchmark_version = validate_family_task_version(family_id, task.get("benchmark_version"))
     seeds_from = int(task.get("seeds_from", 0))
     seeds_to_raw = task.get("seeds_to")
     seeds_to = int(seeds_to_raw) if seeds_to_raw is not None else None
@@ -288,6 +295,9 @@ async def _run_phase(
                     + ("backend unreachable too long, wrapping up" if gave_up else "will ask again")
                 )
                 return [], gave_up
+            if resp.get("benchmark_version", benchmark_version) != benchmark_version:
+                bt.logging.warning(f"[seed-flow] UID {uid}: refusing a claim for a different family version")
+                return [], True
             unreachable_since.clear()
             if "granted" not in resp or "pending" not in resp:
                 # Only a reply that states the pool's size may declare it empty.
@@ -401,6 +411,8 @@ async def _run_phase(
             seeds_evaluated=int(seeds_evaluated),
             early_failed=bool(early_failed),
             epoch_number=int(epoch),
+            family_id=family_id,
+            benchmark_version=benchmark_version,
         )
     except BackendRejectedError as exc:
         bt.logging.warning(f"run_task: backend refused the result for UID {uid}: {exc}")

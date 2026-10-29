@@ -39,6 +39,7 @@ from swarm.benchmark import engine as bench_engine
 from swarm.challenge_families import build_benchmark_tasks, deferred_seed_checks, require_runtime_family
 from swarm.challenge_families.solar_patrol import (
     airframe,
+    dock,
     drone_state,
     install,
     park,
@@ -158,27 +159,38 @@ def _fly_with(monkeypatch, seeds_passing):
     return flown
 
 
-_FAKE_PILOT = '''"""A reference pilot that flies nothing: odd seeds pass, and the end reason names the process that judged it."""
+# The stand-in pilots keep verdicts with the standard library alone: importing the validator costs seconds of CPU
+# per process, and at the background niceness on a busy runner those seconds stretch past a minute.
+_KEEP = f'''import json
 import os
+from pathlib import Path
+
+
+def keep(**verdict):
+    """Keep a verdict where seed_checks.cached reads it, written whole or not at all."""
+    directory = Path(os.environ["{seed_checks.CACHE_ENV}"]) / "{seed_checks.cache_dir().name}"
+    directory.mkdir(parents=True, exist_ok=True)
+    tmp = directory / f".{{verdict['seed']}}.{{os.getpid()}}.tmp"
+    tmp.write_text(json.dumps(verdict))
+    tmp.replace(directory / f"{{verdict['seed']}}.json")
+'''
+
+_FAKE_PILOT = f'''"""A reference pilot that flies nothing: odd seeds pass, and the end reason names the process that judged it."""
 import sys
-
-from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
-
+{_KEEP}
 for line in sys.stdin:
     seed = int(line)
-    keep(Verdict(seed=seed, passed=seed % 2 == 1, reason="" if seed % 2 else "even", end_reason=str(os.getpid())))
+    keep(seed=seed, passed=seed % 2 == 1, reason="" if seed % 2 else "even", end_reason=str(os.getpid()))
 '''
 
 _SLOW_PILOT_S = 2.0
 _SLOW_PILOT = f'''"""A reference pilot that spends {_SLOW_PILOT_S} s on every seed it reads, then passes it."""
 import sys
 import time
-
-from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
-
+{_KEEP}
 for line in sys.stdin:
     time.sleep({_SLOW_PILOT_S})
-    keep(Verdict(seed=int(line), passed=True))
+    keep(seed=int(line), passed=True)
 '''
 
 
@@ -222,7 +234,7 @@ def test_verdicts_are_kept_per_benchmark_version(kept, monkeypatch):
     _fly_with(monkeypatch, lambda seed: True)
     seed_checks.prepare([11], workers=1)
     assert seed_checks.cached(11) is not None
-    monkeypatch.setattr(seed_checks, "BENCHMARK_VERSION", "0.0.1")
+    monkeypatch.setattr(seed_checks, "get_family_benchmark_version", lambda _family: "0.0.1")
     assert seed_checks.cached(11) is None and seed_checks.replacement(11) is None
 
 
@@ -324,11 +336,19 @@ def test_a_seed_whose_world_cannot_be_built_fails_and_others_raise(monkeypatch):
     """A seed whose own world refuses to be built fails its check; an error of the machine is raised, never kept."""
     def no_dock(seed):
         """The seed's world has no open ground for the dock."""
-        raise RuntimeError(f"no open ground for the dock in seed {seed}")
+        raise dock.NoDockGround(f"no open ground for the dock in seed {seed}")
 
     monkeypatch.setattr(reference_pilot, "check", no_dock)
     result = reference_pilot.judge(11)
     assert not result.passed and result.reason.startswith("error:no open ground")
+
+    def engine_fault(seed):
+        """The physics engine failed on this machine, as PyBullet reports it."""
+        raise RuntimeError("the solar camera needs a swarm-bullet3 wheel with ER_SWARM_RAYCAST")
+
+    monkeypatch.setattr(reference_pilot, "check", engine_fault)
+    with pytest.raises(RuntimeError, match="swarm-bullet3"):
+        reference_pilot.judge(11)
 
     def disk_full(seed):
         """The machine ran out of disk."""
@@ -481,16 +501,16 @@ def test_background_flights_run_at_the_lowest_cpu_priority(kept, monkeypatch, tm
 
 
 def test_the_scored_seed_count_is_read_from_the_registry():
-    """Swarm Sentinel is scored on 250 seeds; a family without a count reads 0, the whole list."""
+    """Swarm Sentinel is scored on 2,000 seeds; a family without a count reads 0, the whole list."""
     registry = {"challenge_families": {"cf_a": {"benchmark_seed_count": 4}, "cf_b": {}}}
-    assert get_family_benchmark_seed_count(FAMILY_ID) == 250
+    assert get_family_benchmark_seed_count(FAMILY_ID) == 2000
     assert get_family_benchmark_seed_count("cf_a", registry=registry) == 4
     assert get_family_benchmark_seed_count("cf_b", registry=registry) == 0
 
 
 @pytest.mark.asyncio
 async def test_the_scored_seeds_are_judged_once_in_the_background_highest_first(monkeypatch):
-    """Of all the families only Swarm Sentinel judges ahead: its 250 scored seeds, once, in a worker thread at the
+    """Of all the families only Swarm Sentinel judges ahead: its 2,000 scored seeds, once, in a worker thread at the
     lowest priority, highest first; once they are all judged the validator remembers it and starts nothing more."""
     runtime = require_runtime_family(FAMILY_ID)
     judged, started = set(), []
@@ -502,12 +522,12 @@ async def test_the_scored_seeds_are_judged_once_in_the_background_highest_first(
 
     monkeypatch.setattr(runtime, "seeds_prepared", lambda seeds: set(seeds) <= judged)
     monkeypatch.setattr(runtime, "prepare_seeds", prepare_seeds)
-    validator = _validator_with_seeds(range(1000, 2000))
+    validator = _validator_with_seeds(range(1000, 3500))
     run_task_module.start_seed_preparations(validator, 5)
     run_task_module.start_seed_preparations(validator, 5)
     assert list(validator._seed_preparations) == [(FAMILY_ID, 5)]
     await validator._seed_preparations[(FAMILY_ID, 5)]
-    assert [(seeds, background) for seeds, background, _ in started] == [(list(range(1249, 999, -1)), True)]
+    assert [(seeds, background) for seeds, background, _ in started] == [(list(range(2999, 999, -1)), True)]
     assert started[0][2] != threading.get_ident()
     run_task_module.start_seed_preparations(validator, 5)
     judged.clear()
@@ -566,7 +586,7 @@ async def test_a_solar_task_starts_while_its_seeds_are_still_judged(monkeypatch)
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", fetch)
     await run_task_module.run_task(
         _validator_with_seeds([11]),
-        {"task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
+        {"benchmark_version": "5.1.6", "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID, "epoch_number": 5,
          "model_hash": "0" * 64},
         cancel_flag=asyncio.Event(), wake_flag=asyncio.Event())
     assert [model["uid"] for models in fetched for model in models] == [42]

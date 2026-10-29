@@ -93,7 +93,10 @@ def score(task: Any, metrics: dict[str, Any]) -> dict[str, float]:
     else:
         detection = coverage / (1 + false_alarms)
     landed = bool(metrics["landed_in_dock"]) and bool(metrics["returned_by_model"])
-    height = float(np.clip((ZERO_HEIGHT_M - metrics["max_height_m"]) / (ZERO_HEIGHT_M - FULL_HEIGHT_M), 0.0, 1.0))
+    max_height = float(metrics["max_height_m"])
+    height = 0.0                       # a NaN height, no terrain under the drone, is too high, as reports judge it
+    if math.isfinite(max_height):
+        height = float(np.clip((ZERO_HEIGHT_M - max_height) / (ZERO_HEIGHT_M - FULL_HEIGHT_M), 0.0, 1.0))
     flight = LANDING_SHARE * landed + (1.0 - LANDING_SHARE) * height if metrics["took_off"] else 0.0
     closest = metrics["min_threat_distance_m"]
     too_close = closest is not None and closest < SAFE_DISTANCE_M

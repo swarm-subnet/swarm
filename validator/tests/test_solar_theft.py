@@ -15,9 +15,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Theft scenarios (task 19): one seed in five, the same theft for the same seed, everyone in before the take-off is
-over, nobody inside a table, the four reactions to the drone once its camera shows a man (task 50), nobody leaving
-unseen, and the fence really cut in the engine."""
+"""Theft scenarios (task 19): two seeds in five, the same theft for the same seed, everyone in before the take-off is
+over, nobody inside a table, the four reactions to the drone once a man hears it, never to a picture taken from
+further, nobody leaving unseen, and the fence really cut in the engine."""
 
 from __future__ import annotations
 
@@ -49,7 +49,8 @@ pytestmark = pytest.mark.skipif(
          and os.path.isfile(os.path.join(MAPS, theft_moves.ASSET_DIR, "motions.json"))),
     reason="the installed swarm-worlds has no intruders or motion library yet")
 
-THEFT_SEEDS = [s for s in range(200) if theft.has_theft(s)][:8]
+# The theft seeds the scenes below were written against, kept fixed so a change of THEFT_SHARE leaves them alone.
+THEFT_SEEDS = [4, 8, 27, 29, 32, 40, 51, 52]
 
 
 @lru_cache(maxsize=8)
@@ -97,10 +98,15 @@ def _episode(seed: int, story, site, men) -> SolarEpisode:
     return ep
 
 
-def test_one_seed_in_five_has_a_theft():
-    """The share of seeds with intruders is one in five over many seeds."""
+def test_two_seeds_in_five_have_a_theft():
+    """The share of seeds with intruders is two in five over many seeds."""
     share = np.mean([theft.has_theft(s) for s in range(10000)])
-    assert 0.19 <= share <= 0.21
+    assert 0.39 <= share <= 0.41
+
+
+def test_the_scene_seeds_all_have_a_theft():
+    """Every seed the scenes below are written against still draws a theft."""
+    assert all(theft.has_theft(s) for s in THEFT_SEEDS)
 
 
 def test_the_single_point_fence_check_matches_the_batch_one():
@@ -196,10 +202,11 @@ def test_a_walk_stops_on_its_mark():
 
 
 def _hover(monkeypatch, seed: int, reaction: str, docked: bool = False, dock_z: float = 0.0, pictures: bool = True,
-           near: tuple = (120.0, 390.0), **first):
-    """Over flat ground, keep the drone 200 m up, and between the near times fly it 20 m straight over the first man,
-    its camera showing him twice a second when pictures is set; return his frames and the episode. dock_z stands the
-    dock that high, as it is up the park's slope."""
+           near: tuple = (120.0, 390.0), away_m=0.0, seen_from: float = 0.0, **first):
+    """Over flat ground, keep the drone 200 m up, and between the near times fly it 20 m up and away_m to one side of
+    the first man, or away_m(t) when it is a function of patrol time, its camera showing him twice a second from
+    seen_from on when pictures is set; return his frames and the episode. dock_z stands the dock that high, as it is up
+    the park's slope."""
     monkeypatch.setattr(theft, "_ground", lambda env, ep, x, y: 0.0)
     story, site, men = _crew(seed, reaction, **first)
     ep = _episode(seed, story, site, men)
@@ -211,18 +218,33 @@ def _hover(monkeypatch, seed: int, reaction: str, docked: bool = False, dock_z: 
         t = (step + 1) * SIM_DT
         frame = first_man.at(t)
         over = near[0] <= t < near[1]
-        _Drone.pos = np.array([[frame.x, frame.y, 20.0 if over else 200.0]])
+        side = away_m(t) if callable(away_m) else away_m
+        _Drone.pos = np.array([[frame.x + side, frame.y, 20.0] if over else [frame.x, frame.y, 200.0]])
         if step % camera.FRAME_STEPS == 0:
-            ep.camera = {"view": _picture(ep, {0: 12} if over and pictures else {})}
+            ep.camera = {"view": _picture(ep, {0: 12} if over and pictures and t >= seen_from else {})}
         theft.advance(_Drone, ep)
     return [first_man.at(k * SIM_DT) for k in range(int(390 / SIM_DT))], ep, site, story
 
 
+def _away_for(distance_m: float) -> float:
+    """How far to one side a drone 20 m up stands to be distance_m from a standing man's ears on flat ground."""
+    return math.sqrt(distance_m ** 2 - (20.0 - theft.EAR_M) ** 2)
+
+
+def _crossing(frames, site) -> np.ndarray:
+    """Where a man who left last crossed the fence on his way out."""
+    out = [np.array([f.x, f.y]) for f in frames if f.index != theft_moves.GONE]
+    k = next(k for k in range(len(out) - 1, 0, -1) if theft_site.inside(site.ring, out[k - 1])[0]
+             and not theft_site.inside(site.ring, out[k])[0])
+    return out[k]
+
+
 @pytest.mark.timeout(1200)
 @pytest.mark.parametrize("reaction", ["work_on", "freeze", "hide", "run"])
-def test_each_reaction_plays_out_once_the_camera_shows_him(monkeypatch, reaction):
-    """Nobody reacts to a drone 200 m up; once its camera shows him, a man working on never reacts, a freezer goes back
-    to work, a hidden man lies flat inside or gets up again, and a runner leaves through the hole the crew cut."""
+def test_each_reaction_plays_out_once_he_hears_the_drone(monkeypatch, reaction):
+    """Nobody reacts to a drone 200 m up; once it flies over him and its camera shows him, a man working on never
+    reacts, a freezer goes back to work, a hidden man lies flat inside or gets up again, and a runner leaves through
+    the hole the crew cut."""
     frames, ep, site, story = _hover(monkeypatch, THEFT_SEEDS[1], reaction)
     stages = [f.stage for f in frames]
     early = stages[:int(120 / SIM_DT)]
@@ -241,16 +263,104 @@ def test_each_reaction_plays_out_once_the_camera_shows_him(monkeypatch, reaction
         assert theft_site.inside(site.ring, np.array([last.x, last.y]))[0]
     else:
         assert frames[-1].index == theft_moves.GONE
-        out = [np.array([f.x, f.y]) for f in frames if f.index != theft_moves.GONE]
-        crossing = next(k for k in range(len(out) - 1, 0, -1) if theft_site.inside(site.ring, out[k - 1])[0]
-                        and not theft_site.inside(site.ring, out[k])[0])
-        assert np.linalg.norm(out[crossing] - story.hole) < 1.5
+        assert np.linalg.norm(_crossing(frames, site) - story.hole) < 1.5
     assert all(man.entered for man in ep.theft.men)
 
 
+@pytest.mark.timeout(1200)
+def test_a_zoom_from_far_away_that_shows_him_sets_nobody_off(monkeypatch):
+    """A drone 150 m off, its zoom showing him twice a second for the rest of the patrol, sets nobody off: he is seen,
+    and works on as if no drone were there."""
+    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", away_m=150.0)
+    assert ep.theft.men[0].seen_at is not None
+    assert not any(f.stage.startswith("reaction") for f in frames)
+    assert frames[-1].index != theft_moves.GONE
+
+
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("margin_m, reacts", [(-1.0, True), (1.0, False)])
+def test_he_hears_the_drone_only_within_his_own_distance(monkeypatch, margin_m, reacts):
+    """A drone hovering a metre inside a man's own hearing distance sets him off; one a metre beyond it, its camera
+    showing him all the while, never does."""
+    away = _away_for(25.0 + margin_m)
+    frames, _ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "freeze", away_m=away, hear_m=25.0)
+    assert any(f.stage.startswith("reaction") for f in frames) == reacts
+
+
+@pytest.mark.timeout(1200)
+def test_a_runner_who_hears_it_unseen_lies_flat_until_the_camera_sees_him(monkeypatch):
+    """A runner who hears the drone overhead before its camera has shown him freezes, drops flat and stays inside; once
+    the camera shows him he gets up and runs out through the hole."""
+    frames, ep, site, story = _hover(monkeypatch, THEFT_SEEDS[1], "run", seen_from=200.0)
+    stages = [f.stage for f in frames]
+    unseen = stages[int(120 / SIM_DT):int(200 / SIM_DT)]
+    assert "reaction: freeze" in unseen and "reaction: hide" in unseen
+    assert unseen.index("reaction: freeze") < unseen.index("reaction: hide")
+    assert all(f.index != theft_moves.GONE for f in frames[:int(200 / SIM_DT)])
+    assert 200.0 <= ep.theft.men[0].seen_at
+    assert "reaction: run" in stages[int(200 / SIM_DT):]
+    assert frames[-1].index == theft_moves.GONE
+    assert np.linalg.norm(_crossing(frames, site) - story.hole) < 1.5
+
+
+@pytest.mark.timeout(1200)
+def test_a_runner_never_seen_gets_back_to_work_once_the_drone_has_gone(monkeypatch):
+    """A runner who hears the drone for a minute and is never shown lies flat while it is near, gets up once it has
+    gone, and never leaves: not at a run, and not with the coil his time to carry has come for."""
+    frames, ep, site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", pictures=False, near=(120.0, 180.0),
+                                      carry_after_s=60.0)
+    stages = [f.stage for f in frames]
+    assert "reaction: hide" in stages
+    assert not stages[-1].startswith("reaction")
+    assert all(f.index != theft_moves.GONE for f in frames)
+    assert theft_site.inside(site.ring, np.array([frames[-1].x, frames[-1].y]))[0]
+    assert ep.theft.men[0].seen_at is None
+
+
+@pytest.mark.timeout(1200)
+def test_a_runner_seen_while_he_freezes_runs_without_dropping_flat(monkeypatch):
+    """A runner the camera first shows while he is still frozen runs from where he stands: he never drops flat first."""
+    frames, _ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", seen_from=1e9)
+    froze = next(k for k, f in enumerate(frames) if f.stage == "reaction: freeze") * SIM_DT
+    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", seen_from=froze + 1.0)
+    stages = [f.stage for f in frames]
+    assert ep.theft.men[0].seen_at < froze + theft_moves.library().seconds("walk_freeze_resume.0")
+    assert "reaction: hide" not in stages
+    assert "reaction: run" in stages and frames[-1].index == theft_moves.GONE
+
+
+@pytest.mark.timeout(1200)
+def test_a_flat_runner_seen_from_beyond_his_hearing_stays_flat(monkeypatch):
+    """A runner lying flat whom the camera first shows from 30 m, past his 25 m hearing distance, stays flat: he runs
+    only once he hears the drone again."""
+    away = _away_for(30.0)
+    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", seen_from=150.0, hear_m=25.0,
+                                      away_m=lambda t: 0.0 if t < 150.0 else away)
+    stages = [f.stage for f in frames]
+    assert 150.0 <= ep.theft.men[0].seen_at
+    assert "reaction: hide" in stages and "reaction: run" not in stages
+    assert frames[-1].index != theft_moves.GONE
+
+
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("shown", [True, False])
+def test_a_runner_with_no_way_back_up_lies_flat_until_seen(monkeypatch, shown):
+    """A runner whose loop has no way back to it from lying flat, who hears the drone unseen, lies flat; once the
+    camera shows him he runs out, and unseen he lies flat for good, long after the drone has gone."""
+    monkeypatch.setattr(theft, "_BACK_TO", {})
+    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", pictures=shown, near=(120.0, 260.0),
+                                      seen_from=200.0)
+    stages = [f.stage for f in frames]
+    flat = stages[int(135 / SIM_DT):int(200 / SIM_DT)]
+    assert flat and all(s == "reaction: hide" for s in flat)
+    if shown:
+        assert "reaction: run" in stages and frames[-1].index == theft_moves.GONE
+    else:
+        assert stages[-1] == "reaction: hide" and ep.theft.men[0].seen_at is None
+
+
 def test_a_drone_below_the_dock_over_low_ground_still_sets_him_off(monkeypatch):
-    """The park rises 39 m: a drone 20 m over a man on low ground can fly below its dock, and he still reacts once its
-    camera shows him."""
+    """The park rises 39 m: a drone 20 m over a man on low ground can fly below its dock, and he still hears it."""
     frames, _ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", dock_z=39.0)
     assert any(f.stage.startswith("reaction") for f in frames)
 
@@ -261,21 +371,10 @@ def test_nobody_reacts_to_a_drone_still_in_its_dock(monkeypatch):
     assert not any(f.stage.startswith("reaction") for f in frames)
 
 
-def test_a_near_drone_whose_camera_never_shows_him_sets_nobody_off(monkeypatch):
-    """A drone 20 m over a man for the rest of the patrol, its camera never showing him, sets nobody off and lets
-    nobody leave: he reacts to its camera, not to how near it is."""
-    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", pictures=False, carry_after_s=60.0)
-    assert not any(f.stage.startswith("reaction") for f in frames)
-    assert all(f.index != theft_moves.GONE for f in frames)
-    assert all(man.seen_at is None for man in ep.theft.men)
-
-
 def test_a_reaction_due_after_the_drone_has_gone_is_dropped(monkeypatch):
-    """A man shown for one second, whose reaction is due only after the drone has left him unseen for longer than
-    SEEN_QUIET_S and flown out of earshot, never reacts."""
-    delay = theft.SEEN_QUIET_S + 10.0
-    frames, ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", near=(120.0, 121.0), react_delay_s=delay)
-    assert ep.theft.men[0].seen_at is not None
+    """A man who hears the drone for one second, whose reaction is due only after it has flown out of earshot, never
+    reacts."""
+    frames, _ep, _site, _story = _hover(monkeypatch, THEFT_SEEDS[1], "run", near=(120.0, 121.0), react_delay_s=10.0)
     assert not any(f.stage.startswith("reaction") for f in frames)
 
 
@@ -331,7 +430,7 @@ def test_a_man_who_has_left_never_comes_back():
 
 def test_every_loop_a_thief_is_in_can_freeze_and_drop_flat():
     """Every take of every loop a thief can be in while the drone is about has a freeze that goes back to it and a
-    drop flat, and a man lying flat can get up again."""
+    drop flat, and a man lying flat can get up again, walking or at a run."""
     lib = theft_moves.library()
     for kind in ("walk", "walk_wary", "sneak", "carry", "cut_fence", "cut_cable", "pull_cable", "look_around",
                  "crouch_watch"):
@@ -341,7 +440,7 @@ def test_every_loop_a_thief_is_in_can_freeze_and_drop_flat():
             follows = lib.kinds({"loop": take})
             for way in ("freeze", "hide"):
                 assert any(pattern.format(kind) in follows for pattern in theft._REACT[way]), (take, way)
-    assert "prone_to_stand" in lib.kinds({"hub": "prone"})
+    assert {"prone_to_stand", "prone_to_run"} <= set(lib.kinds({"hub": "prone"}))
 
 
 def test_threats_are_the_men_inside_the_fence():

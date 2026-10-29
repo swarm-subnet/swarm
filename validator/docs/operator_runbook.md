@@ -62,15 +62,15 @@ Seven families: three `family_state='active'` and `emissions_state='active'`, pl
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_solar_patrol` | 0.65 |
-| `cf_swarm_sar` | 0.20 |
-| `cf_search_and_rescue` | 0.15 |
+| `cf_solar_patrol` | 0.85 |
+| `cf_swarm_sar` | 0.10 |
+| `cf_search_and_rescue` | 0.05 |
 | `cf_interceptor` | 0.00 (historical 0.30) |
 | `cf_interceptor_office` | 0.00 (completed, historical 0.30) |
 | `cf_swarm_autopilot` | 0.00 (completed, historical 0.20) |
 | `cf_autopilot` | 0.00 (completed, historical 0.15) |
 
-Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first.
+Allocations sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first. Registry sync never rewrites `emission_allocation` on a row that already exists, so a new split also needs a backend migration to reach a provisioned database.
 
 State enums: `family_state` ∈ {incubating, active, completed, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
@@ -118,7 +118,7 @@ Validators send their full `swarm.__version__`. The backend dependency `require_
 
 ### Benchmark version: `X-Benchmark-Version`
 
-Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `5.1.6`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
+Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `6.0.0`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
 
 When the official version changes, the version-transition job (checked every 5 minutes) expires all pending models to `VERSION_EXPIRED` and queues every champion for re-evaluation. This means **merging a version bump to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy.
 
@@ -233,3 +233,30 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_MAX_DOCKER_WOR
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |
 | Trigger a benchmark-version cutover | Merge the `swarm/__init__.py` version bump to the `SWARM_VERSION_REF` branch: backend follows within up to about 20 minutes |
 | Turn screening on/off | Flip `SCREENING_ENABLED` in `benchmark_logic.py`, deploy, restart: startup fixups migrate the queue |
+
+## Family benchmark releases
+
+The four-part `swarm.__version__` triggers deployment. Each registry entry's
+`benchmark_version` records the three-part release prefix that last changed that
+family. For a benchmark release, bump the global prefix and set each affected
+family to that prefix. Keep every unaffected family's declaration unchanged.
+For a fourth-part hotfix, keep every family declaration unchanged. Review shared
+runner, dependency and scoring changes for their impact on all families.
+
+Validate with `python3 validator/scripts/check_family_versions.py --base <base-ref>`.
+CI compares the merge result against the PR or merge queue base commit. Family
+versions must be numeric three-part labels, never decrease, and reach the global
+prefix as their maximum. Sync the registry mirrors using the existing registry
+sync script before deploying a selective release.
+
+Bootstrap all seven families at `5.1.6` and deploy `5.1.6.6`. Activate the backend's
+family version handling before shipping a selective `6.0.0` release. Validators
+send bundled runtime capabilities on signed requests and refuse tasks whose family
+version differs. The legacy global benchmark header remains available for older
+backends during bootstrap.
+
+Seed integers remain keyed by epoch and family. A benchmark bump does not rotate
+stored seeds. New files carry the local family's version; existing files retain
+their original publication stamp, including when future seeds are promoted. Task
+and score versions identify the benchmark evaluation independently of seed-file
+publication provenance.

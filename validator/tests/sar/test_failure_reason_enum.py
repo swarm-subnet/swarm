@@ -22,13 +22,14 @@ from swarm.protocol import FailureReason
 
 
 def test_failure_reason_members_exist():
-    """Twelve codes, each with a string value equal to its own label, looked up both ways so a rename cannot pass quietly."""
+    """Thirteen codes, each with a string value equal to its own label, looked up both ways so a rename cannot pass quietly."""
     expected = {
         "NONE": "NONE",
         "OBSTACLE_COLLISION": "OBSTACLE_COLLISION",
         "NO_TOUCH_SPHERE": "NO_TOUCH_SPHERE",
         "TILT": "TILT",
         "TIMEOUT": "TIMEOUT",
+        "FLIGHT_LIMIT": "FLIGHT_LIMIT",
         "SLOW_ACT_STRIKES": "SLOW_ACT_STRIKES",
         "AGENT_EXITED": "AGENT_EXITED",
         "ENV_FAILURE": "ENV_FAILURE",

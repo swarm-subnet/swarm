@@ -86,7 +86,7 @@ _FAILURE_BY_END = {
     "landed": FailureReason.NONE.value,
     "timeout": FailureReason.TIMEOUT.value,
     "collision": FailureReason.OBSTACLE_COLLISION.value,
-    "flight_limit": FailureReason.NONE.value,
+    "flight_limit": FailureReason.FLIGHT_LIMIT.value,
 }
 
 
@@ -125,8 +125,8 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
                 "SWARM_RUNTIME_IMAGE_KEY": "base",
                 "SWARM_RUNTIME_ENV_BOOTSTRAP": "sar_mode=false",
             },
-            # 400 ms of thinking per camera frame: the five decisions of each 0.5 s frame share it.
-            miner_compute_budget_sec=0.4,
+            # 500 ms of thinking per camera frame: the five decisions of each 0.5 s frame share it.
+            miner_compute_budget_sec=0.5,
             miner_compute_window_acts=camera.FRAME_STEPS // DECISION_STEPS,
             # 600 + 2,000 s is 5x the slowest measured patrol (520 s, never landing), the margin Autopilot carries.
             global_eval_base_sec=600.0,

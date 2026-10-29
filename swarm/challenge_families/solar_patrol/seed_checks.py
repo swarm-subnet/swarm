@@ -40,7 +40,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import IO, Dict, Iterable, Iterator, List, Optional
 
-from swarm.constants import BENCHMARK_VERSION
+from swarm.domain_model import get_family_benchmark_version
 from swarm.protocol import MapTask
 
 from . import install
@@ -49,8 +49,11 @@ from .task import solar_patrol_task
 # Part of the kept verdicts' folder: a change to the checks is a new version. 3 drops the verdicts version 2 kept from
 # flights an incomplete install broke; 4 drops those flown while thieves still reacted to the pilot's sound; 5 drops
 # those flown with the camera leaning with the airframe and the Dock 1/2 return home; 6 drops those flown in the full
-# 20 m wind down to the ground; 7 drops those flown and judged at heights over the dock instead of over the ground.
-CHECK_VERSION = 7
+# 20 m wind down to the ground; 7 drops those flown and judged at heights over the dock instead of over the ground; 8
+# drops those flown under the camera trigger version 4 brought in, which a picture of a thief from any range set off,
+# and brings back the pilot's sound within each thief's hearing distance as what sets him off; 9 drops those judged
+# when one seed in five had a theft, so a seed that gained one at two in five is never kept as judged empty.
+CHECK_VERSION = 9
 CHECK_TRIES = 16                       # candidates tried per seed; at any real drop rate the last is never reached
 REPLACEMENT_TAG = "solar-seed-check"
 CACHE_ENV = "SWARM_SEED_CHECK_DIR"
@@ -101,7 +104,7 @@ def workers() -> int:
 
 def cache_dir() -> Path:
     """Where this version's verdicts are kept."""
-    return Path(os.environ.get(CACHE_ENV) or CACHE_DEFAULT) / f"{BENCHMARK_VERSION}-c{CHECK_VERSION}"
+    return Path(os.environ.get(CACHE_ENV) or CACHE_DEFAULT) / f"{get_family_benchmark_version('cf_solar_patrol')}-c{CHECK_VERSION}"
 
 
 def cached(seed: int) -> Optional[Verdict]:

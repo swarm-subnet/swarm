@@ -951,6 +951,81 @@ def test_run_full_benchmark_covers_full_range_from_seed_zero(monkeypatch):
     assert all_indices == list(range(10))
 
 
+@pytest.mark.parametrize(
+    ("seeds_from", "seeds_to"),
+    [(1950, 2000), (250, 300), (300, 350)],
+)
+def test_run_full_benchmark_flies_and_indexes_high_batch_of_2000_seed_family(
+    monkeypatch, seeds_from, seeds_to,
+):
+    """A Sentinel batch of a 2,000-seed list, high or across the 300 boundary, flies exactly its seeds and uploads their absolute indexes."""
+    all_seeds = [10_000 + i for i in range(2000)]
+    validator = _make_validator()
+    validator.seed_manager = SimpleNamespace(
+        epoch_number=11,
+        get_all_seeds=lambda family_id=None: all_seeds,
+        get_screening_seeds=lambda family_id=None: all_seeds[:300],
+        get_benchmark_seeds=lambda family_id=None: all_seeds[300:],
+    )
+
+    built: list[tuple[str, int]] = []
+
+    def _screening_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        """Record the screening offset asked for and return one placeholder task."""
+        built.append(("screening", offset))
+        return [f"scr-{offset}"]
+
+    def _benchmark_tasks(sim_dt, seeds, family_id, offset, total_seed_count):
+        """Record the benchmark offset asked for and return one placeholder task."""
+        built.append(("benchmark", offset))
+        return [f"bench-{offset}"]
+
+    monkeypatch.setattr(validator_evaluation, "build_screening_tasks", _screening_tasks)
+    monkeypatch.setattr(validator_evaluation, "build_benchmark_tasks", _benchmark_tasks)
+
+    flown: list[int] = []
+    evaluate = _make_evaluate_stub()
+
+    async def _recording_evaluate(self, uid, model_path, seeds, *args, **kwargs):
+        """Note the seeds handed to the simulator, then score them with the shared stub."""
+        flown.extend(seeds)
+        return await evaluate(self, uid, model_path, seeds, *args, **kwargs)
+
+    uploads: list[list[dict]] = []
+
+    async def _capture_upload(**kwargs):
+        """Collect the rows of every uploaded batch and acknowledge it."""
+        uploads.append(list(kwargs["scores"]))
+        return {"recorded": True}
+
+    validator.backend_api.post_seed_scores_batch = _capture_upload
+    monkeypatch.setattr(validator_utils, "_evaluate_seeds", _recording_evaluate)
+
+    async def _run():
+        """Benchmark UID 42 on one batch of the Sentinel family."""
+        return await validator_evaluation._run_full_benchmark(
+            validator,
+            uid=42,
+            model_path=_FAKE_MODEL_ZIP,
+            family_id="cf_solar_patrol",
+            seeds_from=seeds_from,
+            seeds_to=seeds_to,
+        )
+
+    _avg, _per_type_avgs, scores, _per_type_raw, cancel = asyncio.run(_run())
+
+    assert cancel is None
+    assert len(scores) == seeds_to - seeds_from
+    assert flown == all_seeds[seeds_from:seeds_to]
+    all_indices = [entry["seed_index"] for batch in uploads for entry in batch]
+    assert all_indices == list(range(seeds_from, seeds_to))
+    boundary = 300
+    assert built == [
+        ("screening", i) if i < boundary else ("benchmark", i - boundary)
+        for i in range(seeds_from, seeds_to)
+    ]
+
+
 def test_run_screening_streams_with_unified_chunks(monkeypatch):
     """Screening 25 seeds uploads them as three chunks, indexes 0 to 24, all scored on forest maps."""
     validator = _make_validator()

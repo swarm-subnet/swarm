@@ -51,6 +51,7 @@ from swarm.core.maps.solar import builder
 from swarm.utils.env_factory import make_env_with_initial_obs
 from swarm.validator import forward as forward_mod
 from swarm.validator.utils_parts import run_task as run_task_module
+from validator.tests.test_solar_seed_checks import _KEEP
 
 _APPROVE = seed_checks.approve
 _PREPARE = seed_checks.prepare
@@ -59,13 +60,11 @@ _PACKAGE = Path(__file__).resolve().parents[2] / "swarm"
 # converting a depth image the colour and thermal frames never read.
 _PIXEL_NEUTRAL_FLAGS = {"ER_TINY_RENDERER", "ER_SWARM_NO_DEPTH"}
 _FLAG_NAME = re.compile(r"""(?:p\.|["'])((?:ER|VISUAL_SHAPE)_[A-Z0-9_]+)""")
-_PASSING_PILOT = '''"""A reference pilot that flies nothing and passes every seed it reads."""
+_PASSING_PILOT = f'''"""A reference pilot that flies nothing and passes every seed it reads."""
 import sys
-
-from swarm.challenge_families.solar_patrol.seed_checks import Verdict, keep
-
+{_KEEP}
 for line in sys.stdin:
-    keep(Verdict(seed=int(line), passed=True))
+    keep(seed=int(line), passed=True)
 '''
 
 
@@ -288,7 +287,7 @@ async def test_a_sentinel_task_is_refused_before_its_model_is_fetched(no_thieves
     monkeypatch.setattr(run_task_module, "_ensure_models_from_backend", fetch)
     with pytest.raises(IncompleteInstall, match="intruders/intruders.json"):
         await run_task_module.run_task(
-            _validator(), {"task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID,
+            _validator(), {"benchmark_version": "5.1.6", "task_id": 1, "uid": 42, "phase": "SCREENING", "family_id": FAMILY_ID,
                            "model_hash": "0" * 64},
             cancel_flag=asyncio.Event(), wake_flag=asyncio.Event())
 

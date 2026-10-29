@@ -95,12 +95,19 @@ def test_the_host_copy_of_the_code_is_mounted_read_only(monkeypatch):
 
 
 def test_the_code_is_copied_into_the_folder_before_the_agent_starts(monkeypatch):
-    """The container copies the code into its capped folder, then runs the agent from there."""
+    """The container copies the code into its capped folder, waits for the start gate, then runs the agent from there."""
     cmd = _launch_cmd(monkeypatch)
-    assert cmd[-4:] == [
-        "swarm_evaluator_base:latest", "sh", "-c",
-        "cp -R /workspace/bundle/. /workspace/submission/ && exec python /workspace/submission/main.py",
-    ]
+    assert cmd[-4:-1] == ["swarm_evaluator_base:latest", "sh", "-c"]
+    script = cmd[-1]
+    copy, wait, start = (
+        script.index(step)
+        for step in (
+            "cp -R /workspace/bundle/. /workspace/submission/ || exit 1",
+            "until [ -e /tmp/swarm_start.gate ]",
+            "exec python /workspace/submission/main.py",
+        )
+    )
+    assert copy < wait < start
 
 
 def test_the_folder_limits_hold_the_largest_allowed_submission():

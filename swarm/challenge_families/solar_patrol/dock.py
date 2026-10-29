@@ -86,6 +86,10 @@ SITE_BATCH = 256
 SITE_BATCHES = 80
 
 
+class NoDockGround(RuntimeError):
+    """The seed's park has no open, level ground for the dock: the seed's own world fails, not the machine."""
+
+
 def _disc(step: float) -> np.ndarray:
     """Offsets on a square grid of the given step that lie within CLEAR_M of the centre."""
     r = np.arange(-CLEAR_M, CLEAR_M + 1e-9, step)
@@ -160,7 +164,7 @@ def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset,
             ground = _ground(cli, spot, _FINE, terrain_uids)
             if ground is not None and _slope_deg(ground, spot) <= MAX_SLOPE_DEG:
                 return float(spot[0]), float(spot[1])
-    raise RuntimeError(f"no open ground for the dock in seed {seed}")
+    raise NoDockGround(f"no open ground for the dock in seed {seed}")
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:

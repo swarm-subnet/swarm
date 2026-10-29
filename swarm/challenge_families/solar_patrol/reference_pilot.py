@@ -503,7 +503,7 @@ def judge(seed: int) -> Verdict:
     error is the machine's, not the seed's, and is raised so no verdict is kept for it."""
     try:
         return check(seed)
-    except RuntimeError as exc:
+    except dock.NoDockGround as exc:
         return Verdict(seed=int(seed), passed=False, reason=f"error:{exc}"[:200])
 
 

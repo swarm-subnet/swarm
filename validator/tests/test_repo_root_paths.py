@@ -46,6 +46,7 @@ _ALIAS_ROOT = re.compile(r"^_REPO_ROOT\s*=\s*_SCRIPT_DIR((?:\.parents\[\d\]|\.pa
 # "SIBLING" is the swarm-backend checkout beside the repository, not inside it.
 EXPECTED: dict[str, list[str]] = {
     "scripts/bench_full_eval.py": ["REPO_ROOT"],
+    "scripts/check_family_versions.py": ["REPO_ROOT"],
     "scripts/compare_render_masks.py": ["REPO_ROOT"],
     "scripts/cross_machine_check.py": ["REPO_ROOT"],
     "scripts/dump_depth_frame.py": ["REPO_ROOT"],

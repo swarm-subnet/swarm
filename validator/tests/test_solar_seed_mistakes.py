@@ -43,8 +43,8 @@ def test_every_other_family_keeps_nothing_from_a_stalled_seed():
             assert get_challenge_family(family_id).stalled_rollout_metrics(None, {"collision": True}) == {}
 
 
-def test_the_registry_zeroes_ten_seeds_per_mistake_for_solar_patrol_only():
-    """Solar Patrol's registry entry carries the ×10 setting the backend reads; no other family has one."""
+def test_the_registry_zeroes_five_seeds_per_mistake_for_solar_patrol_only():
+    """Solar Patrol's registry entry carries the ×5 setting the backend reads; no other family has one."""
     for family_id in list_registered_challenge_families():
-        expected = 10 if family_id == FAMILY_ID else None
+        expected = 5 if family_id == FAMILY_ID else None
         assert get_challenge_family_definition(family_id).get("seeds_zeroed_per_mistake") == expected

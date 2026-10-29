@@ -24,6 +24,7 @@ import multiprocessing as mp
 import os
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -1567,6 +1568,8 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[ReasonCode]:
 
 _GRAPH_ARTIFACT_NAME = "model_graph.zip"
 _START_GATE_PATH = "/tmp/swarm_start.gate"
+_START_GATE_TIMEOUT_SEC = 120.0
+_START_GATE_POLL_SEC = 0.05
 _SUBMISSION_MOUNT = "/workspace/submission"
 _BUNDLE_MOUNT = "/workspace/bundle"
 
@@ -1582,6 +1585,30 @@ def _open_start_gate(container_name: str) -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+def _gated_runner_command(
+    entry: str,
+    gate: str = _START_GATE_PATH,
+    timeout_sec: float = _START_GATE_TIMEOUT_SEC,
+    prepare: str = "",
+) -> list[str]:
+    """Container command that starts Python on ``entry`` only once the start gate exists.
+
+    The shell waits instead of the runner because Python imports from the
+    submission folder as it starts, and the network is open until the gate.
+    ``prepare`` runs first, before the wait, and a failure there ends the start."""
+    polls = max(1, math.ceil(timeout_sec / _START_GATE_POLL_SEC))
+    script = (
+        f"n=0; until [ -e {shlex.quote(gate)} ]; do "
+        f"n=$((n+1)); if [ $n -gt {polls} ]; then "
+        "echo 'start gate never opened; refusing to start the runner' >&2; exit 1; fi; "
+        f"sleep {_START_GATE_POLL_SEC}; done; "
+        f"exec python {shlex.quote(entry)}"
+    )
+    if prepare:
+        script = f"{prepare} || exit 1; {script}"
+    return ["sh", "-c", script]
 
 
 def _container_is_gone(container_name: str) -> bool:
@@ -1668,8 +1695,11 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
     cmd.extend([
-        ctx.run_image, "sh", "-c",
-        f"cp -R {_BUNDLE_MOUNT}/. {_SUBMISSION_MOUNT}/ && exec python {_SUBMISSION_MOUNT}/main.py",
+        ctx.run_image,
+        *_gated_runner_command(
+            f"{_SUBMISSION_MOUNT}/main.py",
+            prepare=f"cp -R {_BUNDLE_MOUNT}/. {_SUBMISSION_MOUNT}/",
+        ),
     ])
     ctx.container_started_at = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
