@@ -262,3 +262,11 @@ jobs:
         env:
           SWARM_VALIDATOR_TAG: ci
         run: bash .docker/image_model_check.sh
+
+      # The validator runs as a plain uid, and a capability that does not reach the
+      # firewall leaves every flight unlocked and the host excluded, with green unit tests.
+      - name: Lock a container down through the validator image
+        if: ${{ !cancelled() && steps.image_check.outputs.run == 'true' }}
+        env:
+          SWARM_VALIDATOR_TAG: ci
+        run: bash .docker/image_lockdown_check.sh

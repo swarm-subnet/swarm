@@ -598,6 +598,23 @@ def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
     assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
 
 
+def test_a_rejected_rule_is_logged_with_the_firewall_reason(monkeypatch):
+    """The warning carries iptables' own error, so a missing capability is named in the log."""
+    ev = _new_evaluator()
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        de.subprocess, "run",
+        lambda *a, **k: _ProcResult(
+            returncode=4,
+            stderr="Could not fetch rule set generation id: Permission denied (you must be root)\n",
+        ),
+    )
+    monkeypatch.setattr(de.networking.bt.logging, "warning", lambda msg: warnings.append(str(msg)))
+    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+    assert len(warnings) == 1
+    assert warnings[0].endswith("Permission denied (you must be root)")
+
+
 def test_apply_network_lockdown_fails_closed_on_ipv6_rule_failure(monkeypatch):
     """A rejected DROP rule on a host that does have IPv6 leaves the lockdown failed."""
     ev = _new_evaluator()

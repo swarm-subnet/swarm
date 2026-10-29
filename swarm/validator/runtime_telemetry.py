@@ -271,6 +271,13 @@ class ValidatorRuntimeTracker:
                 "last_cleanup_duration_sec": None,
                 "last_cleanup_reason": "",
             },
+            "scoring": {
+                "excluded": False,
+                "excluded_reason": "",
+                "excluded_since": None,
+                "lockdown_permitted": None,
+                "lockdown_detail": "",
+            },
             "weights": {
                 "last_attempt_at": None,
                 "last_success_at": None,
@@ -524,6 +531,46 @@ class ValidatorRuntimeTracker:
                 error=str(error),
                 force_snapshot=True,
             )
+
+    def mark_lockdown_permission(self, *, permitted: bool, detail: str) -> None:
+        """Record whether this process may lock a flight's network down; an event only when that changes."""
+        with self._lock:
+            scoring = self.snapshot["scoring"]
+            changed = scoring["lockdown_permitted"] is not bool(permitted)
+            scoring["lockdown_permitted"] = bool(permitted)
+            scoring["lockdown_detail"] = str(detail)
+            if changed:
+                self._record_event_locked(
+                    "lockdown_permitted" if permitted else "lockdown_denied",
+                    severity="info" if permitted else "error",
+                    detail=str(detail),
+                    force_snapshot=True,
+                )
+
+    def mark_scoring_excluded(self, reason: str) -> None:
+        """Flag the host as excluded from scoring, keeping the time it first was."""
+        with self._lock:
+            scoring = self.snapshot["scoring"]
+            changed = not scoring["excluded"] or scoring["excluded_reason"] != str(reason)
+            if not scoring["excluded"]:
+                scoring["excluded_since"] = time.time()
+            scoring["excluded"] = True
+            scoring["excluded_reason"] = str(reason)
+            if changed:
+                self._record_event_locked(
+                    "scoring_excluded", severity="error", reason=str(reason), force_snapshot=True,
+                )
+
+    def mark_scoring_eligible(self) -> None:
+        """Clear a scoring exclusion once the host passes its checks again."""
+        with self._lock:
+            scoring = self.snapshot["scoring"]
+            if not scoring["excluded"]:
+                return
+            scoring["excluded"] = False
+            scoring["excluded_reason"] = ""
+            scoring["excluded_since"] = None
+            self._record_event_locked("scoring_eligible", force_snapshot=True)
 
     def mark_weights_attempt(self) -> None:
         """Stamp the moment a weight submission was tried, before its outcome is known."""
@@ -995,6 +1042,21 @@ def compute_alerts(snapshot: dict[str, Any], *, now: float | None = None) -> lis
     docker = snapshot.get("docker", {})
     chain_sync = snapshot.get("chain_sync", {})
     reeval = snapshot.get("reeval", {})
+    scoring = snapshot.get("scoring", {})
+
+    if scoring.get("lockdown_permitted") is False:
+        _add(
+            "sandbox_lockdown_denied",
+            "critical",
+            f"flights cannot be cut off the network: {scoring.get('lockdown_detail', '')}",
+        )
+
+    if scoring.get("excluded"):
+        _add(
+            "host_excluded_from_scoring",
+            "critical",
+            f"host is excluded from scoring: {scoring.get('excluded_reason', '')}",
+        )
 
     if process.get("worker_thread_alive") is False and forward.get("count", 0):
         _add("worker_thread_dead", "critical", "validator worker thread is not alive")

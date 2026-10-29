@@ -89,6 +89,10 @@ def _get_container_pid(self, container_name: str) -> Optional[int]:
         pass
     return None
 
+def _rule_error(result: subprocess.CompletedProcess) -> str:
+    """The firewall's own reason for rejecting a rule, or its exit code when it gave none."""
+    return (result.stderr or "").strip() or f"exit code {result.returncode}"
+
 def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool:
     """Apply iptables rules in container's network namespace from HOST using nsenter"""
     try:
@@ -152,7 +156,8 @@ def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool
             )
             if result.returncode != 0:
                 bt.logging.warning(
-                    f"Failed to apply iptables rule: {' '.join(rule)}"
+                    f"Failed to apply iptables rule: {' '.join(rule)}: "
+                    f"{_rule_error(result)}"
                 )
                 return False
 
@@ -174,7 +179,8 @@ def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool
                     )
                     break
                 bt.logging.warning(
-                    f"Failed to apply ip6tables rule: {' '.join(rule)}"
+                    f"Failed to apply ip6tables rule: {' '.join(rule)}: "
+                    f"{_rule_error(result)}"
                 )
                 return False
         return True
