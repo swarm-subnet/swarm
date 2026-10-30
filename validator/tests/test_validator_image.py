@@ -39,11 +39,15 @@ COMPOSE_FILE = DOCKER_DIR / "docker-compose.yml"
 ENTRYPOINT = DOCKER_DIR / "validator-entrypoint.sh"
 VALIDATOR_REQUIREMENTS = REPO_ROOT / "validator" / "requirements.txt"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validator-image.yml"
+TESTS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "tests.yml"
+LOCKDOWN_CHECK = DOCKER_DIR / "image_lockdown_check.sh"
 
 
-@pytest.mark.parametrize("script", [UPDATE_SCRIPT, AUTO_UPDATE_SCRIPT], ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "script", [UPDATE_SCRIPT, AUTO_UPDATE_SCRIPT, LOCKDOWN_CHECK], ids=lambda p: p.name,
+)
 def test_the_deploy_scripts_are_valid_bash(script: Path) -> None:
-    """Proves neither script has a syntax error, which would strand a host mid-update."""
+    """Proves no deploy or check script has a syntax error, which would strand a host mid-update."""
     assert script.is_file(), f"missing {script}"
     result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -128,6 +132,31 @@ def test_the_validator_image_builds_on_the_published_base() -> None:
     assert 'ARG BASE_IMAGE=ghcr.io/swarm-subnet/swarm:base' in text
     assert "FROM ${BASE_IMAGE}" in text
     assert 'LABEL swarm.__version__=' in text, "the updater compares this label"
+
+
+def test_the_image_grants_the_firewall_capability_to_the_binary_iptables_runs() -> None:
+    """Proves the capability lands on whatever iptables resolves to, and a missing grant fails the build.
+
+    It sat on the legacy binary while iptables ran the nft one, and `|| true` hid it, so
+    every non-root validator shipped unable to lock a flight down.
+    """
+    text = VALIDATOR_DOCKERFILE.read_text()
+    grant = text[text.index("RUN iptables_bin="):text.index("WORKDIR")]
+    assert 'readlink -f "$(command -v iptables)"' in grant
+    assert 'setcap cap_net_admin,cap_net_raw+ep "$iptables_bin"' in grant
+    assert 'getcap "$iptables_bin" | grep -q cap_net_admin' in grant
+    assert "|| true" not in grant
+    assert "xtables-legacy-multi" not in text
+
+
+def test_ci_locks_a_container_down_through_the_image() -> None:
+    """Proves CI runs the real lockdown as a plain uid, the one check that sees a missing capability."""
+    text = TESTS_WORKFLOW.read_text()
+    assert "run: bash .docker/image_lockdown_check.sh" in text
+    script = LOCKDOWN_CHECK.read_text()
+    assert "_apply_network_lockdown" in script
+    assert '[[ "$SWARM_UID" != "0" ]]' in script, "root needs no capability, so it would pass falsely"
+    assert '"$REPO_ROOT/state" "$REPO_ROOT/swarm/state"' in script, "else the daemon creates them as root"
 
 
 def test_the_runner_image_inputs_are_untouched() -> None:
@@ -327,6 +356,43 @@ def test_the_update_script_carries_the_old_watchers_arguments_into_env(tmp_path:
     )
     assert again.returncode == 0, again.stderr
     assert "other_cold" not in env_file.read_text(), "a value already in .env is never overwritten"
+
+
+def test_the_update_script_takes_paths_and_ids_from_env(tmp_path: Path) -> None:
+    """Proves a state directory or uid set in .env is what compose gets, not the script's default.
+
+    The script exports these before compose reads .env, and an exported value wins
+    there, so a non-root operator's own state directory was ignored and mkdir failed.
+    """
+    text = UPDATE_SCRIPT.read_text()
+    helper = re.search(r"^env_value\(\) \{.*?^\}\n", text, re.S | re.M).group(0)
+    resolve = text[text.index('SWARM_UID="$(env_value SWARM_UID)"'):text.index('echo "[INFO] uid=')]
+    env_file = tmp_path / ".env"
+    env_file.write_text('SWARM_STATE_DIR="/srv/swarm-state"\nSWARM_UID=1234\nSWARM_UID=4321\n')
+    probe = (
+        f'ENV_FILE="{env_file}"\n{helper}{resolve}'
+        'echo "$SWARM_STATE_DIR $SWARM_UID $BT_WALLET_HOME"\n'
+    )
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
+
+    from_env = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", probe], capture_output=True, text=True, env=env,
+    )
+    assert from_env.returncode == 0, from_env.stderr
+    assert from_env.stdout.split() == ["/srv/swarm-state", "4321", f"{tmp_path}/.bittensor"]
+
+    from_shell = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", probe], capture_output=True, text=True,
+        env={**env, "SWARM_STATE_DIR": "/from/shell"},
+    )
+    assert from_shell.stdout.split()[0] == "/from/shell", "the shell still wins over .env"
+
+    env_file.unlink()
+    defaults = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", probe], capture_output=True, text=True, env=env,
+    )
+    assert defaults.returncode == 0, defaults.stderr
+    assert defaults.stdout.split()[0] == "/opt/swarm-validator-state"
 
 
 def test_the_update_script_refuses_to_run_without_a_wallet(tmp_path: Path) -> None:

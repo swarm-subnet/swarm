@@ -49,8 +49,16 @@ https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_C
 
 # File capabilities rather than running the whole validator as root: it drops to an
 # unprivileged uid and only these two binaries keep the privilege they actually need.
-RUN setcap cap_sys_admin+ep /usr/bin/nsenter \
-    && setcap cap_net_admin,cap_net_raw+ep /usr/sbin/xtables-legacy-multi || true
+# nsenter's own capabilities clear the ambient set the entrypoint carries across, so
+# iptables needs its own, on the binary the command resolves to (nft, not legacy).
+# A grant that did not land fails the build instead of shipping a validator that
+# cannot lock a flight down.
+RUN iptables_bin="$(readlink -f "$(command -v iptables)")" \
+    && setcap cap_sys_admin+ep /usr/bin/nsenter \
+    && setcap cap_net_admin,cap_net_raw+ep "$iptables_bin" \
+    && getcap /usr/bin/nsenter | grep -q cap_sys_admin \
+    && getcap "$iptables_bin" | grep -q cap_net_admin \
+    && [ "$(readlink -f "$(command -v ip6tables)")" = "$iptables_bin" ]
 
 WORKDIR /opt/swarm-validator
 COPY . /opt/swarm-validator

@@ -76,6 +76,16 @@ env_has() {
   [[ -n "${!1:-}" ]] || { [[ -f "$ENV_FILE" ]] && grep -q "^$1=" "$ENV_FILE"; }
 }
 
+env_value() {
+  # The variable from the shell, else its last value in .env. Whatever this script
+  # exports wins over .env inside compose, so a value set there has to be read first.
+  if [[ -n "${!1:-}" ]]; then
+    printf '%s' "${!1}"
+  elif [[ -f "$ENV_FILE" ]]; then
+    sed -n "s/^$1=//p" "$ENV_FILE" | tail -n1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+  fi
+}
+
 carry_into_env() {
   # The watcher a host ran before the image passes its settings as arguments; they
   # are written into .env once so the container reads them from then on.
@@ -133,13 +143,18 @@ git -C "$REPO_ROOT" reset --hard origin/main
 # The container runs as the invoking user rather than root, and needs the host's
 # docker group to reach the socket. Resolved here so .env stays about the wallet.
 banner "Resolving the user and the docker socket group"
+SWARM_UID="$(env_value SWARM_UID)"
 export SWARM_UID="${SWARM_UID:-$(id -u)}"
+SWARM_GID="$(env_value SWARM_GID)"
 export SWARM_GID="${SWARM_GID:-$(id -g)}"
-if [[ -z "${DOCKER_GID:-}" ]]; then
+DOCKER_GID="$(env_value DOCKER_GID)"
+if [[ -z "$DOCKER_GID" ]]; then
   DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)"
 fi
 export DOCKER_GID
+SWARM_STATE_DIR="$(env_value SWARM_STATE_DIR)"
 export SWARM_STATE_DIR="${SWARM_STATE_DIR:-/opt/swarm-validator-state}"
+BT_WALLET_HOME="$(env_value BT_WALLET_HOME)"
 export BT_WALLET_HOME="${BT_WALLET_HOME:-$HOME/.bittensor}"
 echo "[INFO] uid=$SWARM_UID gid=$SWARM_GID docker_gid=$DOCKER_GID"
 echo "[INFO] state=$SWARM_STATE_DIR wallets=$BT_WALLET_HOME"
