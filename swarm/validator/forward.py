@@ -36,13 +36,7 @@ import traceback
 import bittensor as bt
 
 from swarm.challenge_families.base import IncompleteInstall
-from swarm.constants import (
-    FORWARD_SLEEP_SEC,
-    INSTALL_REFUSAL_IDLE_SEC,
-    LOCKDOWN_RECHECK_SEC,
-    N_DOCKER_WORKERS,
-)
-from swarm.core.sandbox_lockdown import lockdown_permission
+from swarm.constants import FORWARD_SLEEP_SEC, INSTALL_REFUSAL_IDLE_SEC, N_DOCKER_WORKERS
 from swarm.validator.calibration import baseline_model_available
 
 from .backend_api import (
@@ -307,7 +301,6 @@ async def _host_may_score(self) -> bool:
 
     A worker without a valid calibration fails closed: an unmeasurable host
     must not score miners with unnormalized timing."""
-    _report_lockdown_permission(self)
     if not _image_provenance_ok(self):
         return False
     if baseline_model_available() and not host_speed_factor_is_fresh(N_DOCKER_WORKERS):
@@ -321,7 +314,6 @@ async def _host_may_score(self) -> bool:
         tracker_call(
             self, "mark_forward_failed", error="host_excluded_no_calibration",
         )
-        tracker_call(self, "mark_scoring_excluded", reason="no valid reference calibration")
         return False
     if not speed.eligible:
         bt.logging.error(
@@ -331,30 +323,8 @@ async def _host_may_score(self) -> bool:
         tracker_call(
             self, "mark_forward_failed", error=f"host_excluded_speed_{speed.factor:.2f}x",
         )
-        tracker_call(
-            self, "mark_scoring_excluded",
-            reason=f"speed factor {speed.factor:.2f}x exceeds the eligibility limit",
-        )
         return False
-    tracker_call(self, "mark_scoring_eligible")
     return True
-
-
-def _report_lockdown_permission(self) -> None:
-    """Keep saying, once a minute and not once at startup, that flights cannot be locked down.
-
-    The lockdown failing is what leaves calibration without samples, so the cause is
-    repeated next to the exclusion it produces for as long as it lasts.
-    """
-    now = time.monotonic()
-    last = getattr(self, "_lockdown_checked_at", None)
-    if last is not None and now - last < LOCKDOWN_RECHECK_SEC:
-        return
-    self._lockdown_checked_at = now
-    permitted, detail = lockdown_permission()
-    tracker_call(self, "mark_lockdown_permission", permitted=permitted, detail=detail)
-    if not permitted:
-        bt.logging.error(f"SANDBOX LOCKDOWN NOT PERMITTED: {detail}")
 
 
 async def _announce_calibrating(self) -> None:

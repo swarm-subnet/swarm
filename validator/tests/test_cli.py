@@ -27,7 +27,6 @@ import httpx
 import pytest
 
 from swarm import cli
-from swarm.core import sandbox_lockdown
 
 
 def test_doctor_text_output_with_mocked_checks(monkeypatch, capsys):
@@ -94,34 +93,6 @@ def test_sandbox_lockdown_permissions_ok_for_root(monkeypatch):
     """Root with nsenter and iptables on PATH passes the network-lockdown probe."""
     monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
-    assert cli._check_sandbox_lockdown_permissions().ok is True
-
-
-def _non_root_with_caps(monkeypatch, caps_by_path: dict) -> None:
-    """A non-root process whose iptables is a symlink to xtables-nft-multi, with the given file caps."""
-    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/sbin/{name}")
-    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
-    monkeypatch.setattr(
-        cli.os.path, "realpath",
-        lambda path: "/usr/sbin/xtables-nft-multi" if path == "/usr/sbin/iptables" else path,
-    )
-    monkeypatch.setattr(sandbox_lockdown, "binary_capabilities", lambda path: caps_by_path.get(path, set()))
-
-
-def test_sandbox_lockdown_permissions_reads_the_binary_iptables_resolves_to(monkeypatch):
-    """Non-root passes only when the nft binary iptables points at holds cap_net_admin, not the legacy one."""
-    _non_root_with_caps(monkeypatch, {
-        "/usr/sbin/nsenter": {"cap_sys_admin"},
-        "/usr/sbin/xtables-legacy-multi": {"cap_net_admin"},
-    })
-    check = cli._check_sandbox_lockdown_permissions()
-    assert check.ok is False
-    assert "cap_net_admin to /usr/sbin/xtables-nft-multi" in check.detail
-
-    _non_root_with_caps(monkeypatch, {
-        "/usr/sbin/nsenter": {"cap_sys_admin"},
-        "/usr/sbin/xtables-nft-multi": {"cap_net_admin", "cap_net_raw"},
-    })
     assert cli._check_sandbox_lockdown_permissions().ok is True
 
 

@@ -44,7 +44,6 @@ STAND_DOWN_TIMEOUT_SEC = 1.2            # Time allowed for the hand-back heartbe
 CLAIM_GIVE_UP_SEC = 600.0               # A task stops asking for seeds after the backend stays unreachable this long
 SEED_PREPARATION_RETRY_SEC = 600.0      # A failed background seed preparation starts again after this long
 INSTALL_REFUSAL_IDLE_SEC = 60.0         # After refusing a family this install cannot run, wait this long before asking for work
-LOCKDOWN_RECHECK_SEC = 60.0             # How often the validator re-checks, and re-reports, that it may lock a flight's network down
 INSTALL_REFUSAL_LOG_SEC = 600.0         # Why a family is refused is logged again at most this often
 RESULT_SUBMIT_ATTEMPTS = 8              # Tries for a task result before it is given up as undelivered
 RESULT_SUBMIT_BASE_DELAY_SEC = 2.0      # First wait between result tries; doubles each time

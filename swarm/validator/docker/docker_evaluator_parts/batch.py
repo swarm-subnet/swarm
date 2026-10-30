@@ -250,26 +250,6 @@ def _docker_cmd_quiet(cmd: list[str], timeout_sec: float = 30.0) -> None:
         pass
 
 
-def _remove_abandoned_start(container_name: str) -> threading.Thread:
-    """Keep removing a container whose `docker run` timed out, in the background.
-
-    The daemon can finish creating it after the caller's own `rm -f` found nothing, and
-    `--rm` never fires for a container that never ran, so it would sit in Created until
-    the next full cleanup. Names carry a timestamp, so a late removal hits nothing else.
-    """
-    def _remove_until_gone() -> None:
-        """Retry the removal at each delay; removing a missing container is harmless."""
-        for delay in _ABANDONED_START_REMOVE_DELAYS_SEC:
-            time.sleep(delay)
-            _docker_cmd_quiet(["docker", "rm", "-f", container_name])
-
-    thread = threading.Thread(
-        target=_remove_until_gone, name=f"remove_{container_name}", daemon=True,
-    )
-    thread.start()
-    return thread
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Per-model images — miner dependencies installed before the sandbox closes
 # ──────────────────────────────────────────────────────────────────────
@@ -280,7 +260,6 @@ _BUILD_CACHE_PRUNE_FREE_GB = 25.0
 _DOCKER_LIST_TIMEOUT_SEC = 30.0
 _DOCKER_PRUNE_TIMEOUT_SEC = 120.0
 _OWNED_CONTAINER_PREFIXES = ("swarm_eval_", "swarm_verify_", "swarm_pip_")
-_ABANDONED_START_REMOVE_DELAYS_SEC = (30.0, 120.0, 600.0)
 
 
 def model_image_tag(model_hash: str) -> str:
@@ -392,11 +371,7 @@ def prepare_model_image(
                 cmd.extend(["-e", f"{key}={value}"])
         cmd.extend([run_image, "bash", "/workspace/submission/startup.sh"])
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except subprocess.TimeoutExpired:
-            _remove_abandoned_start(container_name)
-            raise
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             bt.logging.warning(f"UID {uid}: dependency container start failed: {result.stderr[:200]}")
             return None
@@ -1727,11 +1702,7 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
         ),
     ])
     ctx.container_started_at = time.monotonic()
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except subprocess.TimeoutExpired:
-        _remove_abandoned_start(ctx.container_name)
-        raise
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     ctx.launch_sec = time.monotonic() - ctx.container_started_at
     if result.returncode != 0:
         ctx.failure_error = result.stderr[:300]

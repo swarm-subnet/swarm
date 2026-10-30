@@ -265,33 +265,6 @@ def test_launched_containers_carry_the_owner_label(monkeypatch, evaluator):
     assert cmd[cmd.index("--label") + 1] == f"swarm.instance={_OWNER}"
 
 
-def test_a_start_that_timed_out_is_removed_again_later(monkeypatch, evaluator):
-    """A timed-out `docker run` keeps removing its own container, which the daemon may still be creating."""
-    docker = _FakeDocker()
-    removers = []
-
-    def _run(cmd, **kwargs):
-        """Time out the start and record every other docker call."""
-        if cmd[:2] == ["docker", "run"]:
-            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
-        return docker.run(cmd, **kwargs)
-
-    real_remover = batch._remove_abandoned_start
-    monkeypatch.setattr(subprocess, "run", _run)
-    monkeypatch.setattr(batch, "_create_obs_shm", lambda port: None)
-    monkeypatch.setattr(batch, "_ABANDONED_START_REMOVE_DELAYS_SEC", (0.0, 0.0))
-    monkeypatch.setattr(batch, "_remove_abandoned_start", lambda name: removers.append(real_remover(name)))
-    ctx = SimpleNamespace(
-        host_port=18000, container_name="swarm_eval_7_w0_1", current_uid=1000, current_gid=1000,
-        worker_limits={"memory": "4g", "cpus": "1", "cpuset_cpus": ""},
-        submission_dir=Path("/tmp/submission"), docker_envs={}, run_image="swarm_evaluator_base:latest",
-    )
-    with pytest.raises(subprocess.TimeoutExpired):
-        batch._launch_container(ctx)
-    removers[0].join(timeout=5)
-    assert docker.removed() == ["swarm_eval_7_w0_1", "swarm_eval_7_w0_1"]
-
-
 def test_event_loop_keeps_running_while_cleanup_works(tmp_path):
     """A slow cleanup no longer freezes the loop: other coroutines tick throughout, and the duration is recorded."""
     tracker = ValidatorRuntimeTracker(state_dir=tmp_path)

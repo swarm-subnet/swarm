@@ -39,7 +39,6 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from swarm.constants import N_DOCKER_WORKERS
-from swarm.core.sandbox_lockdown import lockdown_permission
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
@@ -241,10 +240,82 @@ def _check_binary_available(binary_name: str, *, required: bool = True) -> Docto
     )
 
 
+def _binary_capabilities(path: str) -> set[str]:
+    """The ``cap_*`` privileges getcap reports for a file; empty when it cannot be read."""
+    getcap = shutil.which("getcap")
+    if getcap is None:
+        return set()
+    try:
+        result = subprocess.run(
+            [getcap, path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return set()
+    if result.returncode != 0 or not result.stdout.strip():
+        return set()
+    _, _, caps_blob = result.stdout.partition(" ")
+    caps: set[str] = set()
+    for token in caps_blob.replace("=", ",").split(","):
+        token = token.strip()
+        if token.startswith("cap_"):
+            caps.add(token)
+    return caps
+
+
 def _check_sandbox_lockdown_permissions() -> DoctorCheck:
-    """Pass when the sandbox is allowed to cut a container off the network."""
-    ok, detail = lockdown_permission()
-    return DoctorCheck("sandbox_lockdown_permissions", ok, detail, False)
+    """Pass when the sandbox is allowed to cut a container off the network.
+
+    That means running as root, or nsenter holding cap_sys_admin and iptables cap_net_admin.
+    """
+    nsenter_path = shutil.which("nsenter")
+    iptables_path = shutil.which("iptables")
+    if nsenter_path is None or iptables_path is None:
+        missing = []
+        if nsenter_path is None:
+            missing.append("nsenter")
+        if iptables_path is None:
+            missing.append("iptables")
+        return DoctorCheck(
+            "sandbox_lockdown_permissions",
+            False,
+            f"cannot assess without required binaries: {', '.join(missing)}",
+            False,
+        )
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return DoctorCheck(
+            "sandbox_lockdown_permissions",
+            True,
+            "running as root; network lockdown should be permitted",
+            False,
+        )
+
+    resolved_iptables = os.path.realpath(iptables_path)
+    nsenter_caps = _binary_capabilities(nsenter_path)
+    iptables_caps = _binary_capabilities(resolved_iptables)
+    if "cap_sys_admin" in nsenter_caps and "cap_net_admin" in iptables_caps:
+        return DoctorCheck(
+            "sandbox_lockdown_permissions",
+            True,
+            (
+                "binary capabilities detected "
+                f"(nsenter={nsenter_path}, iptables={resolved_iptables})"
+            ),
+            False,
+        )
+
+    detail = (
+        "current user is not root and sandbox network lockdown may fail; "
+        f"run with sudo -E or grant cap_sys_admin to {nsenter_path} and "
+        f"cap_net_admin to {resolved_iptables}"
+    )
+    if shutil.which("getcap") is None:
+        detail += " (getcap unavailable, binary capabilities could not be inspected)"
+    return DoctorCheck("sandbox_lockdown_permissions", False, detail, False)
 
 
 def _check_docker_daemon() -> DoctorCheck:
