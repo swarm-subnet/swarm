@@ -65,7 +65,7 @@ def apply(env: Any, ep: SolarEpisode, command: Command) -> None:
     low, high = GIMBAL_TILT_RANGE_DEG
     target = low + (command.gimbal_tilt + 1.0) / 2.0 * (high - low)
     reach = MAX_GIMBAL_RATE_DEG_S * env.CTRL_TIMESTEP
-    ep.outputs["tilt_deg"] += float(np.clip(target - ep.outputs["tilt_deg"], -reach, reach))
+    ep.outputs["tilt_deg"] += min(max(target - ep.outputs["tilt_deg"], -reach), reach)
     # The zoom part refuses a press once the patrol's zooms are spent, and the lens in use stays the last one taken.
     if command.zoom is not None and ep.outcome.zooms_used < MAX_ZOOMS:
         ep.outputs["lens"] = command.zoom.lens

@@ -113,7 +113,10 @@ class M4TDControl(DSLPIDControl):
     def reset(self):
         """Clear the loops' memory, the speed integral with it."""
         super().reset()
-        self.integral_vel_e = np.zeros(3)
+        self.integral_vel_e = [0.0] * 3
+        self.integral_pos_e = [0.0] * 3
+        self.integral_rpy_e = [0.0] * 3
+        self.last_rpy = [0.0] * 3
 
     def _dslPIDPositionControl(self, control_timestep, cur_pos, cur_quat, cur_vel, target_pos, target_rpy,
                                target_vel, cur_rotation):
@@ -123,7 +126,7 @@ class M4TDControl(DSLPIDControl):
         pos_e = target_pos - cur_pos
         leak = math.exp(-dt / INTEGRAL_LEAK_S)
         gains = zip(pos_e.tolist(), np.asarray(target_vel, dtype=float).tolist(), np.asarray(cur_vel).tolist(),
-                    self.integral_pos_e.tolist(), self.integral_vel_e.tolist(), self.P_COEFF_FOR.tolist(),
+                    list(self.integral_pos_e), list(self.integral_vel_e), self.P_COEFF_FOR.tolist(),
                     self.I_COEFF_FOR.tolist(), self.D_COEFF_FOR.tolist(), VEL_INTEGRAL.tolist(),
                     self.drag_feedforward.tolist(), (0.0, 0.0, self.GRAVITY), (2.0, 2.0, 0.15))
         # Plain float operations in numpy's order, so every result keeps the bits the array version gave.
@@ -135,8 +138,8 @@ class M4TDControl(DSLPIDControl):
             integral_pos.append(ip)
             integral_vel.append(iv)
             target.append(kp * pe + ki * ip + kd * ve + kv * iv + ff * tv + g)
-        self.integral_pos_e = np.array(integral_pos)
-        self.integral_vel_e = np.array(integral_vel)
+        self.integral_pos_e = integral_pos
+        self.integral_vel_e = integral_vel
         t0, t1, t2 = target[0], target[1], max(target[2], 0.1 * self.GRAVITY)
         side = math.hypot(t0, t1)
         cap = t2 * math.tan(MAX_TILT_RAD)
@@ -167,19 +170,19 @@ class M4TDControl(DSLPIDControl):
         # The three entries of target^T cur - cur^T target the loop reads, summed in a fixed order rather than by BLAS.
         rot_e = tuple(t[0][a] * r[0][b] + t[1][a] * r[1][b] + t[2][a] * r[2][b]
                       - (r[0][a] * t[0][b] + r[1][a] * t[1][b] + r[2][a] * t[2][b]) for a, b in ((2, 1), (0, 2), (1, 0)))
-        terms = zip(rot_e, cur_rpy, self.last_rpy.tolist(), np.asarray(target_rpy_rates, dtype=float).tolist(),
-                    self.integral_rpy_e.tolist(), self.P_COEFF_TOR.tolist(), self.D_COEFF_TOR.tolist(),
+        terms = zip(rot_e, cur_rpy, list(self.last_rpy), np.asarray(target_rpy_rates, dtype=float).tolist(),
+                    list(self.integral_rpy_e), self.P_COEFF_TOR.tolist(), self.D_COEFF_TOR.tolist(),
                     self.I_COEFF_TOR.tolist(), (1.0, 1.0, 1500.0))
         integral, torques = [], []
         for re, rpy, last, rate, ir, kp, kd, ki, ir_cap in terms:
             ir = min(max(min(max(ir - re * dt, -1500.0), 1500.0), -ir_cap), ir_cap)
             integral.append(ir)
             torques.append(min(max(-(kp * re) + kd * (rate - (rpy - last) / dt) + ki * ir, -3200.0), 3200.0))
-        self.last_rpy = np.array(cur_rpy)
-        self.integral_rpy_e = np.array(integral)
+        self.last_rpy = cur_rpy
+        self.integral_rpy_e = integral
         pwm = [min(max(thrust + (m[0] * torques[0] + m[1] * torques[1] + m[2] * torques[2]), self.MIN_PWM), self.MAX_PWM)
                for m in self.MIXER_MATRIX.tolist()]
-        return self.PWM2RPM_SCALE * np.array(pwm) + self.PWM2RPM_CONST
+        return np.array([self.PWM2RPM_SCALE * value + self.PWM2RPM_CONST for value in pwm])
 
 
 def _euler_xyz(x: tuple, y: tuple, z: tuple) -> Optional[list]:

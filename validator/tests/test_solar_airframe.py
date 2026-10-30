@@ -444,6 +444,11 @@ class _NumpyControl(airframe.M4TDControl):
 
     _dslPIDAttitudeControl = airframe.DSLPIDControl._dslPIDAttitudeControl
 
+    def reset(self):
+        """Keep the original numpy loop memory in the numpy reference controller."""
+        airframe.DSLPIDControl.reset(self)
+        self.integral_vel_e = np.zeros(3)
+
     def _dslPIDPositionControl(self, control_timestep, cur_pos, cur_quat, cur_vel, target_pos, target_rpy,
                                target_vel, cur_rotation):
         """The position loop in numpy arrays and scipy's rotations."""
