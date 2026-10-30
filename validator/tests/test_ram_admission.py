@@ -143,6 +143,46 @@ def test_startup_banner_says_how_many_patrols_run_at_once(total_mb, at_once):
     assert f"Scheduler RAM prior: group=type8_solar ram={dispatch._ram_estimate_for_group('type8_solar'):.0f}MiB at_once={at_once}" in lines
 
 
+@pytest.mark.parametrize(
+    ("flying", "room"),
+    [
+        pytest.param(0, 7, id="none-flying"),
+        pytest.param(6, 1, id="one-patrol-left"),
+        pytest.param(7, 0, id="budget-full"),
+    ],
+)
+def test_a_validator_claims_only_the_patrols_its_memory_can_fly(flying, room):
+    """Sixteen slots on 32 GiB fly seven patrols, so the pool is asked for no more than the patrols still to fit."""
+    scheduler = _scheduler(32768.0, 30000.0, workers_requested=16)
+
+    assert scheduler.claim_room(["type8_solar"], ["type8_solar"] * flying) == room
+
+
+def test_claims_stop_at_the_free_memory_of_the_last_reading():
+    """Room in the budget is not room on the host: a reading of 9 GiB free leaves space to claim one patrol, and a
+    patrol started since that reading spends it."""
+    scheduler = _scheduler(32768.0, 9000.0, workers_requested=16)
+
+    assert scheduler.claim_room(["type8_solar"], ["type8_solar"]) == 1
+    scheduler.note_group_started("type8_solar", alone=False)
+    assert scheduler.claim_room(["type8_solar"], ["type8_solar"] * 2) == 0
+
+
+def test_a_host_smaller_than_a_patrol_still_claims_one():
+    """With nothing in flight a short host asks for one patrol, as it starts one at a time."""
+    scheduler = _scheduler(4096.0, 3900.0)
+
+    assert scheduler.claim_room(["type8_solar"], []) == 1
+
+
+def test_claims_follow_the_lightest_map_type_and_the_free_slots():
+    """A pool of several map types is claimed by its lightest prior, and never past the free worker slots."""
+    scheduler = _scheduler(32768.0, 30000.0, workers_requested=8)
+
+    assert scheduler.claim_room(["type1_city", "type6_forest"], ["type6_forest"]) == 7
+    assert scheduler.claim_room(["type1_city"], []) == 8
+
+
 class _ConcurrencyProbe:
     """Counts the batches the stand-in workers hold at once and keeps the highest count seen."""
 
@@ -317,6 +357,71 @@ def _run_validator_pool(monkeypatch, tmp_path):
         )
     )
     return results, warnings
+
+
+class _RecordingFeeder:
+    """A shared seed pool stand-in: grants what is asked from the seven patrols and records each ask beside the patrols
+    then flying."""
+
+    def __init__(self, probe):
+        """Hold every patrol index, ready to hand out."""
+        self._probe = probe
+        self._left = list(range(PATROLS))
+        self.asks: list[tuple[int, int]] = []
+
+    async def __call__(self, free_slots):
+        """Grant up to free_slots indexes; report the pool drained once nothing is left to grant."""
+        self.asks.append((int(free_slots), self._probe.running))
+        granted, self._left = self._left[:free_slots], self._left[free_slots:]
+        return granted, not granted and not self._left
+
+
+def _run_validator_pool_from_feeder(monkeypatch, tmp_path, probe):
+    """Fly the seven patrols through the validator's worker pool, claimed from a shared pool; return the results and
+    the feeder."""
+    model_path = tmp_path / "model.zip"
+    model_path.write_bytes(b"x")
+    monkeypatch.setattr(de.parallel, "_benchmark_engine", lambda: bench_full_eval)
+    monkeypatch.setattr(de.parallel.bt.logging, "info", lambda msg: None)
+    monkeypatch.setattr(de.parallel.bt.logging, "warning", lambda msg: None)
+    tasks, meta, plan = _sentinel_seeds()
+    feeder = _RecordingFeeder(probe)
+    results = asyncio.run(
+        de.parallel._run_process_parallel(
+            all_tasks=tasks,
+            task_meta=meta,
+            batch_plan=plan,
+            uid=46,
+            model_path=model_path,
+            effective_workers=PATROLS,
+            phase_label="eval",
+            seed_feeder=feeder,
+            initial_pending=[],
+        )
+    )
+    return results, feeder
+
+
+def test_validator_claims_from_the_pool_only_the_patrols_its_memory_flies(monkeypatch, tmp_path, fake_host):
+    """Seven slots on 16 GiB fly three patrols, so no claim asks past three in the air, and every patrol still flies."""
+    host = fake_host(SIXTEEN_GIB_MB, 15000.0)
+
+    results, feeder = _run_validator_pool_from_feeder(monkeypatch, tmp_path, host.probe)
+
+    assert all(result is not None and result.success for result in results)
+    assert host.probe.peak == 3
+    assert all(asked >= 1 and asked + flying <= 3 for asked, flying in feeder.asks)
+
+
+def test_validator_short_of_memory_claims_one_patrol_at_a_time(monkeypatch, tmp_path, fake_host):
+    """An 8 GiB validator with 5 GiB free claims one patrol per ask and still flies all seven."""
+    host = fake_host(EIGHT_GIB_MB, 5000.0)
+
+    results, feeder = _run_validator_pool_from_feeder(monkeypatch, tmp_path, host.probe)
+
+    assert all(result is not None and result.success for result in results)
+    assert host.probe.peak == 1
+    assert {asked for asked, _flying in feeder.asks} == {1}
 
 
 def _run_benchmark_pool(monkeypatch, tmp_path):

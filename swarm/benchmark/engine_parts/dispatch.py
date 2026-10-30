@@ -466,6 +466,23 @@ class _RamWorkerScheduler:
             return False
         return True
 
+    def claim_room(self, group_names: List[str], active_groups: List[str]) -> int:
+        """How many more seeds to take from a shared pool: the free slots, capped by how many seeds of the lightest of
+        these map types the memory budget and the last reading's free memory still hold beside the ones in flight,
+        never fewer than one with nothing in flight."""
+        free_slots = max(0, self.active_worker_cap - len(active_groups))
+        if not group_names:
+            return free_slots
+        lightest_mb = min(_ram_estimate_for_group(group) for group in group_names)
+        fits = int((self._ram_budget_mb() - self._reserved_ram_mb(active_groups)) // lightest_mb)
+        snapshot = self.latest_snapshot
+        if snapshot is not None and snapshot.mem_available_mb > 0.0:
+            free_mb = snapshot.mem_available_mb - self.ram_reserve_mb - self.ram_started_since_snapshot_mb
+            fits = min(fits, int(free_mb // lightest_mb))
+        if not active_groups:
+            fits = max(1, fits)
+        return max(0, min(free_slots, fits))
+
     def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
         """True when a slot is free and the seed fits in memory, or when nothing is in flight, so a short host runs seeds one at a time instead of stalling."""
         if len(active_groups) >= self.active_worker_cap:
