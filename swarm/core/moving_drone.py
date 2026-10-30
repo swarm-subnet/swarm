@@ -1868,8 +1868,7 @@ class MovingDroneAviary(BaseRLAviary):
             or self._failure_reason != FailureReason.NONE.value
         )
 
-        state = self._getDroneStateVector(0)
-        roll, pitch = state[7], state[8]
+        roll, pitch = self.rpy[0, 0], self.rpy[0, 1]
         return self.family_runtime.compute_truncated(
             self,
             terminal_already=terminal_already,
@@ -1893,8 +1892,7 @@ class MovingDroneAviary(BaseRLAviary):
             }
             info.update(self.family_runtime.build_info(self))
             return info
-        state = self._getDroneStateVector(0)
-        dist  = float(np.linalg.norm(state[0:3] - self.GOAL_POS))
+        dist  = float(np.linalg.norm(self.pos[0] - self.GOAL_POS))
         info = {
             "distance_to_goal"    : dist,
             "score"               : self._prev_score,
