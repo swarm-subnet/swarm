@@ -27,7 +27,7 @@ import os
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families.solar_patrol import airframe, camera, park
 from swarm.challenge_families.solar_patrol.contract import (
@@ -43,7 +43,7 @@ from swarm.constants import MOON_AMBIENT_RANGE, MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import seeded_sun, sky_render_kwargs
 from validator.tests.test_solar_patrol_family import _action, _patrol, flat_park  # noqa: F401
 
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _HEIGHT_M = 20.0
 _RED = [0.9, 0.1, 0.1, 1.0]
 
@@ -407,14 +407,13 @@ def test_night_mode_frames_carry_grain_that_moves(scene):
     assert float(crescent[ground].std() / crescent[ground].mean()) > 2.0 * float(first[ground].std() / first[ground].mean())
 
 
-@pytest.mark.skipif(not _M4TD_SHIPPED, reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
+@pytest.mark.skipif(not _M4TD_SHIPPED, reason=f"the installed swarm-description has no {airframe.URDF} yet")
 def test_the_aircraft_blocks_the_view_above_seventy_degrees():
     """The body is out of view up to +60 degrees, covers about a third of the frame at +70 and all of it at +90."""
     cli = p.connect(p.DIRECT)
     try:
-        robots = swarm_worlds.robots_dir()
-        drone = p.loadURDF(os.path.join(robots, airframe.URDF), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
-        moving = p.loadURDF(os.path.join(robots, airframe.MOVING_URDF), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
+        drone = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
+        moving = p.loadURDF(swarm_description.get_urdf(airframe.DRONE, "moving"), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
         joints = {p.getJointInfo(moving, j, physicsClientId=cli)[1].decode(): j
                   for j in range(p.getNumJoints(moving, physicsClientId=cli))}
         env = _Env(cli, drone)

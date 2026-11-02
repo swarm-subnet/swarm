@@ -41,15 +41,18 @@ from scipy.signal import lfilter
 
 from swarm.constants import SIM_DT
 
+from . import airframe
 from .camera import View
 from .contract import ACTION_DIM, DECISION_STEPS, HORIZON_S, STATE_SLICES, Command, decode_action
 from .episode import SolarEpisode
 
-RTK_HORIZONTAL_M = 0.1                 # DJI: M4TD hovering accuracy with RTK
-RTK_VERTICAL_M = 0.1
+RTK_HORIZONTAL_M = airframe.PARAMS["positioning"]["rtk_horizontal_m"]
+RTK_VERTICAL_M = airframe.PARAMS["positioning"]["rtk_vertical_m"]
 RTK_CORRELATION_S = 30.0               # how slowly the reading wanders
-COMMAND_DELAY_STEPS = 1                # DJI: sdr_cmd_delay 10 ms, under one 20 ms control step
-DATA_DELAY_STEPS = (3, 4)              # DJI: liveview_delay_time 60 and 80 ms
+_STEP_MS = round(SIM_DT * 1000.0)
+# The aircraft's link delays in whole control steps, rounded up: a delay under one step still costs one.
+COMMAND_DELAY_STEPS = int(-(-airframe.PARAMS["link"]["command_delay_ms"] // _STEP_MS))
+DATA_DELAY_STEPS = tuple(int(-(-ms // _STEP_MS)) for ms in airframe.PARAMS["link"]["data_delay_ms"])
 VIDEO_QUALITY = 70                     # the stream's quantisation on the JPEG quality scale
 
 DRIFT_SEED_STREAM = 0x5E16             # each error's own stream, so its draws never move another part's

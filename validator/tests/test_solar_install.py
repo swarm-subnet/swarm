@@ -38,6 +38,7 @@ from types import SimpleNamespace
 
 import pybullet as p
 import pytest
+import swarm_description
 import swarm_worlds
 
 from swarm.challenge_families import require_runtime_family
@@ -71,13 +72,14 @@ for line in sys.stdin:
 
 @pytest.fixture
 def complete(monkeypatch, tmp_path):
-    """A complete install: a swarm-worlds tree holding every file Sentinel loads, an engine with every flag and a CPU
-    with AVX2 and FMA. Returns the tree's root."""
+    """A complete install: a swarm-worlds tree and an aircraft folder holding every file Sentinel loads, an engine with
+    every flag and a CPU with AVX2 and FMA. Returns the swarm-worlds tree's root."""
     root = tmp_path / "swarm_worlds"
     solar = root / "maps" / "custom" / "solar"
     monkeypatch.setattr(swarm_worlds, "__file__", str(root / "__init__.py"))
     monkeypatch.setattr(swarm_worlds, "maps_dir", lambda: str(root / "maps"))
     monkeypatch.setattr(swarm_worlds, "robots_dir", lambda: str(root / "robots"))
+    monkeypatch.setattr(swarm_description, "drone_dir", lambda name: str(tmp_path / "swarm_description" / name))
     monkeypatch.setattr(builder, "SOLAR_ASSET_DIR", str(solar))
     monkeypatch.setattr(decoys, "DOGS_DIR", str(solar / "dogs"))
     solar.mkdir(parents=True)
@@ -85,7 +87,7 @@ def complete(monkeypatch, tmp_path):
         "items": {"pickup_body": {"folder": "movers"}, "goat": {"folder": "goats"}},
         "placements": [{"item": "pickup_body", "mover": "pickup"}, {"item": "goat", "mover": "goat"}],
     }))
-    for path in install.asset_files():
+    for path in install.asset_files() + install.drone_files():
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).touch()
     for bit, name in enumerate(install.ENGINE_FLAGS):
@@ -131,7 +133,7 @@ def test_every_file_a_patrol_needs_is_checked_and_named(complete):
     names = {_named(complete, path) for path in files}
     assert {"maps/custom/solar/intruders/intruders.json", "maps/custom/solar/motions/motions.json",
             "maps/custom/solar/dogs/dogs.json", "maps/custom/solar/movers/public_road.json",
-            "maps/custom/solar/manifest.json", "robots/m4td.urdf", "robots/dock3.urdf"} <= names
+            "maps/custom/solar/manifest.json", "robots/dock3.urdf"} <= names
     for path in files:
         if path.endswith("manifest.json"):
             continue  # without the manifest the road cannot be looked up; the manifest's own case is the next test
@@ -139,6 +141,21 @@ def test_every_file_a_patrol_needs_is_checked_and_named(complete):
         Path(path).unlink()
         assert install.problems() == [f"swarm-worlds {install._installed('swarm-worlds')} is missing "
                                       f"{_named(complete, path)}"]
+        Path(path).write_bytes(held)
+    assert install.problems() == []
+
+
+def test_every_aircraft_file_is_checked_and_named(complete):
+    """Each M4TD URDF a patrol loads is refused by its swarm-description path when it is missing, and the install is
+    whole again once it is back."""
+    files = install.drone_files()
+    assert {os.path.relpath(path, os.path.dirname(os.path.dirname(path))) for path in files} == {
+        "m4td/m4td.urdf", "m4td/m4td_moving.urdf"}
+    for path in files:
+        held = Path(path).read_bytes()
+        Path(path).unlink()
+        name = os.path.relpath(path, os.path.dirname(os.path.dirname(path)))
+        assert install.problems() == [f"swarm-description {install._installed('swarm-description')} is missing {name}"]
         Path(path).write_bytes(held)
     assert install.problems() == []
 

@@ -18,7 +18,7 @@
 """Solar Patrol's dock (task 9): where each seed stands it, and the take-off, return home and landing it flies.
 
 The spot is checked on small worlds built here; the flights stand the family on flat ground with a square fence, as
-the skeleton's tests do, and fly the M4TD that ships in swarm-worlds.
+the skeleton's tests do, and fly the M4TD that ships in swarm-description.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from types import SimpleNamespace
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families import build_benchmark_tasks
 from swarm.challenge_families.solar_patrol import airframe, camera, dock, dock3, drone_state, laser, park, zoom
@@ -55,7 +55,7 @@ from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("blank_camera")
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _SOLAR_ASSETS = os.environ.get("SOLAR_ASSET_DIR", SOLAR_ASSET_DIR)
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 _SQUARE = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]])
@@ -124,7 +124,7 @@ def _fly(seed, pilot, max_decisions=4000):
     """Fly one patrol on flat ground; pilot maps (decision, phase, env) to an action. Returns the per-decision log,
     the episode, the last step's info and the environment's light."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)
@@ -452,7 +452,7 @@ def test_the_landing_waits_clear_of_the_dock_and_its_lids(world):
     """An aircraft waiting WAIT_M above the pad stands over 0.5 m above DJI's closed dock height and above the lids
     at every point of their swing."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
     _ground(world)
     env = SimpleNamespace(CLIENT=world)
     model = dock3.spawn(env, 50.0, 50.0)
@@ -461,7 +461,7 @@ def test_the_landing_waits_clear_of_the_dock_and_its_lids(world):
     for opening in np.linspace(0.0, 1.0, 41):
         dock3.set_opening(env, model, opening)
         swing.append(max(p.getAABB(model.uid, link, physicsClientId=world)[1][2] for link in (-1, *dock3.LID_JOINTS)))
-    aircraft = p.loadURDF(os.path.join(swarm_worlds.robots_dir(), airframe.URDF), (rest + [0.0, 0.0, dock.WAIT_M]).tolist(),
+    aircraft = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), (rest + [0.0, 0.0, dock.WAIT_M]).tolist(),
                           physicsClientId=world)
     lowest = min(p.getAABB(aircraft, link, physicsClientId=world)[0][2]
                  for link in range(-1, p.getNumJoints(aircraft, physicsClientId=world)))
@@ -572,7 +572,7 @@ def test_a_strong_wind_take_off_lifts_out_of_the_dock_without_touching_it(flat_p
     """Seeds whose full 20 m wind once pushed the climbing aircraft into the dock body now reach the patrol height:
     near the ground it feels the slower air the dock's gauge reads."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
     with contextlib.redirect_stdout(io.StringIO()):
         env, _obs = make_env_with_initial_obs(solar_patrol_task(seed=seed, sim_dt=SIM_DT))
     try:

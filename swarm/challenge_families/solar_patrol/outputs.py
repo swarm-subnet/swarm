@@ -31,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-from . import camera, reports, zoom
+from . import airframe, camera, reports, zoom
 from .contract import (
     ACTION_HIGH,
     ACTION_LOW,
@@ -48,7 +48,7 @@ from .contract import (
 from .episode import Setpoint, SolarEpisode
 
 MAX_ACCEL_MPS2 = 2.0                   # a step change of velocity would tip the body past the tilt limit
-NIGHT_VISION_LENS = 7                  # DJI: night vision with the infrared light only at 7x zoom or above
+NIGHT_VISION_LENS = airframe.PARAMS["cameras"]["night_vision_min_zoom"]
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:

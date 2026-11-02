@@ -27,6 +27,14 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import swarm_description
+
+# The drones' own numbers come from swarm-description; this file keeps the names the code reads them by.
+_CF2X = swarm_description.get_params("cf2x")
+_TELLO = swarm_description.get_params("tello")
+_TELLO_URDF = swarm_description.get_properties("tello")
+_INTERCEPTOR = swarm_description.get_params("interceptor")
+
 # =============================================================================
 # EPOCH
 # =============================================================================
@@ -67,8 +75,8 @@ RANDOM_START = True                     # Toggle random starting point generatio
 # Camera and rendering settings
 CAMERA_FOV_BASE = 90.0                  # Base field of view (degrees)
 CAMERA_FOV_VARIANCE = 2.0               # FOV randomization range (±degrees)
-CAMERA_EYE_FWD_M = 0.13                 # Camera eye offset ahead of the body center (meters)
-CAMERA_EYE_UP_M = 0.05                  # Camera eye offset above the body center (meters)
+CAMERA_EYE_FWD_M = _CF2X["camera"]["eye_forward_m"]
+CAMERA_EYE_UP_M = _CF2X["camera"]["eye_up_m"]
 # Depth sensor parameters
 DEPTH_NEAR = 0.05                       # PyBullet camera near plane (meters)
 DEPTH_FAR = 30.0                        # PyBullet camera far plane (meters)
@@ -256,7 +264,7 @@ SUBPROC_MEM_MB = 8192                   # Memory limit per evaluation subprocess
 # =============================================================================
 
 # Drone physical specifications
-DRONE_HULL_RADIUS = 0.12                    # Drone hull radius from center to edge (meters)
+DRONE_HULL_RADIUS = _CF2X["body"]["hull_radius_m"]
 ALTITUDE_RAY_INSET = 0.09                   # Inset from hull edge for altitude ray origin (meters)
 MAX_RAY_DISTANCE = 20.0                     # Downward LiDAR maximum detection range (meters)
 
@@ -553,8 +561,7 @@ SWARM_SAR_SEARCH_RADIUS = 80.0            # m — shared SAR search-clue radius 
 # =============================================================================
 # INTERCEPTOR (cf_interceptor) — air-to-air pursuit, this family only
 # =============================================================================
-INTERCEPTOR_DRONE_URDF = "interceptor_drone.urdf"  # 36 cm drone shipped in swarm/assets
-INTERCEPTOR_DRONE_SCALE = 3                  # cf2x x3 ~= 36 cm diagonal
+INTERCEPTOR_DRONE_SCALE = _INTERCEPTOR["body"]["scale_of_cf2x"]
 
 INTERCEPTOR_MINER_SPEED = 6.0               # m/s — chaser velocity cap (env-local; tune later)
 INTERCEPTOR_MAX_TILT_DEG = 75.0             # deg — pursuit needs more lean than the global 60 cutoff; sustained chase speed stays under the 4.5 flee otherwise
@@ -608,14 +615,14 @@ if not (0.0 < INTERCEPTOR_MIN_START_DISTANCE_M <= INTERCEPTOR_MAX_START_DISTANCE
 # Sim defaults from the official specs; calibration knobs for real-flight logs.
 
 OFFICE_CHALLENGE_TYPE = 7                   # office indoor map (fixed layout, no random terrain)
-OFFICE_RC_SPEED = 3.0                       # m/s — per-axis stick-full speed (Tello slow mode)
-OFFICE_RC_YAW_RATE = 3.141                  # rad/s — stick-full yaw rate
+OFFICE_RC_SPEED = _TELLO["rc"]["max_speed_mps"]
+OFFICE_RC_YAW_RATE = _TELLO["rc"]["max_yaw_rate_rad_s"]
 OFFICE_RC_DEAD_ZONE = 0.05                  # |stick| below this counts as zero
 OFFICE_RC_SLEW_PER_SEC = 4.0                # max stick-units/s of command change (RC feel)
 OFFICE_RC_YAW_LEAD_RAD = 0.6                # max angle the yaw setpoint may lead the true yaw
 OFFICE_MAX_TILT_DEG = 60.0                  # deg — safety cutoff for the indoor drone
 OFFICE_CAMERA_RES = 256                     # env-local camera resolution (the RGB observation)
-OFFICE_CAMERA_EYE_FWD_M = 0.035             # m — measured on the real Tello; the shared 0.13 is an open-map value
+OFFICE_CAMERA_EYE_FWD_M = _TELLO["camera"]["eye_forward_m"]
 OFFICE_DET_NEAR_M = 0.10                    # m from the lens — closest range the real detector still boxes a drone
 OFFICE_HORIZON_SEC = 60.0                   # episode horizon
 OFFICE_SPAWN_Z = 0.05                       # floor spawn height (no platform indoors)
@@ -625,28 +632,27 @@ OFFICE_ACQUIRE_SLACK_SEC = 6.5              # slack: locating the target + motor
 OFFICE_W_SUCCESS = 0.5                      # score weight: interception achieved
 OFFICE_W_TIME = 0.5                         # score weight: time term
 
-# Simulated Tello telemetry link (state packets over UDP at ~10 Hz).
-# Units from the SDK docs; noise figures calibrated against the SecureLink
-# Tello dataset (see docs/families/securelink_calibration_summary.json).
-OFFICE_TELEM_PERIOD_STEPS = 5               # control steps between packets (10 Hz at 50 Hz ctrl)
-OFFICE_TELEM_DELAY_STEPS = 2                # transport delay: packets carry state from N steps ago
-OFFICE_TELEM_DROP_PROB = 0.05               # per-packet loss probability
+# Simulated Tello telemetry link, from the Tello's params (see docs/families/securelink_calibration_summary.json).
+_TELEM = _TELLO["telemetry"]
+OFFICE_TELEM_PERIOD_STEPS = int(round(1.0 / (_TELEM["rate_hz"] * SIM_DT)))  # control steps between packets
+OFFICE_TELEM_DELAY_STEPS = int(-(-_TELEM["delay_ms"] // round(SIM_DT * 1000.0)))  # packets carry state from N steps ago
+OFFICE_TELEM_DROP_PROB = _TELEM["drop_prob"]
 OFFICE_TELEM_STALE_SEC = 0.5                # age beyond this flips telemetry_valid to 0
-OFFICE_TELEM_ATTITUDE_NOISE_DEG = 1.0       # IMU attitude noise (std, per packet)
-OFFICE_TELEM_VELOCITY_NOISE = 0.05          # m/s — VPS velocity noise (std)
-OFFICE_TELEM_VELOCITY_BIAS = 0.006          # m/s — per-episode optical-flow velocity bias, per horizontal axis (std)
-OFFICE_TELEM_VELOCITY_WALK = 0.0005         # m/s — velocity bias random walk per packet (std)
-OFFICE_TELEM_ACCEL_NOISE = 0.3              # m/s^2 — accelerometer noise (std)
-OFFICE_TELEM_ACCEL_BIAS = 0.15              # m/s^2 — per-episode accelerometer bias (std)
-OFFICE_TELEM_TOF_NOISE_M = 0.13             # m — downward ToF noise (std, measured 0.13)
-OFFICE_TELEM_TOF_OUTLIER_PROB = 0.02        # per-packet probability of a spurious ToF range
-OFFICE_TELEM_HEIGHT_NOISE_M = 0.03          # m — fused-height noise (std)
-OFFICE_TELEM_BARO_NOISE_M = 0.15            # m — barometer noise (std, measured 0.12-0.16)
-OFFICE_TELEM_BARO_WALK_M = 0.005            # m — barometer random walk per packet (std)
-OFFICE_TELEM_TOF_MAX_M = 8.0                # m — ToF range limit (reads max beyond it)
+OFFICE_TELEM_ATTITUDE_NOISE_DEG = _TELEM["attitude_noise_deg"]
+OFFICE_TELEM_VELOCITY_NOISE = _TELEM["velocity_noise_mps"]
+OFFICE_TELEM_VELOCITY_BIAS = _TELEM["velocity_bias_mps"]
+OFFICE_TELEM_VELOCITY_WALK = _TELEM["velocity_walk_mps"]
+OFFICE_TELEM_ACCEL_NOISE = _TELEM["accel_noise_mps2"]
+OFFICE_TELEM_ACCEL_BIAS = _TELEM["accel_bias_mps2"]
+OFFICE_TELEM_TOF_NOISE_M = _TELEM["tof_noise_m"]
+OFFICE_TELEM_TOF_OUTLIER_PROB = _TELEM["tof_outlier_prob"]
+OFFICE_TELEM_HEIGHT_NOISE_M = _TELEM["height_noise_m"]
+OFFICE_TELEM_BARO_NOISE_M = _TELEM["baro_noise_m"]
+OFFICE_TELEM_BARO_WALK_M = _TELEM["baro_walk_m"]
+OFFICE_TELEM_TOF_MAX_M = _TELEM["tof_max_m"]
 OFFICE_TELEM_SEED_OFFSET = 0x7E110          # decorrelates the telemetry rng from the map seed
 OFFICE_DRIFT_SEED_OFFSET = 0xD41F7          # decorrelates the VPS drift direction stream
-OFFICE_VPS_DRIFT_FORCE_N = 0.002            # N — slow lateral drift force emulating VPS error
+OFFICE_VPS_DRIFT_FORCE_N = _TELEM["vps_drift_force_n"]
 
 # Target drone: validator-flown Tello with a seeded per-episode personality.
 OFFICE_TARGET_SPEED_MIN = 0.7               # m/s — lazy pilot; chaser stick-full is 3.0
@@ -664,10 +670,10 @@ OFFICE_TARGET_FLEE_MIN = 0.55               # flee speed as a fraction of OFFICE
 OFFICE_TARGET_FLEE_MAX = 0.65               # -> 1.65-1.95 m/s, always under the chaser's 3.0
 OFFICE_TARGET_BRAKE_DECEL = 2.4             # m/s^2 — calibrated PID braking (0.3 m from 1.2 m/s)
 OFFICE_TARGET_GUARD_SAFETY = 2.0            # brake guard = this x physical stopping distance
-OFFICE_MOTOR_TAU_SEC = 0.040                # s — brushed 8520 motor lag (30-60 ms); tune from real logs
-OFFICE_DRAG_COEF = 0.004                    # N/(m/s)^2 — from CdA ~0.006 m^2 x Cd 1.2; tune from real logs
-OFFICE_GROUND_EFFECT_COEF = 4.0             # thrust gain x (prop_r/4z)^2: ~25% at prop height
-OFFICE_PROP_RADIUS_M = 0.038                # 3-inch prop radius
+OFFICE_MOTOR_TAU_SEC = _TELLO["motors"]["lag_s"]
+OFFICE_DRAG_COEF = _TELLO["body"]["drag_coef"]
+OFFICE_GROUND_EFFECT_COEF = _TELLO["motors"]["ground_effect_coef"]
+OFFICE_PROP_RADIUS_M = _TELLO_URDF["prop_radius"]
 OFFICE_TARGET_TURN_SPEED = 0.5              # m/s — corner entry speed: turn overshoot stays inside
 OFFICE_TARGET_ACCEL = 2.0                   # m/s^2 — speed build after each corner
 OFFICE_TARGET_DODGE_REPLAN_STEPS = 25       # >= 0.5 s between dodge replans (human reaction)

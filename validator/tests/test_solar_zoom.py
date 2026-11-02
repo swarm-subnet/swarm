@@ -75,7 +75,7 @@ class _Flight:
     def __init__(self, seed):
         """Build the patrol, take off, and wait until the dock hands the aircraft over."""
         if not _M4TD_SHIPPED:
-            pytest.skip("the installed swarm-worlds has no M4TD yet")
+            pytest.skip("the installed swarm-description has no M4TD yet")
         task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
         with contextlib.redirect_stdout(io.StringIO()):
             self.env, self.obs = make_env_with_initial_obs(task)

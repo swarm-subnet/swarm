@@ -61,7 +61,7 @@ dependencies = { file = ["requirements.txt"] }
 
 # pixi reads the dependencies above through the editable install, so
 # requirements.txt stays the single list and pixi.lock records what it resolved
-# to, including the exact swarm-worlds commit behind the pinned tag.
+# to, including the exact swarm-worlds and swarm-description commits behind the pinned tags.
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 # swarm-bullet3 ships manylinux_2_34 wheels only, so the resolver has to assume at

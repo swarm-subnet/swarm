@@ -30,7 +30,7 @@ import zipfile
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families import (
     build_benchmark_tasks,
@@ -72,8 +72,8 @@ from swarm.policy_interface import (
 )
 from swarm.utils.env_factory import make_env_with_initial_obs
 
-# A patrol flies the M4TD, which ships in swarm-worlds; an installed release without it cannot fly one.
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+# A patrol flies the M4TD, which ships in swarm-description; an installed release without it cannot fly one.
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 _TABLES = np.array([[60.0, 120.0, 20.0, 4.0, 89.0], [40.0, 70.0, 10.0, 4.0, 88.0]])
 _BUILDINGS = np.array([[20.0, 50.0, 3.8, 3.7, 0.0]])
@@ -126,7 +126,7 @@ def _action(**values):
 def _patrol(seed, pilot, max_decisions=None):
     """Fly one patrol with a pilot that maps (decision index, observation) to an action; returns the log."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)
@@ -325,7 +325,7 @@ def test_each_observation_is_handed_ahead_as_its_step_returns_it(flat_park):
     the link's snapshot, and equals the one that step returns; the step that ends the patrol hands over at most that
     one."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[13], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)

@@ -104,6 +104,7 @@ from swarm.core.env_builder.sar_types import BodyCategory
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 from swarm.core.sky_pack import load_sky_pack, pick_sky
 from swarm.core.wind import SeededWind
+from swarm.utils import gym_assets
 
 # Families that get 256 px depth, 30 m range, and the on-demand RGB action value.
 _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
@@ -111,6 +112,9 @@ _SAR_RGB_FAMILIES = ("cf_search_and_rescue", "cf_swarm_sar")
 # Families driven by body-frame RC sticks [lr, fb, ud, yaw] instead of the
 # world-frame velocity contract (indoor Tello: no GPS, no world frame).
 _OFFICE_RC_FAMILIES = ("cf_interceptor_office",)
+
+# The swarm-description drone a family flies unless it names its own.
+DEFAULT_DRONE = "cf2x"
 
 # World tags that mark the ground a goal pad stands on; rooftops stay obstacles.
 _GROUND_TAGS = frozenset(
@@ -410,9 +414,9 @@ class MovingDroneAviary(BaseRLAviary):
         return 1.0 / self.CTRL_FREQ
 
     def _parseURDFParameters(self):
-        """For cf_interceptor and the office family, point self.URDF at the family's drone
-        before BaseAviary parses and loads it (both _parseURDFParameters and _housekeeping
-        read self.URDF, resolving it through swarm.utils.gym_assets' staged-path shim)."""
+        """Point self.URDF at the family's drone, staged from swarm-description, before BaseAviary
+        parses and loads it (both _parseURDFParameters and _housekeeping read self.URDF, resolving
+        it through swarm.utils.gym_assets' staged-path shim); cf2x unless the family flies another."""
         family_id = getattr(self.family_runtime, "family_id", "")
         family_urdf = self.family_runtime.drone_urdf(self)
         if family_urdf is not None:
@@ -423,6 +427,8 @@ class MovingDroneAviary(BaseRLAviary):
         elif family_id in _OFFICE_RC_FAMILIES:
             from swarm.challenge_families.office_interceptor import ensure_tello_assets_staged
             self.URDF = ensure_tello_assets_staged()
+        else:
+            self.URDF = gym_assets.stage_drone(DEFAULT_DRONE)
         return super()._parseURDFParameters()
 
     def _actionSpace(self):

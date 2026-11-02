@@ -17,9 +17,10 @@
 
 """M4TD airframe (task 3): the DJI Matrice 4TD as the patrol flies it and as the cameras see it.
 
-The flying body is m4td.urdf in swarm-worlds: 1,850 g, the real outline as its collision shape (dome, fuselage,
-feet, gull-wing arms, motor pods), thrust at the CAD motor positions. Swarm's physics flies it; a DSL PID controller
-remapped to the 2611 motors' speed range and capped at the M4TD's 25 degree tilt holds each setpoint.
+The flying body is m4td.urdf in swarm-description, with every number of the aircraft in its params.toml: 1,850 g,
+the real outline as its collision shape (dome, fuselage, feet, gull-wing arms, motor pods), thrust at the CAD motor
+positions. Swarm's physics flies it; a DSL PID controller remapped to the 2611 motors' speed range and capped at the
+M4TD's 25 degree tilt holds each setpoint.
 
 The parts that move on the real aircraft but not in its physics (the four rotors with their folding blades, and the
 gimbal head) are a second body, m4td_moving.urdf, with no collision, posed on the aircraft before each picture.
@@ -38,7 +39,7 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 import pybullet as p
-import swarm_worlds
+import swarm_description
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel
 from scipy.spatial.transform import Rotation
@@ -49,37 +50,34 @@ from . import park
 from .episode import SolarEpisode
 from .fixed_order import rotate
 
-URDF = "m4td.urdf"
-MOVING_URDF = "m4td_moving.urdf"
-MESH_DIR = "m4td"
+DRONE = "m4td"
+PARAMS = swarm_description.get_params(DRONE)
+URDF = PARAMS["files"]["body"]
+MOVING_URDF = PARAMS["files"]["moving"]
 
-MAX_RPM = 6300.0                        # DJI: maximum propeller speed
-IDLE_RPM = 900.0                        # the slowest a spinning motor is commanded in flight
-MAX_TILT_RAD = math.radians(25.0)       # DJI: Normal mode, the only mode with the dock
-SPIN = (1, -1, 1, -1)                   # rotor turn sense seen from above, +1 counter-clockwise (the gym's torque signs)
-MOTOR_XY = ((0.17065, -0.1915), (-0.17065, -0.1715), (-0.17065, 0.1715), (0.17065, 0.1915))  # DJI's CAD
-# Controller gains, tuned on the patrol's physics: speed loop in newtons per m/s (and per m of accumulated speed
-# error), attitude loop in PWM units.
-VEL_GAIN = np.array([6.0, 6.0, 7.4])
-VEL_INTEGRAL = np.array([1.0, 1.0, 2.0])  # a small, fading integral for what the drag feed-forward misses (wind)
-INTEGRAL_BAND_MPS = 1.0                 # it only learns once the speed is this close to the target
-INTEGRAL_LIMIT = 4.0                    # room for the steady push of a 12 m/s wind on top of the rotor drag
-INTEGRAL_LEAK_S = 30.0
-ATT_P = np.array([45000.0, 45000.0, 20000.0])
-ATT_I = np.array([0.0, 0.0, 0.0])
-ATT_D = np.array([9000.0, 9000.0, 24000.0])
+MAX_RPM = PARAMS["motors"]["max_rpm"]
+IDLE_RPM = PARAMS["motors"]["idle_rpm"]
+MAX_TILT_RAD = math.radians(PARAMS["flight"]["max_tilt_deg"])
+SPIN = tuple(PARAMS["motors"]["spin"])
+MOTOR_XY = tuple(tuple(xy) for xy in PARAMS["motors"]["positions_xy_m"])
+VEL_GAIN = np.array(PARAMS["controller"]["vel_gain"])
+VEL_INTEGRAL = np.array(PARAMS["controller"]["vel_integral"])
+INTEGRAL_BAND_MPS = PARAMS["controller"]["integral_band_mps"]
+INTEGRAL_LIMIT = PARAMS["controller"]["integral_limit"]
+INTEGRAL_LEAK_S = PARAMS["controller"]["integral_leak_s"]
+ATT_P = np.array(PARAMS["controller"]["att_p"])
+ATT_I = np.array(PARAMS["controller"]["att_i"])
+ATT_D = np.array(PARAMS["controller"]["att_d"])
 
-# Drone frame (x nose, y left, z up, metres, gimbal level), from DJI's CAD.
-GIMBAL_PIVOT = np.array([0.1295, 0.0, -0.0340])      # tilt axis, along y
-WIDE_CAMERA = np.array([0.1579, 0.0162, -0.0373])    # front of the wide camera's glass
-LASER_WINDOW = np.array([0.1454, -0.0095, -0.0560])  # centre of the laser rangefinder window
-DOCKED_FOLD_RAD = math.radians(45.0)                 # blades set 90 degrees apart before the dock closes (DJI manual)
+GIMBAL_PIVOT = np.array(PARAMS["gimbal"]["pivot_m"])
+WIDE_CAMERA = np.array(PARAMS["gimbal"]["wide_camera_m"])
+LASER_WINDOW = np.array(PARAMS["gimbal"]["laser_window_m"])
+DOCKED_FOLD_RAD = math.radians(PARAMS["motors"]["docked_fold_deg"])
 
-# Surface temperatures (deg C) for the thermal camera: (rise over air when warm, warm-up s, cool-down s, emissivity).
-# Estimates: 20 to 35 K rise on drone motors measured in flight (arXiv 1906.04152); DJI docks keep the battery
-# between 10 and 35 C and it warms through a flight; the gimbal's electronics run a few kelvin over the air.
-HEAT = {"motor": (25.0, 60.0, 240.0, 0.85), "battery": (10.0, 400.0, 900.0, 0.92), "gimbal": (8.0, 120.0, 300.0, 0.92)}
-BATTERY_BASE_C = 25.0                  # the dock conditions the battery before take-off
+# Heat source -> (rise over air when warm, warm-up s, cool-down s, emissivity), for the thermal camera.
+HEAT = {name: (src["rise_k"], src["warm_up_s"], src["cool_down_s"], src["emissivity"])
+        for name, src in PARAMS["heat"]["sources"].items()}
+BATTERY_BASE_C = PARAMS["heat"]["battery_base_c"]
 THERMAL = hasattr(p, "ER_SWARM_THERMAL")
 # The C library's hypot, the one scipy's rotations call: Python's math.hypot is its own algorithm and can round apart.
 _HYPOT = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double, ctypes.c_double)(("hypot", ctypes.CDLL(None)))
@@ -242,16 +240,8 @@ def _compose(p: tuple, q: tuple) -> tuple:
 
 
 def urdf(env: Any) -> Optional[str]:
-    """Stage the M4TD's description and meshes where the gym loads bodies from, and return its name."""
-    src_dir = swarm_worlds.robots_dir()
-    dst_dir = gym_assets.stage_dir()
-    mesh_dst = os.path.join(dst_dir, MESH_DIR)
-    os.makedirs(mesh_dst, exist_ok=True)
-    for name in sorted(os.listdir(os.path.join(src_dir, MESH_DIR))):
-        gym_assets.copy_verified(os.path.join(src_dir, MESH_DIR, name), os.path.join(mesh_dst, name))
-    dst = os.path.join(dst_dir, URDF)
-    gym_assets.copy_verified(os.path.join(src_dir, URDF), dst)
-    return gym_assets.register(URDF, dst)
+    """Stage the M4TD's descriptions and meshes where the gym loads bodies from, and return the flying body's name."""
+    return gym_assets.stage_drone(DRONE)
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
@@ -259,7 +249,7 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     env.ctrl = [M4TDControl(env) for _ in range(env.NUM_DRONES)]
     env._drag = types.MethodType(_still_air_drag, env)
     cli = env.CLIENT
-    uid = int(p.loadURDF(os.path.join(swarm_worlds.robots_dir(), MOVING_URDF), [0.0, 0.0, -100.0],
+    uid = int(p.loadURDF(gym_assets.staged_path(MOVING_URDF), [0.0, 0.0, -100.0],
                          flags=p.URDF_USE_INERTIA_FROM_FILE, physicsClientId=cli))
     for link in range(-1, p.getNumJoints(uid, physicsClientId=cli)):
         p.setCollisionFilterGroupMask(uid, link, 0, 0, physicsClientId=cli)

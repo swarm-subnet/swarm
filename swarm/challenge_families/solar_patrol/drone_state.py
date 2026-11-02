@@ -32,14 +32,13 @@ import pybullet as p
 
 from swarm.core.maps.solar.builder import solar_manifest
 
-from . import park
+from . import airframe, park
 from .contract import HORIZON_S, MAX_BUILDINGS, MAX_FENCE_POINTS, MAX_TABLES, SITE_MAP_SLICES, STATE_SLICES, put
 from .episode import SolarEpisode
 from .fixed_order import norm, rows_dot
 
-# DJI's M4TD figures: 47 min of hover on one battery, and the Dock 3 fast charge stops at 95 %.
-HOVER_ENDURANCE_S = 47.0 * 60.0
-BATTERY_START_PCT = 95.0
+HOVER_ENDURANCE_S = airframe.PARAMS["flight"]["hover_endurance_min"] * 60.0
+BATTERY_START_PCT = 95.0                 # DJI: the Dock 3 fast charge stops at 95 %
 # A panel table is three pieces on one pose; its outline covers all three.
 TABLE_PARTS = {"full_table_frame": ("full_table_frame", "full_table_glass", "full_table_racking"),
                "half_table_frame": ("half_table_frame", "half_table_glass", "half_table_racking")}

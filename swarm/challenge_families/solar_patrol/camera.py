@@ -77,8 +77,8 @@ NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
 FEEDS = ("colour", "thermal")
-WIDE_DIAGONAL_FOV_DEG = 82.0            # DJI: M4TD wide camera
-THERMAL_DIAGONAL_FOV_DEG = 45.0         # DJI: M4TD thermal camera
+WIDE_DIAGONAL_FOV_DEG = airframe.PARAMS["cameras"]["wide_diagonal_fov_deg"]
+THERMAL_DIAGONAL_FOV_DEG = airframe.PARAMS["cameras"]["thermal_diagonal_fov_deg"]
 NEAR_M = 0.004                          # under the airframe's 5 mm, so the aircraft is drawn when it is in view
 FAR_M = 2000.0
 
@@ -97,24 +97,20 @@ class Lens:
     iso_night: float
 
 
-# DJI Matrice 4 series specs: wide 1/1.3 inch f/1.7, medium tele 1/1.3 inch f/2.8, tele 1/1.5 inch f/2.8, each 48 MP;
-# ISO up to 25,600 in normal mode and 409,600 in night mode, 819,200 on the tele. Keyed by zoom, the wide lens as 1.
-LENSES = {1: Lens(1.7, 70.3, 25600.0, 409600.0), 3: Lens(2.8, 70.3, 25600.0, 409600.0),
-          7: Lens(2.8, 48.8, 25600.0, 819200.0)}
+# Keyed by zoom, the wide lens as 1.
+LENSES = {int(zoom): Lens(**lens) for zoom, lens in airframe.PARAMS["cameras"]["lenses"].items()}
 WIDE_LENS = 1
-# The sensor: normal video exposes a frame of the 30 fps stream, and Night Scene slows the stream to 15 fps to expose
-# twice as long (M4T footage over unlit farmland, 1/15 s in its middle setting); a back-lit CMOS through its colour
+# The sensor: a frame of the video stream, slower in Night Scene to expose longer; a back-lit CMOS through its colour
 # filters turns about 4,000 photons of white light per square micrometre and lux second into electrons and saturates at
-# about 4,000 per square micrometre at ISO 100; video reads the 48 MP array binned to 12 MP with 1.5 electrons of read
-# noise at the high conversion gain of night ISOs; the stream's temporal noise reduction averages about four frames.
-EXPOSURE_S = 1.0 / 30.0
-NIGHT_SCENE_EXPOSURE_S = 1.0 / 15.0
+# about 4,000 per square micrometre at ISO 100. Pixel count, read noise and noise reduction are the aircraft's.
+EXPOSURE_S = 1.0 / airframe.PARAMS["cameras"]["video_fps"]
+NIGHT_SCENE_EXPOSURE_S = 1.0 / airframe.PARAMS["cameras"]["night_scene_fps"]
 LENS_TRANSMISSION = 0.9
 ELECTRONS_PER_LUX_S_UM2 = 4000.0
 FULL_WELL_E_PER_UM2 = 4000.0
-BINNED_PIXELS = 12.0e6
-READ_NOISE_E = 1.5
-NOISE_REDUCTION_FRAMES = 4.0
+BINNED_PIXELS = airframe.PARAMS["cameras"]["binned_pixels"]
+READ_NOISE_E = airframe.PARAMS["cameras"]["read_noise_e"]
+NOISE_REDUCTION_FRAMES = airframe.PARAMS["cameras"]["noise_reduction_frames"]
 # Night vision takes the IR-cut filter out, and silicon collects about half as much again past it.
 NEAR_INFRARED_GAIN = 1.5
 # Moonlight on level ground: 0.25 lux from a full moon at the zenith, dimmed by its phase angle as Allen gives it and by

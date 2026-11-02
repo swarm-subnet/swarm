@@ -32,7 +32,7 @@ from types import SimpleNamespace
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 from shapely.geometry import Point, Polygon
 
 from swarm.benchmark import engine as bench_engine
@@ -59,7 +59,7 @@ from swarm.validator.utils_parts import heartbeat as heartbeat_module
 from swarm.validator.utils_parts import run_task as run_task_module
 from validator.tests.test_docker_evaluator import _ScriptedContext
 
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _APPROVE = seed_checks.approve
 _PREPARE = seed_checks.prepare
 _FENCE = np.array([[20.0, 60.0], [100.0, 60.0], [100.0, 140.0], [20.0, 140.0]])
@@ -136,7 +136,7 @@ def _thief(monkeypatch, shed):
 def _skip_without_m4td():
     """Whole flights need the aircraft the patrol flies."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
 
 
 def _fly_with(monkeypatch, seeds_passing):

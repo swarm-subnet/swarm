@@ -29,16 +29,16 @@ from typing import Any
 import numpy as np
 import pybullet as p
 
-from . import camera
+from . import airframe, camera
 from .contract import DECISION_STEPS, STATE_SLICES, put
 from .episode import SolarEpisode
 from .fixed_order import rotate
 
-DAY_RANGE_M = (0.5, 16.0)                # DJI: the M4TD's downward vision, which needs light
-NIGHT_RANGE_M = (0.1, 8.0)               # DJI's downward 3D infrared sensor on the Matrice 3D/3TD; the M4TD's is unpublished
-OUT_OF_RANGE_M = 60.0                    # DJI's perception SDK reports 60000 mm when it detects nothing
+DAY_RANGE_M = tuple(airframe.PARAMS["ground_sensor"]["day_range_m"])
+NIGHT_RANGE_M = tuple(airframe.PARAMS["ground_sensor"]["night_range_m"])
+OUT_OF_RANGE_M = airframe.PARAMS["ground_sensor"]["out_of_range_m"]
 READING_STEPS = DECISION_STEPS           # 10 Hz
-SENSOR = np.array([0.0, 0.0, -0.062])    # centre of the belly in the drone frame, from the M4TD's collision boxes
+SENSOR = np.array(airframe.PARAMS["ground_sensor"]["position_m"])
 _SELF_HITS = 8                           # the aircraft's own parts a ray may pass before it gives up
 
 

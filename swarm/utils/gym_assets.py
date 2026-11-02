@@ -27,7 +27,7 @@ image runs as the host uid), read-only mounts, shared installs.
 Instead, the URDFs are staged under a per-uid temp dir and a pass-through
 resolver is installed over BaseAviary's module-level ``pkg_resources``: it
 returns the staged absolute path for registered basenames and delegates every
-other lookup (plane.urdf, cf2x.urdf, ...) to the real pkg_resources. Only
+other lookup (plane.urdf, ...) to the real pkg_resources. Only
 BaseAviary's global is replaced — BaseControl/CTBRControl keep their own
 imports and resolve stock assets untouched.
 """
@@ -37,9 +37,11 @@ import os
 import tempfile
 
 import gym_pybullet_drones.envs.BaseAviary as _base_aviary_mod
+import swarm_description
 
 # basename -> absolute staged path, consulted by the resolver below
 _STAGED: dict[str, str] = {}
+MESHES = "meshes"
 
 _REAL_PKG_RESOURCES = _base_aviary_mod.pkg_resources
 
@@ -85,6 +87,23 @@ def register(basename: str, abs_path: str) -> str:
 def staged_path(basename: str) -> str:
     """Absolute path of a registered staged asset, for direct p.loadURDF calls."""
     return _STAGED[basename]
+
+
+def stage_drone(name: str) -> str:
+    """Stage one swarm-description drone, its URDFs with the meshes beside them, in its own folder of the writable dir,
+    register every URDF it names, and return the flying body's basename for self.URDF."""
+    src = swarm_description.drone_dir(name)
+    dst = os.path.join(stage_dir(), name)
+    os.makedirs(os.path.join(dst, MESHES), exist_ok=True)
+    files = swarm_description.get_params(name)["files"]
+    mesh_src = os.path.join(src, MESHES)
+    meshes = sorted(os.listdir(mesh_src)) if os.path.isdir(mesh_src) else []
+    for mesh in meshes:
+        copy_verified(os.path.join(mesh_src, mesh), os.path.join(dst, MESHES, mesh))
+    for urdf in files.values():
+        copy_verified(os.path.join(src, urdf), os.path.join(dst, urdf))
+        register(urdf, os.path.join(dst, urdf))
+    return files["body"]
 
 
 def copy_verified(src: str, dst: str) -> None:
