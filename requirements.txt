@@ -34,7 +34,7 @@ swarm-drone-gym==2.0.0.3
 # Every drone the simulator flies: URDFs, meshes and parameters. Like swarm-worlds,
 # a new tag can change flight results and follows the same bump rules as scoring.
 swarm-description @ git+https://github.com/swarm-subnet/swarm-description.git@v1.0.0
-# Maps, robot descriptions and textures. The tag is a release of the assets; a
+# Maps, the dock and textures. The tag is a release of the assets; a
 # new tag can change flight results and follows the same bump rules as scoring.
 swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.1.0
 pygame==2.6.1
