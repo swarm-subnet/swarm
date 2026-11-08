@@ -26,6 +26,8 @@ import shlex
 import zipfile
 from types import SimpleNamespace
 
+import pytest
+
 from miner.src import miner
 
 
@@ -113,7 +115,7 @@ def test_main_uses_set_commitment(monkeypatch):
     else:
         monkeypatch.setattr(miner.bt, "subtensor", FakeSubtensor)
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
-    monkeypatch.setattr(miner, "_fetch_backend_families", lambda url: {"cf_autopilot": "public"})
+    monkeypatch.setattr(miner, "_load_local_families", lambda: {"cf_autopilot": "public"})
     monkeypatch.setattr(miner, "_check_public_manifest", lambda url: (None, "cf_autopilot"))
 
     exit_code = miner.main(
@@ -153,7 +155,6 @@ def test_private_unknown_family_blocks_before_wallet(monkeypatch, tmp_path):
         warning=lambda *_args, **_kwargs: None,
     )
 
-    monkeypatch.setattr(miner, "_fetch_backend_families", lambda url: None)
     if hasattr(miner.bt, "Wallet"):
         monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
     else:
@@ -185,7 +186,7 @@ def test_private_public_family_blocks_with_guidance(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "public"}
+        miner, "_load_local_families", lambda: {"cf_search_and_rescue": "public"}
     )
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
 
@@ -221,7 +222,7 @@ def test_private_bad_zip_blocks_before_commit(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"}
+        miner, "_load_local_families", lambda: {"cf_search_and_rescue": "private"}
     )
     if hasattr(miner.bt, "Wallet"):
         monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
@@ -283,11 +284,10 @@ def test_private_valid_submission_commits(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"}
+        miner, "_load_local_families", lambda: {"cf_search_and_rescue": "private"}
     )
     monkeypatch.setattr(miner, "_backend_reachable", lambda url: True)
     monkeypatch.setattr(miner, "_submission_window", lambda url: {"open": True})
-    monkeypatch.setattr(miner, "_submission_status", lambda url, digest: None)
     monkeypatch.setattr(miner, "_upload_private_artifact", lambda *args, **kwargs: True)
     if hasattr(miner.bt, "Wallet"):
         monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
@@ -392,7 +392,7 @@ def test_private_unreachable_backend_blocks_before_commit(monkeypatch, tmp_path)
     )
 
     monkeypatch.setattr(
-        miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"}
+        miner, "_load_local_families", lambda: {"cf_search_and_rescue": "private"}
     )
     monkeypatch.setattr(miner, "_validate_artifact", lambda path, family_id: None)
     monkeypatch.setattr(miner, "_backend_reachable", lambda url: False)
@@ -477,7 +477,7 @@ def test_public_commit_is_refused_for_a_private_family(monkeypatch):
             raise AssertionError("wallet should not be constructed")
 
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
-    monkeypatch.setattr(miner, "_fetch_backend_families", lambda url: {"cf_autopilot": "private"})
+    monkeypatch.setattr(miner, "_load_local_families", lambda: {"cf_autopilot": "private"})
     monkeypatch.setattr(miner, "_check_public_manifest", lambda url: (None, "cf_autopilot"))
     if hasattr(miner.bt, "Wallet"):
         monkeypatch.setattr(miner.bt, "Wallet", FakeWallet)
@@ -506,7 +506,7 @@ def test_private_submit_refuses_during_the_freeze(monkeypatch, tmp_path):
             raise AssertionError("wallet should not be constructed")
 
     monkeypatch.setattr(miner.bt, "logging", fake_logging)
-    monkeypatch.setattr(miner, "_fetch_backend_families", lambda url: {"cf_search_and_rescue": "private"})
+    monkeypatch.setattr(miner, "_load_local_families", lambda: {"cf_search_and_rescue": "private"})
     monkeypatch.setattr(miner, "_backend_reachable", lambda url: True)
     monkeypatch.setattr(miner, "_submission_window", lambda url: {"open": False, "reopens_in_seconds": 3600})
     if hasattr(miner.bt, "Wallet"):
@@ -547,7 +547,7 @@ def _wallet(name="my cold", hotkey_str="my_hot"):
     )
 
 
-def _upload_env(monkeypatch, responses, *, status=None):
+def _upload_env(monkeypatch, responses):
     """Serve the queued replies in order, drop every sleep, and capture the logged lines."""
     calls = []
     logs = {"info": [], "error": []}
@@ -559,7 +559,6 @@ def _upload_env(monkeypatch, responses, *, status=None):
 
     monkeypatch.setattr(miner.httpx, "post", fake_post)
     monkeypatch.setattr(miner.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(miner, "_submission_status", lambda url, digest: status)
     monkeypatch.setattr(miner.bt, "logging", SimpleNamespace(
         info=lambda m, *_a, **_k: logs["info"].append(m),
         warning=lambda *_a, **_k: None,
@@ -574,7 +573,6 @@ def test_upload_retries_until_the_backend_has_scanned_the_commit(monkeypatch, tm
     calls, logs = _upload_env(
         monkeypatch,
         [_Response(404), _Response(503), _Response(200, {"stored": True})],
-        status={"registered": True, "awaiting_upload": True},
     )
     ok = miner._upload_private_artifact("http://backend.test", _make_submission(tmp_path), "a" * 64, _wallet())
     assert ok is True
@@ -583,11 +581,10 @@ def test_upload_retries_until_the_backend_has_scanned_the_commit(monkeypatch, tm
 
 
 def test_upload_stops_with_the_reason_when_the_commit_was_rejected(monkeypatch, tmp_path):
-    """A 404 the backend explains as a hash collision stops after one attempt, with that reason."""
+    """A 422 explains a hash collision and stops after one attempt."""
     calls, logs = _upload_env(
-        monkeypatch, [_Response(404)],
-        status={"registered": False, "reason_code": "HASH_COLLISION",
-                "detail": "digest already registered to another model"},
+        monkeypatch, [_Response(422, {"reason_code": "HASH_COLLISION",
+                "detail": "digest already registered to another model"})],
     )
     ok = miner._upload_private_artifact("http://backend.test", _make_submission(tmp_path), "a" * 64, _wallet())
     assert ok is False
@@ -608,7 +605,7 @@ def test_upload_shows_the_backend_message_on_a_rejection(monkeypatch, tmp_path):
 def test_upload_gives_up_with_the_resume_command(monkeypatch, tmp_path):
     """The command must carry the wallet that signed the commitment, or the retry signs as someone else."""
     monkeypatch.setattr(miner, "UPLOAD_RETRY_BUDGET_SEC", 0)
-    calls, logs = _upload_env(monkeypatch, [_Response(404)], status=None)
+    calls, logs = _upload_env(monkeypatch, [_Response(404)])
     artifact = _make_submission(tmp_path)
     ok = miner._upload_private_artifact("http://backend.test", artifact, "a" * 64, _wallet())
     assert ok is False
@@ -646,18 +643,9 @@ class _FakeBackend:
         return _Response(status, payload)
 
     def get(self, url, **kwargs):
-        """Answer health, family metadata, the submission window and digest status; anything else fails the run."""
+        """Answer only health so any closed backend route fails the run."""
         if url.endswith("/health"):
             return self._json(200, {"status": "ok"})
-        if url.endswith("/families/metadata"):
-            return self._json(200, {"challenge_families": {"cf_search_and_rescue": {"visibility": "private"}}})
-        if url.endswith("/miners/submission-window"):
-            return self._json(200, {"open": True, "reopens_in_seconds": 0})
-        if "/miners/models/" in url and url.endswith("/status"):
-            digest = url.rsplit("/", 2)[1]
-            if digest in self.registered:
-                return self._json(200, {"registered": True, "uid": 7, "awaiting_upload": True})
-            return self._json(200, {"registered": False, "reason_code": None, "detail": None})
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, *, headers, files, timeout):
@@ -777,3 +765,37 @@ def test_explain_rejection_reads_like_a_sentence():
     text = miner.explain_rejection("ONE_TASK_PER_HOTKEY", "hotkey already used in cf_autopilot")
     assert "register a new hotkey" in text and "cf_autopilot" in text
     assert miner.explain_rejection("something_new", "raw detail") == "raw detail"
+
+
+@pytest.mark.parametrize("epoch_end,duration", [
+    (miner.EPOCH_SWITCH_TS, miner.EPOCH_DURATION_SECONDS),
+    (miner.EPOCH_SWITCH_TS + miner.EPOCH_DURATION_LONG_SECONDS, miner.EPOCH_DURATION_LONG_SECONDS),
+])
+@pytest.mark.parametrize("offset,is_open", [
+    (-miner.EPOCH_FREEZE_SECONDS - 0.01, True),
+    (-miner.EPOCH_FREEZE_SECONDS, True),
+    (-miner.EPOCH_FREEZE_SECONDS + 0.01, False),
+    (-0.01, False), (0, True), (0.01, True),
+])
+def test_local_submission_window_boundaries(epoch_end, duration, offset, is_open):
+    """Freeze boundaries and rollover match both sides of the schedule switch."""
+    window = miner._submission_window(epoch_end + offset)
+    assert window["open"] is is_open
+    assert window["reopens_in_seconds"] == (0 if is_open else int(-offset))
+
+
+def test_families_use_local_schema_without_fallback_warning(monkeypatch):
+    """The bundled registry resolves families without any HTTP call or fallback warning."""
+    warnings = []
+    monkeypatch.setattr(miner.bt.logging, "warning", warnings.append)
+    assert "cf_search_and_rescue" in miner._known_families()
+    assert warnings == []
+
+
+@pytest.mark.parametrize("reason_code", ["new_reason", None])
+def test_upload_422_preserves_unknown_rejection_detail(monkeypatch, tmp_path, reason_code):
+    """New rejection codes still show the backend detail and never retry."""
+    calls, logs = _upload_env(monkeypatch, [_Response(422, {"detail": "Rejected archive", "reason_code": reason_code})])
+    assert not miner._upload_private_artifact("http://backend.test", _make_submission(tmp_path), "a" * 64, _wallet())
+    assert len(calls) == 1
+    assert any("Rejected archive" in line for line in logs["error"])

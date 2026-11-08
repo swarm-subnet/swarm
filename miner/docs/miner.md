@@ -300,7 +300,7 @@ What the command does, in order:
 
 1. **Packages** the source folder into `Submission/submission.zip` (skipped with `--artifact`).
 2. **Verifies** the archive locally: size caps, zip safety, policy contract, runtime smoke test, and every `requirements.txt` line against the whitelist. A failure stops here, before anything touches the chain.
-3. **Checks the backend**: it is reachable, the submission window is open, and this exact archive is not already registered.
+3. **Checks readiness**: the backend health endpoint is reachable and the local epoch schedule permits new commitments. Family validation uses the bundled schema.
 4. **Commits** the archive's SHA-256 and the family on-chain from your hotkey.
 5. **Uploads** the archive to the Swarm backend, signed by the same hotkey. The backend checks that the bytes hash to the committed digest and stores them in a private vault.
 
@@ -320,7 +320,7 @@ swarm model submit --artifact Submission/submission.zip --family-id cf_solar_pat
 | `--wallet.name` / `--wallet.hotkey` | The coldkey and the mining hotkey | `default` |
 | `--netuid` | Subnet netuid | `124` |
 | `--subtensor.network` | Network (finney, test) | `finney` |
-| `--backend-url` | Backend API URL | the public API |
+| `--backend-url` | Backend upload URL | the default Swarm upload service |
 | `--upload-only` | Re-run only the upload for a digest already committed | off |
 
 ### When something is refused
@@ -353,6 +353,10 @@ Your archive is never public while it competes. It travels from your machine to 
 - **Did not win**: the model stays in the backend's vault, forever. No repository, no download, no source. Your own copy is the only one outside the team.
 - **Took the crown**: the model is published, so that everyone can fork and improve it. The download opens on its leaderboard page, and the code and weights are pushed to the [champions repository](https://github.com/swarm-subnet/swarm-champions) under `<family>/<crown date>_uid-<uid>_<hash>/`, with the archive attached to a GitHub Release. Dethroned champions stay published.
 - **Took the crown in Swarm Sentinel**: the model stays in the vault, like a model that did not win. No download, no champions repository. The crown, the score and the payout work exactly as in every other family.
+
+Download the newest published champion for a family with `swarm champion --family-id cf_test_field`. Without a family, the command selects the highest-scoring champion across each family's newest release. Downloads use the public GitHub Releases API and verify `submission.zip` against the release body's `Archive SHA-256` value. Matching cached archives are reused. Set `GITHUB_TOKEN` if GitHub rate limits your requests. Benchmarking without `--model` uses the same release downloads.
+
+The backend API is private. Miners use only its health check and signed archive upload; browse live data on [swarm124.com](https://swarm124.com). A rejected commitment is reported by the upload response and is not retried.
 
 Forking and improving a published champion is allowed and encouraged. Re-submitting a champion with only cosmetic changes is refused at upload, and a real change still has to clear the [crowning floor](#becoming-champion).
 
@@ -424,7 +428,7 @@ A transient timeout or RPC-transport failure is retried once for that seed, subj
 
 Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds. In Swarm Sentinel and Swarm Test Field a validator does not build the world from the 32-bit list seed: it draws it from a 128-bit world seed that only the same key gives, so a model cannot find which seed it is flying by trying them all. Once the key is published those worlds rebuild too. Your local benchmark is unchanged: it builds each world from the seed you give it.
 
-At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` refuses to commit in that window and tells you when it reopens.
+At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` computes that window locally from the shared epoch schedule, refuses to commit, and tells you when it reopens. Keep your system clock accurate.
 
 ### Key Numbers
 
