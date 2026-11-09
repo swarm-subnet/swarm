@@ -792,6 +792,31 @@ def test_families_use_local_schema_without_fallback_warning(monkeypatch):
     assert warnings == []
 
 
+class _TextResponse(_Response):
+    """An httpx-shaped reply whose body is plain text, not JSON."""
+
+    def __init__(self, status_code, text):
+        """Keep the status code and the raw text body."""
+        super().__init__(status_code)
+        self.text = text
+
+    def json(self):
+        """Fail the way httpx does on a body that is not JSON."""
+        raise ValueError("not JSON")
+
+
+@pytest.mark.parametrize("response, shown", [
+    (_TextResponse(422, "Unprocessable upstream"), "Unprocessable upstream"),
+    (_Response(422, {"detail": [{"loc": ["body", "file"], "msg": "field required"}]}), "field required"),
+])
+def test_upload_422_without_a_reason_code_still_explains_and_stops(monkeypatch, tmp_path, response, shown):
+    """A 422 that is plain text or a validation list is reported, not raised, and never retried."""
+    calls, logs = _upload_env(monkeypatch, [response])
+    assert not miner._upload_private_artifact("http://backend.test", _make_submission(tmp_path), "a" * 64, _wallet())
+    assert len(calls) == 1
+    assert any(shown in line for line in logs["error"])
+
+
 @pytest.mark.parametrize("reason_code", ["new_reason", None])
 def test_upload_422_preserves_unknown_rejection_detail(monkeypatch, tmp_path, reason_code):
     """New rejection codes still show the backend detail and never retry."""

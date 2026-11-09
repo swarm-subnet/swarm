@@ -304,6 +304,18 @@ def _response_detail(response) -> str:
     return response.text.strip()
 
 
+def _rejection_reason(response) -> str:
+    """Why a 422 upload reply turned the commitment away, explained when it names a reason code."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("reason_code"), str):
+        detail = payload.get("detail")
+        return explain_rejection(payload["reason_code"], detail if isinstance(detail, str) else None)
+    return _response_detail(response)
+
+
 def _resume_hint(family_id: str, artifact_path: str, wallet, backend_url: str) -> str:
     """The exact command that retries the upload, carrying the wallet that signed the commitment."""
     parts = [
@@ -369,11 +381,7 @@ def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, 
                 bt.logging.info(f"Artifact uploaded to the private vault: {response.json()}")
                 return True
             if response.status_code == 422:
-                rejection = response.json()
-                bt.logging.error(
-                    "The backend rejected the commitment: "
-                    + explain_rejection(rejection.get("reason_code"), rejection.get("detail"))
-                )
+                bt.logging.error("The backend rejected the commitment: " + _rejection_reason(response))
                 return False
             if response.status_code == 404:
                 reason = "backend has not scanned the commitment yet (it scans every 3 minutes)"
