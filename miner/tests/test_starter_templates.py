@@ -33,7 +33,7 @@ import pytest
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "src" / "submission_template"
 
 
-@pytest.mark.parametrize("name", ["drone_agent.py", "sentinel_drone_agent.py"])
+@pytest.mark.parametrize("name", ["sentinel_drone_agent.py"])
 def test_starter_imports_on_its_own(name, tmp_path):
     """A miner copies the file out of the package, so it cannot rely on it.
 
@@ -64,16 +64,6 @@ def _load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.DroneFlightController()
-
-
-def test_sar_starter_returns_the_six_element_action_its_family_declares():
-    """[dir_x, dir_y, dir_z, speed, yaw, rgb_request], speed within [0, 1]."""
-    controller = _load("drone_agent.py")
-    action = np.asarray(
-        controller.act({"state": np.zeros(64, dtype=np.float32)}), dtype=np.float32
-    )
-    assert action.shape == (6,)
-    assert 0.0 <= action[3] <= 1.0
 
 
 def _sentinel_observation(phase, xy=(0.0, 0.0), time_left=390.0, fence=None):

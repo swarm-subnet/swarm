@@ -15,7 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""The swarm search-and-rescue family: many drones, one hidden victim, one shared find."""
+"""The swarm search-and-rescue family: many drones, one hidden victim, one shared find.
+
+Completed: no validator serves it and it pays nothing; the live family is cf_solar_patrol.
+Guide: docs/families/completed/swarm_sar.md.
+"""
 
 from __future__ import annotations
 
