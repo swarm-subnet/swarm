@@ -59,16 +59,14 @@ source miner_env/bin/activate
 
 ## Challenge Families
 
-Swarm runs **three active challenge families**, all paying. Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are completed, with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **one active challenge family**, Swarm Sentinel, and it carries the whole emission. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed, with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Search and Rescue | `cf_search_and_rescue` | 1 | City, Open, Mountain, Village, Warehouse, Forest | 5% | [families/search_and_rescue.md](../../docs/families/search_and_rescue.md) |
-| Swarm Search and Rescue | `cf_swarm_sar` | 2–8 | City, Open, Mountain, Village, Forest | 10% | [families/swarm_sar.md](../../docs/families/swarm_sar.md) |
-| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 85% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
+| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 100% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/completed/interceptor.md](../../docs/families/completed/interceptor.md) |
 
-The swarm families fly 2–8 drones per seed, all under one policy. Each active family holds a fixed slice of subnet emissions, and the three active slices add up to the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md). A slice still burns if its own family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+Swarm Sentinel's slice is the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md), [Search and Rescue](../../docs/families/completed/search_and_rescue.md), [Swarm Search and Rescue](../../docs/families/completed/swarm_sar.md). The slice still burns if the family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -98,21 +96,14 @@ The full miner workflow, from first install to competing on the leaderboard:
 
 ### Start from the Template
 
-```bash
-mkdir -p my_agent/
-cp miner/src/submission_template/drone_agent.py my_agent/
-cd my_agent/
-# Edit drone_agent.py with your controller
-```
-
-For Swarm Sentinel, copy its starter to the packaged entry point. It flies a whole patrol (take-off, a sweep of the park, return home, landing) from the state and the site map:
+Copy the Swarm Sentinel starter to the packaged entry point. It flies a whole patrol (take-off, a sweep of the park, return home, landing) from the state and the site map:
 
 ```bash
 mkdir -p my_agent/
 cp miner/src/submission_template/sentinel_drone_agent.py my_agent/drone_agent.py
 ```
 
-Test a Swarm Sentinel agent with its required family ID:
+Test it with the family ID:
 
 ```bash
 swarm model test --source my_agent/ --family-id cf_solar_patrol
@@ -130,10 +121,8 @@ class DroneFlightController:
         self.model = PPO.load("./my_model.zip")
 
     def act(self, observation):
-        # observation: dict with "depth" (256,256,1), "rgb" (256,256,3) and "state" (N,)
-        # Return action array [dir_x, dir_y, dir_z, speed, yaw, rgb_request]
-        # (shapes shown are the Search-and-Rescue contract; Swarm Sentinel sends rgb, thermal, zoom,
-        # state and site_map and takes 24 values -- see families/<family>.md for yours)
+        # observation: dict with "rgb", "thermal", "zoom", "state" and "site_map"
+        # Return the 24 action values (see Observations & Actions)
         action, _ = self.model.predict(observation, deterministic=True)
         return action
 
@@ -169,37 +158,26 @@ class DroneFlightController:
 
 ## Observations & Actions
 
-The interface below is the **Search and Rescue** one. Each family defines its own observation/action contract. Check the [family guide](#challenge-families) for the family you target before training.
+The interface below is Swarm Sentinel's. The [Swarm Sentinel guide](../../docs/families/solar_patrol.md#model-io) has every field, every action and the limits on each.
 
 ### Observation Space
 
 | Field | Shape | Description |
 |-------|-------|-------------|
-| `depth` | (256, 256, 1) | Normalized depth map (0.5 m – 30 m range) |
-| `rgb` | (256, 256, 3) | On-demand colour frame in [0,1]; all zeros unless your previous action requested it (max 40 requests per episode) |
-| `state` | (N,) | Position, velocity, orientation, action history, altitude, search area direction |
-
-The search clue is an offset sampled inside a **30 m** circle around the victim (the swarm SAR family shares one clue over a disk that scales with team size: 80·√(n/8) m, i.e. 40 m for 2 drones up to 80 m for 8). The drone must use its depth sensor to find the humanoid victim on the ground, then hover steadily overhead.
-
-For Swarm Sentinel, the contract is `rgb` (480, 640, 3), `thermal` (512, 640, 1), `zoom` (480, 640, 3), a 31-float `state` and a 660-float `site_map` sent on the first observation only, with 24 action values: flight sticks, gimbal tilt, camera and zoom controls, reports and the dock's buttons. It decides 10 times a second for up to 390 seconds. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md) for the full contract.
+| `rgb` | (480, 640, 3) | Colour camera, in [0, 1] |
+| `thermal` | (512, 640, 1) | Thermal camera, in [0, 1] |
+| `zoom` | (480, 640, 3) | Zoom lens, in [0, 1] |
+| `state` | (31,) | Position, heading, velocity, height, gimbal tilt, time and battery left, wind, laser range, flight phase and camera status |
+| `site_map` | (660,) | The fence, the flight limit, the panel tables and the buildings; sent on the first observation only |
 
 ### Action Space
 
-| Index | Name | Range | Description |
-|-------|------|-------|-------------|
-| 0 | dir_x | [-1, 1] | Direction X component |
-| 1 | dir_y | [-1, 1] | Direction Y component |
-| 2 | dir_z | [-1, 1] | Direction Z component |
-| 3 | speed | [0, 1] | Thrust multiplier |
-| 4 | yaw | [-1, 1] | Target yaw angle (maps to [-π, π]) |
-| 5 | rgb_request | [0, 1] | Set above 0.5 to receive a colour frame in the next observation's `rgb` (max 40 per episode) |
+24 values: flight sticks, gimbal tilt, camera and zoom controls, reports and the dock's buttons. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#actions) for the layout.
 
 **Constraints:**
 
-- Max velocity: 3.0 m/s
-- Max yaw rate: 3.141 rad/s (180°/s)
-- Simulation rate: 50 Hz (dt = 1/50)
-- Episode horizon: 60 seconds
+- Decision rate: 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz
+- Episode horizon: 390 seconds (up to 3,900 `act()` calls)
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -234,7 +212,7 @@ Verifies Python version, Docker, required dependencies, writable directories, an
 ### Test Your Agent
 
 ```bash
-swarm model test --source my_agent/ --family-id cf_search_and_rescue
+swarm model test --source my_agent/ --family-id cf_solar_patrol
 ```
 
 Packages the source against the selected family's policy contract, applies the submission ZIP structure/safety checks, and runs the local runtime smoke test.
@@ -242,7 +220,7 @@ Packages the source against the selected family's policy contract, applies the s
 ### Package Your Agent
 
 ```bash
-swarm model package --source my_agent/ --family-id cf_search_and_rescue
+swarm model package --source my_agent/ --family-id cf_solar_patrol
 ```
 
 Bundles your `drone_agent.py`, model files, optional `requirements.txt`, and a generated `swarm_policy_contract.json` into `Submission/submission.zip` (default path). Omit `--family-id` in a terminal and it prompts you to pick the family; it is required (and errors without it) for non-interactive runs.
@@ -265,7 +243,7 @@ swarm benchmark --model Submission/submission.zip --workers 4
 swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 ```
 
-The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds per family (2,000 for Swarm Sentinel). Pass `--family-id` to benchmark a family other than Search and Rescue, the default.
+The `--seeds-per-group` flag controls how many seeds run per environment type. Validators run 1,000 seeds per family (2,000 for Swarm Sentinel). Without `--family-id` it runs Swarm Sentinel, the default.
 
 ### View Results
 
@@ -276,7 +254,7 @@ swarm report
 ### Submit
 
 ```bash
-swarm model submit --source my_agent/ --family-id cf_search_and_rescue \
+swarm model submit --source my_agent/ --family-id cf_solar_patrol \
   --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -302,7 +280,7 @@ source miner_env/bin/activate
 
 swarm model submit \
      --source my_agent/ \
-     --family-id cf_search_and_rescue \
+     --family-id cf_solar_patrol \
      --wallet.name my_cold \
      --wallet.hotkey my_hot
 ```
@@ -310,7 +288,7 @@ swarm model submit \
 Already have a packaged archive? Pass it instead of a source folder:
 
 ```bash
-swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue \
+swarm model submit --artifact Submission/submission.zip --family-id cf_solar_patrol \
      --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -325,7 +303,7 @@ What the command does, in order:
 The upload waits for the backend's chain scanner (it runs every 3 minutes) and retries with backoff for up to 30 minutes. If it still cannot land, the command prints the exact `--upload-only` line to run later; the commitment is already on-chain and holds for 6 hours, and a late upload of the same digest is always accepted:
 
 ```bash
-swarm model submit --artifact Submission/submission.zip --family-id cf_search_and_rescue --upload-only \
+swarm model submit --artifact Submission/submission.zip --family-id cf_solar_patrol --upload-only \
      --wallet.name my_cold --wallet.hotkey my_hot
 ```
 
@@ -380,38 +358,19 @@ Forking and improving a published champion is allowed and encouraged. Re-submitt
 
 ## Scoring
 
-Per-seed reward for most families:
+Swarm Sentinel's score per seed:
 
 ```text
-score = 0.45 × success + 0.45 × time + 0.10 × safety
+seed = 0.70 × detection + 0.20 × coverage + 0.10 × flight
 ```
 
-| Term | Weight | Description |
-|------|--------|-------------|
-| **Success** | 0.45 | 1.0 if the mission objective is met, 0.0 otherwise |
-| **Time** | 0.45 | 1.0 if within target time, decays to 0.0 at the horizon |
-| **Safety** | 0.10 | 1.0 if min clearance ≥ 1.0 m (0.6 m in Forest), 0.0 at ≤ 0.2 m, linear between |
+Across the epoch, every missed intruder or false alarm then turns 5 of the model's best seeds to 0. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#scoring).
 
-Swarm Sentinel has its own score: 0.70 detection + 0.20 coverage + 0.10 flight per seed, and every missed intruder or false alarm then turns 5 of the model's best seeds to 0. See the [Swarm Sentinel guide](../../docs/families/solar_patrol.md#scoring).
+A seed scores **0** when the drone never takes off, or comes closer than 5 m to an intruder inside the fence while out of the dock.
 
-Non-success failures (collision, timeout, etc.) score **0.01** participation for legitimate models; evaluator errors and illegitimate models score 0.0.
-
-Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (1,000 seeds; 2,000 for Swarm Sentinel, after its ×5 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
+Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (2,000 seeds for Swarm Sentinel, after its ×5 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
 Every validator flies the same seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
-
-### CONFIRMED Requirements (Search and Rescue)
-
-All four conditions must hold continuously for 2.0 seconds:
-
-| Condition | Threshold |
-|-----------|-----------|
-| Drone speed | < 1.0 m/s |
-| Horizontal distance to victim | ≤ 2.0 m |
-| Height above victim's AABB top | 2.0 – 4.0 m |
-| Distance from victim center | ≥ 0.8 m |
-
-The speed, horizontal-distance, and height-band bounds get a 0.1 m / 0.1 m·s⁻¹ hysteresis grace once the predicate is already active; the 0.8 m no-touch sphere gets no grace.
 
 ### Becoming Champion
 

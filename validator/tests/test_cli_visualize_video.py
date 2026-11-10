@@ -58,14 +58,14 @@ def test_visualize_dispatches_with_resolved_type_and_family(monkeypatch):
     assert captured["argv"][:4] == ["--type", "2", "--family-id", "cf_interceptor"]
 
 
-def test_visualize_defaults_family_to_search_and_rescue(monkeypatch):
-    """With no family named on the command line, the viewer is still told a live one outright: cf_search_and_rescue."""
+def test_visualize_names_a_family_outright_when_none_is_given(monkeypatch):
+    """With no family named, a city map is handed to its first registered flyer, cf_autopilot, by name."""
     captured: dict = {}
     monkeypatch.setattr(visualize_map, "main", lambda argv: captured.setdefault("argv", argv))
 
     assert cli.main(["visualize", "--type", "1"]) == 0
     assert "--family-id" in captured["argv"]
-    assert captured["argv"][captured["argv"].index("--family-id") + 1] == "cf_search_and_rescue"
+    assert captured["argv"][captured["argv"].index("--family-id") + 1] == "cf_autopilot"
 
 
 def test_visualize_requires_type_seed_or_summary(monkeypatch):
@@ -182,7 +182,7 @@ def test_solar_parsers_accept_type_eight():
 
 
 def test_visualize_without_a_family_opens_the_one_that_flies_the_map(tmp_path, monkeypatch):
-    """With no family named, map 8 and a failed type-8 seed open Swarm Sentinel; a rescue map keeps the default."""
+    """With no family named, map 8 and a failed type-8 seed open Swarm Sentinel; an open map opens its first flyer."""
     opened = []
     monkeypatch.setattr(visualize_map, "main", lambda argv: opened.append(argv[argv.index("--family-id") + 1]))
     summary = tmp_path / "summary.json"
@@ -193,7 +193,7 @@ def test_visualize_without_a_family_opens_the_one_that_flies_the_map(tmp_path, m
     assert cli.main(["visualize", "--type", "8"]) == 0
     assert cli.main(["visualize", "--summary-json", str(summary), "--failed-index", "1"]) == 0
     assert cli.main(["visualize", "--type", "2"]) == 0
-    assert opened == ["cf_solar_patrol", "cf_solar_patrol", "cf_search_and_rescue"]
+    assert opened == ["cf_solar_patrol", "cf_solar_patrol", "cf_autopilot"]
 
 
 def test_video_without_a_family_films_the_one_that_flies_the_map(tmp_path, monkeypatch):

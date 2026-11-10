@@ -6,14 +6,12 @@ Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🎯 What You Evaluate
 
-Swarm runs **three active challenge families**; Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+Swarm runs **one active challenge family**, Swarm Sentinel; Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Search and Rescue](../../docs/families/search_and_rescue.md) | `cf_search_and_rescue` | One drone finds a downed victim by depth camera and holds a confirmation hover overhead | 5% |
-| [Swarm Search and Rescue](../../docs/families/swarm_sar.md) | `cf_swarm_sar` | One policy sweeps the map with 2–8 drones until any drone confirms the victim | 10% |
+| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 100% |
 | [Interceptor](../../docs/families/completed/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
-| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 85% |
 
 Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB.
 

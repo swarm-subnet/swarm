@@ -104,7 +104,7 @@ Common CLI workflow:
 
 ```bash
 swarm doctor
-swarm model test --source my_model/ --family-id cf_search_and_rescue
+swarm model test --source my_model/ --family-id cf_solar_patrol
 swarm model package --source my_model/
 swarm model verify --model Submission/submission.zip
 swarm benchmark --model Submission/submission.zip --workers 4

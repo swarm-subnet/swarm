@@ -172,7 +172,7 @@ def test_challenge_family_registry_contains_canonical_metadata():
     ]
 
     assert sar["display"]["short_label"] == "SAR"
-    assert sar["family_state"] == "active"
+    assert sar["family_state"] == "completed"
     assert sar["market_vertical_ids"] == ["mv_public_safety"]
     assert registry["score_schemas"]["ss_search_and_rescue_v1"]["primary_metric"] == (
         "mission_score"
@@ -190,18 +190,16 @@ def test_challenge_family_registry_contains_canonical_metadata():
 
 
 def test_retired_families_are_closed_and_unpaid():
-    """Autopilot, Swarm Autopilot and Office Interceptor are completed with archived emissions; only the three paying families stay open."""
-    for family_id in ("cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office"):
+    """The families Swarm Sentinel replaced, both rescue families included, are completed with archived emissions; only Sentinel stays open."""
+    for family_id in (
+        "cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_search_and_rescue", "cf_swarm_sar",
+    ):
         definition = get_challenge_family_definition(family_id)
         assert definition["family_state"] == "completed"
         assert definition["emissions_state"] == "archived"
         assert definition["emission_allocation"] == 0.0
-    assert OPEN_CHALLENGE_FAMILY_IDS == (
-        "cf_search_and_rescue",
-        "cf_solar_patrol",
-        "cf_swarm_sar",
-    )
-    assert DEFAULT_CLI_FAMILY_ID in OPEN_CHALLENGE_FAMILY_IDS
+    assert OPEN_CHALLENGE_FAMILY_IDS == ("cf_solar_patrol",)
+    assert DEFAULT_CLI_FAMILY_ID == "cf_solar_patrol"
 
 def test_get_challenge_family_definition_rejects_unknown_family():
     """An id outside the registry raises UnknownChallengeFamilyError, never a silent default."""

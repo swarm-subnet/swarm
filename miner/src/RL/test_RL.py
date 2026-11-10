@@ -35,10 +35,10 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from swarm.challenge_families import build_random_task
 from swarm.constants import SIM_DT
 from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID
 from swarm.validator.docker.docker_evaluator import DockerSecureEvaluator
-from swarm.validator.task_gen import random_task
 
 LOGGER = logging.getLogger("swarm.rl.test")
 
@@ -263,7 +263,7 @@ async def _evaluate_seeds(
     task_infos: List[Dict[str, Any]] = []
     LOGGER.info("Generating %d task(s)", len(seeds))
     for i, map_seed in enumerate(seeds):
-        task = random_task(sim_dt=SIM_DT, seed=map_seed, family_id=family_id)
+        task = build_random_task(sim_dt=SIM_DT, seed=map_seed, family_id=family_id)
         task_info = _task_meta(task)
         tasks.append(task)
         task_infos.append(task_info)

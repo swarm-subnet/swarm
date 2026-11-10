@@ -17,7 +17,7 @@ Everything the model gets is what the real drone gives through its dock: the sam
 | Drones | 1 |
 | Decision rate | 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz |
 | Episode horizon | 390 s (up to 3,900 `act()` calls) |
-| Emission allocation | 0.85 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 1.00 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
 | Benchmark | 2,000 seeds per epoch, one solar park, scored with the cross-seed ×5 rule |
 | Champion | Private: crowned and paid like every other family, but never published or downloadable (see [Private Until Crowned](../../miner/docs/miner.md#private-until-crowned)) |
 
@@ -357,7 +357,6 @@ swarm benchmark --model Submission/submission.zip --family-id cf_solar_patrol --
 - `--seeds-per-group` sets how many seeds the benchmark flies (default 3). Every seed is first flown once by a scripted reference pilot that checks the seed can be done; the verdict is cached, so a seed costs this check only the first time.
 - To fly one exact seed, pass `--seed-file seeds.json` with `{"schema_version": "challenge_family_seed_file.v1", "family_id": "cf_solar_patrol", "type_seeds": {"type8_solar": [1002]}}`.
 - On a fast desktop CPU the starter's patrol, about 220 s of flight, takes 42 to 50 s to run, and a patrol that flies longer takes longer. The seed check adds about 10 s of CPU the first time a seed is flown, and the first run measures the host's speed once, under two minutes. A worker grows to about 3,200 MiB of memory: keep `--workers` low on a laptop.
-- Always pass `--family-id cf_solar_patrol`: without it, `swarm benchmark` runs Search and Rescue.
 
 To watch a patrol, film it with `swarm video` (it needs a video writer the install does not include), or look around a park with `swarm visualize`:
 

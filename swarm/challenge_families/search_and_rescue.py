@@ -15,7 +15,11 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Search and rescue family: hover over the victim without touching it, and the score that follows."""
+"""Search and rescue family: hover over the victim without touching it, and the score that follows.
+
+Completed: no validator serves it and it pays nothing; the live family is cf_solar_patrol.
+Guide: docs/families/completed/search_and_rescue.md.
+"""
 
 from __future__ import annotations
 

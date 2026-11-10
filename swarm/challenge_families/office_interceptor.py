@@ -19,7 +19,7 @@
 
 No validator serves it, nobody can submit to it and it pays nothing. The code stays only so its published
 champions and past benchmarks can still be re-run: do not build new work on it.
-The live families are cf_solar_patrol, cf_swarm_sar and cf_search_and_rescue.
+The live family is cf_solar_patrol.
 Guide: docs/families/completed/interceptor_office.md.
 
 Office interceptor challenge family (indoor Tello, body-frame RC actions).

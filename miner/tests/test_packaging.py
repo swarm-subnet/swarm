@@ -33,7 +33,6 @@ MINER_DATA_FILES = [
 MINER_IN_THE_WHEEL = [
     *MINER_DATA_FILES,
     "miner/src/miner.py",
-    "miner/src/submission_template/drone_agent.py",
     "miner/src/submission_template/sentinel_drone_agent.py",
 ]
 

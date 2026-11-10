@@ -150,8 +150,6 @@ The values are `floor_max = 0.015` and `floor_min = 0.005`, and every family car
 
 | Family | floor_max (champion ≤ 0.5) | floor_min (champion → 1.0) |
 |---|---|---|
-| Search-and-Rescue | 0.015 | 0.005 |
-| Swarm SAR | 0.015 | 0.005 |
 | Swarm Sentinel | 0.015 | 0.005 |
 
 The registry can still override them per family; nothing does today.
@@ -183,13 +181,11 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Swarm Sentinel (`cf_solar_patrol`) | 0.85 |
-| Swarm SAR | 0.10 |
-| Search-and-Rescue | 0.05 |
+| Swarm Sentinel (`cf_solar_patrol`) | 1.00 |
 | Interceptor | 0.00 (historical 0.30) |
-| Autopilot, Swarm Autopilot, Office Interceptor | 0.00 (completed) |
+| Autopilot, Swarm Autopilot, Office Interceptor, Search-and-Rescue, Swarm SAR | 0.00 (completed) |
 
-Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The table above sums to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
+Allocations are **absolute**, never normalised: each family pays out exactly its own slice. Swarm Sentinel holds the whole `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
 ```text
 emissions state                              weight
@@ -198,7 +194,7 @@ active / saturated / incubating / regression   1.0
 archived                                       0.0   (out of payout)
 ```
 
-Three families are currently `active`: Swarm Sentinel, Swarm SAR and Search-and-Rescue. Interceptor, Autopilot, Swarm Autopilot and Office Interceptor are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
+One family is currently `active`: Swarm Sentinel. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search-and-Rescue and Swarm SAR are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
 ### Unpaid slices burn
 
@@ -209,7 +205,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: Swarm SAR and Search-and-Rescue are payable and Swarm Sentinel has no king yet. The two keep exactly their own allocations (`0.10 + 0.05 = 0.15`) and Swarm Sentinel's `0.85` burns. The moment Swarm Sentinel crowns its first king, its slice starts paying. If **no** family is payable, everything burns.
+Example: when Swarm Sentinel has no payable king, its whole `1.00` slice burns. The moment it crowns a king, its slice pays again.
 
 <a id="who-a-seat-can-pay"></a>
 

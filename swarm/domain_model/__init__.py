@@ -307,7 +307,7 @@ OPEN_CHALLENGE_FAMILY_IDS = tuple(
     if _REGISTRY["challenge_families"][family_id]["family_state"] not in ("completed", "archived")
 )
 # Commands a person runs default to a live family; untagged data from before families stays Autopilot's.
-DEFAULT_CLI_FAMILY_ID = "cf_search_and_rescue"
+DEFAULT_CLI_FAMILY_ID = "cf_solar_patrol"
 
 __all__ = [
     "BENCHMARK_GROUP_ORDER",
