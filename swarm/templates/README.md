@@ -34,7 +34,7 @@
 <https://github.com/user-attachments/assets/ee579a55-5eb2-4f6c-83db-4b1a223b9bb2>
 
 <p align="center">
-  <sub><b>Search and Rescue.</b> One of three missions on the Swarm benchmark: teaching a drone to find people.</sub>
+  <sub><b>Search and Rescue.</b> A completed mission on the Swarm benchmark: teaching a drone to find people.</sub>
 </p>
 
 ---
@@ -69,8 +69,8 @@ uv pip install -e .
 
 ```bash
 python -m swarm.benchmark.engine \
-  --model /path/to/this-repo/artifacts/cf_search_and_rescue/submission.zip \
-  --family-id cf_search_and_rescue \
+  --model /path/to/this-repo/artifacts/cf_solar_patrol/submission.zip \
+  --family-id cf_solar_patrol \
   --seeds-per-group 3 --workers 4
 ```
 
@@ -104,13 +104,13 @@ The policy reads a depth image and its own flight state 50 times a second and an
 
 ## Challenge Families
 
-The benchmark runs **three challenge families**. Each is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
+The benchmark runs **one open challenge family**, Swarm Sentinel, and it carries the whole emission. Each family is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
 
 | Family | ID | Mission | Emissions |
 |--------|----|---------|:--------:|
-| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 85% |
-| [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | 10% |
-| [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | 5% |
+| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 100% |
+| [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | Completed |
+| [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | Completed |
 
 Each guide spells out the full contract: observation layout, action bounds, maps, episode rules, and scoring.
 
