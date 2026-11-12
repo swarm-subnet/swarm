@@ -59,6 +59,8 @@ from swarm import __version__ as CODE_VERSION
 from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, get_challenge_family, list_registered_challenge_families
 from swarm.config import BackendApiSettings
 from swarm.constants import (
+    BACKEND_CLIENT_CLOSE_TIMEOUT_SEC,
+    BACKEND_CLIENT_RESET_SEC,
     BENCHMARK_VERSION,
     DUPLICATE_SESSION_RETRY_SEC,
     DUPLICATE_SESSION_WAIT_SEC,
@@ -177,6 +179,16 @@ def _scrub_url(text: str) -> str:
     return re.sub(r"https?://[^\s'\"]+", "<backend>", str(text))
 
 
+def _describe(exc: BaseException) -> str:
+    """Name an exception by its type and scrubbed message, since httpx timeouts often carry no message."""
+    message = _scrub_url(exc)
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+# The failure clock; tests replace it so the five-minute windows pass instantly.
+_monotonic = time.monotonic
+
+
 class BackendApiClient:
     """HTTP client for backend API communication with signature authentication."""
 
@@ -195,7 +207,9 @@ class BackendApiClient:
         self.timeout = timeout
         self.wallet = wallet
         self.session_id = uuid.uuid4().hex
-        self.client = httpx.AsyncClient(timeout=timeout)
+        self.client = self._open_http_client()
+        self._failing_since: Optional[float] = None
+        self._client_replaced_at: Optional[float] = None
         self._whitelist_warned = False
         self._upgrade_warned = False
         self._duplicate_instance_logged = False
@@ -231,6 +245,52 @@ class BackendApiClient:
     async def close(self) -> None:
         """Close HTTP client."""
         await self.client.aclose()
+
+    def _open_http_client(self) -> httpx.AsyncClient:
+        """Open a fresh HTTP client, with its own connection pool, at the client's timeout."""
+        return httpx.AsyncClient(timeout=self.timeout)
+
+    def _pool_state(self) -> str:
+        """Describe the connection pool's active and queued requests and its connections."""
+        pool = getattr(getattr(self.client, "_transport", None), "_pool", None)
+        return repr(pool) if pool is not None else "pool state unavailable"
+
+    def _note_reply(self) -> None:
+        """Record that the backend answered, which ends any run of failed calls."""
+        self._failing_since = None
+        self._client_replaced_at = None
+
+    async def _note_transport_failure(self, endpoint: str, exc: BaseException) -> None:
+        """Log a call that got no reply; replace the HTTP client once such failures last
+        BACKEND_CLIENT_RESET_SEC, and exit if the new client fails as long, so the supervisor restarts us."""
+        bt.logging.warning(
+            f"Backend transport error ({endpoint}): {_describe(exc)}; {self._pool_state()}"
+        )
+        now = _monotonic()
+        if self._failing_since is None:
+            self._failing_since = now
+        elif self._client_replaced_at is None:
+            if now - self._failing_since >= BACKEND_CLIENT_RESET_SEC:
+                await self._replace_http_client(now)
+        elif now - self._client_replaced_at >= BACKEND_CLIENT_RESET_SEC:
+            bt.logging.error(
+                f"Backend calls still fail {BACKEND_CLIENT_RESET_SEC:.0f}s after replacing the HTTP client; "
+                "exiting so the validator is restarted"
+            )
+            raise SystemExit(1)
+
+    async def _replace_http_client(self, now: float) -> None:
+        """Swap in a fresh HTTP client and close the old one, giving up on a close that hangs."""
+        stale = self.client
+        self.client = self._open_http_client()
+        self._client_replaced_at = now
+        bt.logging.warning(
+            f"Backend calls have failed for {BACKEND_CLIENT_RESET_SEC:.0f}s; replaced the backend HTTP client"
+        )
+        try:
+            await asyncio.wait_for(stale.aclose(), timeout=BACKEND_CLIENT_CLOSE_TIMEOUT_SEC)
+        except Exception as exc:
+            bt.logging.warning(f"Closing the replaced backend HTTP client failed: {_describe(exc)}")
 
     def _sign_request(self, method: str, endpoint: str, body: bytes) -> Dict[str, str]:
         """Create authentication headers with signed request."""
@@ -319,10 +379,11 @@ class BackendApiClient:
                 f"{self.base_url}{endpoint}", content=body, headers=headers
             )
         except _TRANSPORT_EXCEPTIONS as e:
-            bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
+            await self._note_transport_failure(endpoint, e)
             raise BackendTransportError(
-                f"transport failure on {endpoint}: {_scrub_url(e)}"
+                f"transport failure on {endpoint}: {_describe(e)}"
             ) from e
+        self._note_reply()
         await self._fence_duplicate_instance(resp)
         return self._read_reply(endpoint, resp)
 
@@ -338,10 +399,11 @@ class BackendApiClient:
         try:
             resp = await self.client.get(f"{self.base_url}{endpoint}", headers=headers)
         except _TRANSPORT_EXCEPTIONS as e:
-            bt.logging.warning(f"Backend transport error ({endpoint}): {_scrub_url(e)}")
+            await self._note_transport_failure(endpoint, e)
             raise BackendTransportError(
-                f"transport failure on {endpoint}: {_scrub_url(e)}"
+                f"transport failure on {endpoint}: {_describe(e)}"
             ) from e
+        self._note_reply()
         await self._fence_duplicate_instance(resp)
         return self._read_reply(endpoint, resp)
 
@@ -659,10 +721,12 @@ class BackendApiClient:
                 f"{self.base_url}{endpoint}", headers=headers,
             )
         except _TRANSPORT_EXCEPTIONS as exc:
+            await self._note_transport_failure(endpoint, exc)
             raise BackendTransportError(
-                f"transport failure on {endpoint}: {_scrub_url(exc)}"
+                f"transport failure on {endpoint}: {_describe(exc)}"
             ) from exc
 
+        self._note_reply()
         await self._fence_duplicate_instance(resp)
 
         if resp.status_code in (404, 405):
@@ -712,6 +776,7 @@ class BackendApiClient:
             async with self.client.stream(
                 "GET", f"{self.base_url}{endpoint}", headers=headers,
             ) as resp:
+                self._note_reply()
                 await self._fence_duplicate_instance(resp)
                 if resp.status_code != 200:
                     bt.logging.warning(
@@ -736,8 +801,8 @@ class BackendApiClient:
                     return False
             return True
         except _TRANSPORT_EXCEPTIONS as exc:
-            bt.logging.warning(f"private-artifact transport error: {_scrub_url(exc)}")
             dest.unlink(missing_ok=True)
+            await self._note_transport_failure(endpoint, exc)
             return False
 
     async def submit_task_result(
@@ -820,8 +885,9 @@ class BackendApiClient:
                     else:
                         buffer.append(line)
         except _TRANSPORT_EXCEPTIONS as exc:
+            # Not counted toward the client swap: the stream stayed up while every other call was jammed.
             raise BackendTransportError(
-                f"transport failure on {endpoint}: {_scrub_url(exc)}"
+                f"transport failure on {endpoint}: {_describe(exc)}"
             ) from exc
 
 
