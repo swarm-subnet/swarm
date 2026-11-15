@@ -1528,6 +1528,7 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[ReasonCode]:
     worker_limits = ctx.self._resolve_worker_limits(ctx.worker_id, runtime_profile=runtime_profile)
     thread_cap = DockerRuntimeSettings.worker_thread_cap(worker_limits)
     docker_envs = ctx.self._docker_env_overrides(thread_cap=thread_cap)
+    docker_envs.update(_MODEL_MALLOC_ENV)
     docker_envs.update(_runtime_profile_env(runtime_profile))
     docker_envs.update({
         "SWARM_AGENT_PORT": "8000",
@@ -1598,6 +1599,8 @@ _START_GATE_POLL_SEC = 0.05
 _SUBMISSION_MOUNT = "/workspace/submission"
 _COPY_IN_TIMEOUT_SEC = 60.0
 _COPY_IN_PACK_WAIT_SEC = 10.0
+# Frames stay on the model's heap instead of being mapped and faulted in again each decision; at most 64 MiB of freed heap is kept.
+_MODEL_MALLOC_ENV = {"MALLOC_MMAP_THRESHOLD_": "16777216", "MALLOC_TRIM_THRESHOLD_": "67108864"}
 
 
 def _open_start_gate(container_name: str) -> bool:

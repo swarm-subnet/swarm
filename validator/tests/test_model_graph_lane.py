@@ -252,6 +252,16 @@ def test_graph_bootstrap_waits_for_the_start_gate(tmp_path):
     assert ctx.docker_envs["SWARM_START_GATE"] == batch._START_GATE_PATH
 
 
+def test_both_lanes_keep_freed_observation_memory_in_the_model_process(tmp_path):
+    """Every model container gets the allocator settings that stop each decision faulting its observation in again."""
+    for name, write in (("graph.zip", _write_graph_artifact), ("agent.zip", _write_code_agent)):
+        lane = tmp_path / name.split(".")[0]
+        lane.mkdir()
+        ctx = _staged(lane, write(lane / name))
+        assert ctx.docker_envs["MALLOC_MMAP_THRESHOLD_"] == "16777216"
+        assert ctx.docker_envs["MALLOC_TRIM_THRESHOLD_"] == "67108864"
+
+
 def test_code_agent_lane_still_unpacks_and_stages_the_rpc_server(tmp_path):
     """A code agent is unpacked beside the RPC server, with no graph variable in its environment."""
     agent = _write_code_agent(tmp_path / "agent.zip")
