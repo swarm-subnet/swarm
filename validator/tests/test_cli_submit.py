@@ -127,12 +127,13 @@ def test_submit_requires_a_family_when_there_is_no_terminal(monkeypatch, tmp_pat
 
 
 def test_family_prompt_offers_only_open_families(monkeypatch, capsys):
-    """The menu lists Swarm Sentinel, the one paying family, never a retired or completed one, and returns the pick."""
-    monkeypatch.setattr("builtins.input", lambda prompt: "1")
+    """The menu lists the two paying families, Swarm Sentinel and Swarm Test Field, never a retired or completed one,
+    and returns the pick."""
+    monkeypatch.setattr("builtins.input", lambda prompt: "2")
 
-    assert cli._prompt_family_id() == "cf_solar_patrol"
+    assert cli._prompt_family_id() == "cf_test_field"
     menu = capsys.readouterr().out
-    assert "(cf_solar_patrol)" in menu
+    assert "(cf_solar_patrol)" in menu and "(cf_test_field)" in menu
     for family_id in (
         "cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_interceptor",
         "cf_search_and_rescue", "cf_swarm_sar",

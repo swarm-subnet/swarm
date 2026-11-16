@@ -36,7 +36,6 @@ from .contract import (
     ACTION_HIGH,
     ACTION_LOW,
     GIMBAL_TILT_RANGE_DEG,
-    HEIGHT_LIMIT_M,
     MAX_CLIMB_MPS,
     MAX_DESCENT_MPS,
     MAX_GIMBAL_RATE_DEG_S,
@@ -104,7 +103,7 @@ def fly(env: Any, ep: SolarEpisode, target: Setpoint) -> np.ndarray:
     reach = MAX_ACCEL_MPS2 * env.CTRL_TIMESTEP
     velocity += np.clip(np.asarray(target.velocity_mps, dtype=float) - velocity, -reach, reach)
     # The dock's height limit: the climb slows on a braking curve so the aircraft comes to rest at the limit.
-    room = float(ep.dock_position[2]) + HEIGHT_LIMIT_M - float(env.pos[0][2])
+    room = float(ep.dock_position[2]) + ep.height_limit_m - float(env.pos[0][2])
     velocity[2] = min(velocity[2], math.sqrt(2.0 * MAX_ACCEL_MPS2 * max(0.0, room)))
     yaw = float(env.rpy[0, 2]) + target.yaw_rate_rad_s * env.CTRL_TIMESTEP
     rpm, _, _ = env.ctrl[0].computeControl(

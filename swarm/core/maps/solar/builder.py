@@ -425,8 +425,10 @@ def _four_decimals(values: np.ndarray) -> np.ndarray:
     return whole / 1e4
 
 
-def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
-    """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets.
+def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float],
+                  lift_m: float = 0.0) -> Tuple[List[int], int]:
+    """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets,
+    every tree raised by lift_m.
 
     A tree stands when its rank is below the seed's density for its zone, the rule a single placement follows. The
     trees that stand become a forest file the renderer draws as one instanced batch per mesh. Returns the bodies and
@@ -441,9 +443,11 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
     keep = table["rank"] < limits[table["tier"]]
-    position, scale = table["position"][keep], table["scale"][keep]
+    position, scale = table["position"][keep] + np.array([0.0, 0.0, lift_m]), table["scale"][keep]
     # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
     rows = _forest_rows(os.path.join(folder, forest["table"]))[keep]
+    if lift_m:
+        rows[:, 3] += lift_m
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
         with os.fdopen(handle, "wb") as out:

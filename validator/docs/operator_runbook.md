@@ -58,11 +58,12 @@ Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`,
 
 ### Current registry state
 
-Seven families: `cf_solar_patrol` is `family_state='active'` and `emissions_state='active'`; the other six are completed, all with archived emissions:
+Eight families: `cf_solar_patrol` and `cf_test_field` are `family_state='active'` and `emissions_state='active'`; the other six are completed, all with archived emissions:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_solar_patrol` | 1.00 |
+| `cf_solar_patrol` | 0.95 |
+| `cf_test_field` | 0.05 |
 | `cf_swarm_sar` | 0.00 (completed, historical 0.10) |
 | `cf_search_and_rescue` | 0.00 (completed, historical 0.05) |
 | `cf_interceptor` | 0.00 (historical 0.30) |
@@ -70,7 +71,7 @@ Seven families: `cf_solar_patrol` is `family_state='active'` and `emissions_stat
 | `cf_swarm_autopilot` | 0.00 (completed, historical 0.20) |
 | `cf_autopilot` | 0.00 (completed, historical 0.15) |
 
-Swarm Sentinel holds the whole 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable — no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first. Registry sync never rewrites `emission_allocation` on a row that already exists, so a new split also needs a backend migration to reach a provisioned database.
+Swarm Sentinel's 0.95 and Swarm Test Field's 0.05 sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable: no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first. Registry sync never rewrites `emission_allocation` on a row that already exists, so a new split also needs a backend migration to reach a provisioned database.
 
 State enums: `family_state` ∈ {incubating, active, completed, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 

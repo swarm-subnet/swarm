@@ -510,9 +510,11 @@ def test_the_scored_seed_count_is_read_from_the_registry():
 
 @pytest.mark.asyncio
 async def test_the_scored_seeds_are_judged_once_in_the_background_highest_first(monkeypatch):
-    """Of all the families only Swarm Sentinel judges ahead: its 2,000 scored seeds, once, in a worker thread at the
-    lowest priority, highest first; once they are all judged the validator remembers it and starts nothing more."""
+    """Swarm Sentinel judges ahead: its 2,000 scored seeds, once, in a worker thread at the lowest priority, highest
+    first; once they are all judged the validator remembers it and starts nothing more. The Test Field also judges
+    ahead where its map is installed, so it is left out here."""
     runtime = require_runtime_family(FAMILY_ID)
+    monkeypatch.setattr(require_runtime_family("cf_test_field"), "prepares_seeds", False)
     judged, started = set(), []
 
     def prepare_seeds(seeds, *, background=False):

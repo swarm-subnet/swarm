@@ -141,6 +141,7 @@ BENCH_GROUP_ORDER = [
     "type6_forest",
     "type7_office",
     "type8_solar",
+    "type9_testsite",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -151,6 +152,7 @@ BENCH_GROUP_TO_TYPE = {
     "type6_forest": 6,
     "type7_office": 7,
     "type8_solar": 8,
+    "type9_testsite": 9,
 }
 TYPE_LABELS = {
     1: "city",
@@ -161,6 +163,7 @@ TYPE_LABELS = {
     6: "forest",
     7: "office",
     8: "solar",
+    9: "testsite",
 }
 
 
@@ -554,9 +557,11 @@ def _lookup_seed_type_in_seed_file(
 
 
 def _infer_benchmark_type_from_seed(seed: int, family_id: str = DEFAULT_CLI_FAMILY_ID) -> int:
-    """Return Solar's fixed type or rebuild the legacy task to read its map type."""
+    """Return a patrol family's fixed type or rebuild the legacy task to read its map type."""
     if family_id == "cf_solar_patrol":
         return 8
+    if family_id == "cf_test_field":
+        return 9
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
 
@@ -1638,8 +1643,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar).",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site).",
     )
     visualize_parser.add_argument(
         "--family-id",
@@ -1768,8 +1773,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar).",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site).",
     )
     video_parser.add_argument(
         "--seed-file",

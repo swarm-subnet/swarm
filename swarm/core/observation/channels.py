@@ -38,6 +38,7 @@ from swarm.domain_model import get_policy_interface_contract
 _DETECTION_DIM = 2 + 5 * OFFICE_DET_MAX_BOXES
 # Read from the registry, which mirrors the family's contract module without importing the family.
 _SOLAR_FIELDS = get_policy_interface_contract("cf_solar_patrol", "submission_zip.v1")["observation_space"]["fields"]
+_FIELD_FIELDS = get_policy_interface_contract("cf_test_field", "submission_zip.v1")["observation_space"]["fields"]
 
 
 def action_buffer_size(ctrl_freq: int) -> int:
@@ -202,6 +203,20 @@ def _solar_vector(key):
                          env_dim=lambda e: width, param_dim=lambda cf, ad: width)
 
 
+def _field_image(key, semantic_label):
+    """An image channel of the Test Field view, at the contract's fixed shape; built like Sentinel's."""
+    shape = tuple(_FIELD_FIELDS[key]["shape"])
+    return SensorChannel(f"field_{key}", semantic_label, "image", _solar_part(key),
+                         image_shape=lambda e: shape, param_image_shape=shape)
+
+
+def _field_vector(key):
+    """A flat vector channel of the Test Field view, at the contract's fixed length."""
+    width = int(_FIELD_FIELDS[key]["shape"][0])
+    return SensorChannel(f"field_{key}", key, "vector", _solar_part(key),
+                         env_dim=lambda e: width, param_dim=lambda cf, ad: width)
+
+
 def _action_dim(env) -> int:
     """Width of a single action in the env's action space."""
     return int(env.action_space.shape[-1])
@@ -309,4 +324,10 @@ OBSERVATION_CHANNELS = {
     "solar_zoom": _solar_image("zoom", "zoom_camera"),
     "solar_state": _solar_vector("state"),
     "solar_site_map": _solar_vector("site_map"),
+    # Test Field: Sentinel's images, state and site map, the site map holding the field's outline.
+    "field_rgb": _field_image("rgb", "rgb_camera"),
+    "field_thermal": _field_image("thermal", "thermal_camera"),
+    "field_zoom": _field_image("zoom", "zoom_camera"),
+    "field_state": _field_vector("state"),
+    "field_site_map": _field_vector("site_map"),
 }

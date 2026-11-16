@@ -40,7 +40,7 @@ Drones are moving into everyday life: delivering packages, inspecting bridges an
 </p>
 
 <p align="center">
-  <sub><b>1</b> live mission &nbsp;·&nbsp; fresh worlds every 14-day epoch &nbsp;·&nbsp; the same on every validator &nbsp;·&nbsp; one live leaderboard</sub>
+  <sub><b>2</b> live missions &nbsp;·&nbsp; fresh worlds every 14-day epoch &nbsp;·&nbsp; the same on every validator &nbsp;·&nbsp; one live leaderboard</sub>
 </p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -48,15 +48,16 @@ Drones are moving into everyday life: delivering packages, inspecting bridges an
 ---
 
 <!-- CHALLENGE FAMILIES -->
-## The Mission
+## The Missions
 
-Swarm Sentinel is the live competition, with its own champions and the whole reward. The missions that came before it are completed, and their guides stay in [completed families](docs/families/completed/README.md).
+Swarm Sentinel and Swarm Test Field are the live competitions, each with its own champions and its own share of the reward. The missions that came before them are completed, and their guides stay in [completed families](docs/families/completed/README.md).
 
 | Mission | What your drone has to do | Reward share |
 |---------|---------------------------|:------------:|
-| **[Swarm Sentinel](docs/families/solar_patrol.md)** | Patrol a solar park from its drone dock by day and by night, report every intruder, and land back in the dock | <img src="https://img.shields.io/badge/100%25-F5D400?style=flat-square" alt="100%" /> |
+| **[Swarm Sentinel](docs/families/solar_patrol.md)** | Patrol a solar park from its drone dock by day and by night, report every intruder, and land back in the dock | <img src="https://img.shields.io/badge/95%25-F5D400?style=flat-square" alt="95%" /> |
+| **[Swarm Test Field](docs/families/test_field.md)** | Fly the company's real test field from its dock, report where every person stands, never come within 1 m of its edge, and land back in the dock | <img src="https://img.shields.io/badge/5%25-F5D400?style=flat-square" alt="5%" /> |
 
-<p align="center"><sub>The mission has a full guide with everything a builder needs to start.</sub></p>
+<p align="center"><sub>Every mission has a full guide with everything a builder needs to start.</sub></p>
 
 <p align="center"><sub><b><a href="docs/families/completed/README.md">Completed</a>:</b> <a href="docs/families/completed/interceptor.md">Interceptor</a>, whose champion cleared it and whose winning solution is open source, and <a href="docs/families/completed/autopilot.md">Autopilot</a>, <a href="docs/families/completed/swarm_autopilot.md">Swarm Autopilot</a> and <a href="docs/families/completed/interceptor_office.md">Office Interceptor</a>, whose place Swarm Sentinel took. Their guides stay online and their champions stay published.</sub></p>
 
@@ -116,7 +117,7 @@ In the rescue missions the drone sees the world through a depth camera, can ask 
 <!-- ENVIRONMENTS -->
 ## The Worlds
 
-None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives its fresh seeds across its supported map types (**2,000** for Swarm Sentinel), the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
+None of these worlds exist until the benchmark builds them. Every 14-day epoch, each family receives its fresh seeds across its supported map types (**2,000** for Swarm Sentinel, **1,000** for Swarm Test Field), the same on every validator, so nothing can be memorized and every model in an epoch faces the same worlds. Every kit, tree, building and character the generators place comes from the [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds) repository, released by tag.
 
 <table>
 <tr>
@@ -181,7 +182,7 @@ Swarm Sentinel scores each world from 0 to 1 on three things:
 
 A drone's rank is its **average across every world of the epoch**, so steady skill beats a few lucky runs, and every missed intruder or false alarm turns 5 of its best worlds to 0. The details are in [its guide](docs/families/solar_patrol.md#scoring).
 
-Rewards run on **King of the Hill**. Swarm Sentinel pays its **last 10 champions**, not just the current one, and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
+Rewards run on **King of the Hill**. Each mission pays its last champions, not just the current one (**10** in Swarm Sentinel, **3** in Swarm Test Field), and your share depends on how much you raised the bar when you won. Beat the record and you keep earning even after someone beats you, so a real breakthrough pays off for a long time. The full mechanics are in the [King of the Hill guide](docs/king_of_the_hill.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

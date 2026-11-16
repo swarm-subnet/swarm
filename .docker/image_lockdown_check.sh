@@ -71,7 +71,7 @@ echo "[INFO] validator uid $SWARM_UID, target pid $PID"
 compose python -c "
 import sys
 from swarm.validator.docker.docker_evaluator_parts.networking import _apply_network_lockdown
-sys.exit(0 if _apply_network_lockdown(None, $PID, '127.0.0.1') else 1)
+sys.exit(0 if _apply_network_lockdown(None, $PID) else 1)
 " || { echo "[ERR] the validator could not lock the container down as uid $SWARM_UID" >&2; exit 1; }
 
 if reaches_internet; then

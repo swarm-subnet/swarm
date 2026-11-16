@@ -6,11 +6,12 @@ Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🎯 What You Evaluate
 
-Swarm runs **one active challenge family**, Swarm Sentinel; Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+Swarm runs **two active challenge families**, Swarm Sentinel and Swarm Test Field; Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 100% |
+| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 95% |
+| [Swarm Test Field](../../docs/families/test_field.md) | `cf_test_field` | One drone flies the company's real test field from its dock, reports where every person stands, keeps 1 m inside the field's edge and lands back in the dock | 5% |
 | [Interceptor](../../docs/families/completed/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
 
 Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB.
@@ -404,7 +405,7 @@ rebuilds anything it finds missing there on its next cycle.
    Per-seed and aggregate scores are submitted to the backend as they are computed.
 
 5. **Apply weights**
-   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last champions (10 in Swarm Sentinel, 5 in the others) share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
+   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last champions (10 in Swarm Sentinel, 3 in Swarm Test Field, 5 in the others) share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
 
 6. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).

@@ -46,6 +46,7 @@ from swarm.core.submission_lane import (
 )
 from swarm.core.submission_policy import (
     SUBMISSION_INTERFACE_VERSION,
+    check_native_code,
     check_safety,
     validate_submission_zip,
 )

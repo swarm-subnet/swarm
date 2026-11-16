@@ -18,6 +18,7 @@
 """Prints the benchmark run tables and returns the same numbers as a JSON record."""
 from __future__ import annotations
 
+from swarm.challenge_families import family_seed_mistake_fields
 from swarm.domain_model import UnknownChallengeFamilyError, get_family_seeds_zeroed_per_mistake
 
 from ._shared import (
@@ -55,16 +56,32 @@ def _pctl(values: List[float], fraction: float) -> float:
     return float(sorted_values[min(idx, len(sorted_values) - 1)])
 
 
-_MISTAKE_FIELDS = ("missed_threats", "false_alarms")
+# Each mistake count's seed-table column, summary line and name in the rule's sentence.
+_MISTAKE_TEXT = {
+    "missed_threats": ("Missed", "Missed threats", "missed threat"),
+    "false_alarms": ("FalseAlarms", "False alarms", "false alarm"),
+    "edge_trips": ("EdgeTrips", "Edge trips", "edge trip"),
+}
 
 
-def _seed_mistake_counts(result: Any) -> Dict[str, Optional[int]]:
-    """A seed's missed threats and false alarms from its result metrics, both None when its family counts neither."""
+def _seed_mistake_counts(result: Any, fields: Tuple[str, ...]) -> Dict[str, Optional[int]]:
+    """A seed's mistake counts from its result metrics, all None when its family counts none of them."""
     metrics = getattr(result, "metrics", None)
-    counts = [metrics.get(key) if isinstance(metrics, dict) else None for key in _MISTAKE_FIELDS]
+    counts = [metrics.get(key) if isinstance(metrics, dict) else None for key in fields]
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
-        return dict.fromkeys(_MISTAKE_FIELDS)
-    return {key: max(0, value) for key, value in zip(_MISTAKE_FIELDS, counts)}
+        return dict.fromkeys(fields)
+    return {key: max(0, value) for key, value in zip(fields, counts)}
+
+
+def _mistake_text(field: str) -> Tuple[str, str, str]:
+    """A mistake count's column, summary line and name in the rule's sentence."""
+    return _MISTAKE_TEXT.get(field, (field, field, field.replace("_", " ")))
+
+
+def _rule_sentence(fields: Tuple[str, ...]) -> str:
+    """The mistakes in words, the last joined by or: missed threat or false alarm."""
+    names = [_mistake_text(field)[2] for field in fields]
+    return " or ".join(names) if len(names) < 3 else ", ".join(names[:-1]) + " or " + names[-1]
 
 
 def _count_cell(value: Optional[int]) -> str:
@@ -91,17 +108,17 @@ def _zero_best_seeds(scores: List[float], mistakes: int, seeds_per_mistake: int)
     return penalised
 
 
-def _cross_seed_penalty(rows: List[Dict[str, Any]], seeds_per_mistake: int) -> Dict[str, Any]:
-    """The run's mistakes and its mean score before and after the family's cross-seed rule."""
+def _cross_seed_penalty(rows: List[Dict[str, Any]], seeds_per_mistake: int,
+                        fields: Tuple[str, ...] = ("missed_threats", "false_alarms")) -> Dict[str, Any]:
+    """The run's mistakes, each count the family adds up, and its mean score before and after the cross-seed rule."""
     scores = [float(row["score"]) for row in rows]
-    missed = sum(int(row["missed_threats"] or 0) for row in rows)
-    false_alarms = sum(int(row["false_alarms"] or 0) for row in rows)
-    penalised = _zero_best_seeds(scores, missed + false_alarms, seeds_per_mistake)
+    totals = {field: sum(int(row.get(field) or 0) for row in rows) for field in fields}
+    mistakes = sum(totals.values())
+    penalised = _zero_best_seeds(scores, mistakes, seeds_per_mistake)
     return {
         "seeds_zeroed_per_mistake": seeds_per_mistake,
-        "missed_threats": missed,
-        "false_alarms": false_alarms,
-        "seeds_zeroed": min(len(scores), (missed + false_alarms) * seeds_per_mistake),
+        **totals,
+        "seeds_zeroed": min(len(scores), mistakes * seeds_per_mistake),
         "mean_score": _mean(scores),
         "penalised_score": _mean(penalised),
     }
@@ -178,6 +195,7 @@ def _print_results(
         key: deque(values) for key, values in seed_status_by_key.items()
     }
 
+    mistake_fields = family_seed_mistake_fields(family_id)
     group_results: Dict[str, List[Dict[str, Any]]] = {}
     for i, meta in enumerate(task_meta):
         group = str(meta["group"])
@@ -215,15 +233,16 @@ def _print_results(
                 "timeout_zero": wall < 0.5 and i > 0,
                 "estimated_resource_cost": _resource_cost_dict_for_group(group),
                 "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
-                **_seed_mistake_counts(result),
+                **_seed_mistake_counts(result, mistake_fields),
             }
         )
 
     show_mistakes = any(
         row["missed_threats"] is not None for rows in group_results.values() for row in rows
     )
-    mistake_header = f" {'Missed':>6} {'FalseAlarms':>11}" if show_mistakes else ""
-    mistake_rule = f" {'-'*6} {'-'*11}" if show_mistakes else ""
+    columns = [_mistake_text(field)[0] for field in mistake_fields] if show_mistakes else []
+    mistake_header = "".join(f" {column}" for column in columns)
+    mistake_rule = "".join(f" {'-' * len(column)}" for column in columns)
 
     print()
     print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}{mistake_header}")
@@ -234,10 +253,8 @@ def _print_results(
             continue
         for row in group_results[group]:
             ok = "Y" if row["success"] else "N"
-            mistakes = (
-                f" {_count_cell(row['missed_threats']):>6} {_count_cell(row['false_alarms']):>11}"
-                if show_mistakes
-                else ""
+            mistakes = "".join(
+                f" {_count_cell(row[field]):>{len(column)}}" for field, column in zip(mistake_fields, columns)
             )
             print(
                 f"  {group:<18} {row['seed']:>8} {row['score']:>7.4f} {ok:>5} "
@@ -258,11 +275,11 @@ def _print_results(
     ]
 
     seeds_per_mistake = _seeds_zeroed_per_mistake(family_id) if show_mistakes else 0
-    penalty = _cross_seed_penalty(all_rows, seeds_per_mistake) if seeds_per_mistake else None
+    penalty = _cross_seed_penalty(all_rows, seeds_per_mistake, mistake_fields) if seeds_per_mistake else None
     if penalty is not None:
-        print(f"  Cross-seed rule: every missed threat or false alarm sets {seeds_per_mistake} of the best seeds to 0")
-        print(f"    Missed threats:            {penalty['missed_threats']}")
-        print(f"    False alarms:              {penalty['false_alarms']}")
+        print(f"  Cross-seed rule: every {_rule_sentence(mistake_fields)} sets {seeds_per_mistake} of the best seeds to 0")
+        for field in mistake_fields:
+            print(f"    {_mistake_text(field)[1] + ':':<27}{penalty[field]}")
         print(f"    Seeds set to 0:            {penalty['seeds_zeroed']}/{len(all_rows)}")
         print(f"    Mean of seed scores:       {penalty['mean_score']:.4f}")
         print(f"    Score after the rule:      {penalty['penalised_score']:.4f}")

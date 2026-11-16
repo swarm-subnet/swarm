@@ -45,8 +45,9 @@ class _FakeDocker:
 
     def run(self, cmd, **kwargs):
         """Stand in for ``subprocess.run`` on every docker command the batch issues."""
-        _ = kwargs
         verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "exec" and kwargs.get("stdin") is not None:
+            kwargs["stdin"].read()
         if verb == "run":
             name = cmd[cmd.index("--name") + 1]
             port = int(cmd[cmd.index("-p") + 1].split(":")[1])
@@ -112,8 +113,7 @@ def fake_docker(monkeypatch, tmp_path):
     monkeypatch.setattr(batch.subprocess, "run", docker.run)
     monkeypatch.setattr(networking, "_PORT_BASE", _port_band_base())
     monkeypatch.setattr(de.DockerSecureEvaluator, "_get_container_pid", lambda self, name: 4242)
-    monkeypatch.setattr(de.DockerSecureEvaluator, "_apply_network_lockdown", lambda self, pid, ip: True)
-    monkeypatch.setattr(de.DockerSecureEvaluator, "_get_docker_host_ip", lambda self: "172.17.0.1")
+    monkeypatch.setattr(de.DockerSecureEvaluator, "_apply_network_lockdown", lambda self, pid: True)
     monkeypatch.setattr(
         de.DockerSecureEvaluator, "_check_rpc_ready",
         lambda self, port, timeout=0.2: docker.rpc_ready(int(port)),

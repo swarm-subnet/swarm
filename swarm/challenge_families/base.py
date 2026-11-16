@@ -29,6 +29,7 @@ from swarm.constants import BENCHMARK_FULL_SEED_COUNT, SWARM_MAX_DRONES, SWARM_M
 from swarm.domain_model import (
     get_family_benchmark_admission_policy,
     get_family_screening_policy,
+    get_family_seed_mistake_fields,
     get_policy_interface_contract,
     get_supported_interface_versions,
 )
@@ -277,6 +278,10 @@ class ChallengeFamilyRuntime:
     def benchmark_admission_policy(self) -> Dict[str, Any]:
         """Registry rules that decide whether a screened model earns a place in the full benchmark run."""
         return get_family_benchmark_admission_policy(self.family_id)
+
+    def seed_mistake_fields(self) -> tuple[str, ...]:
+        """Registry list of the seed counts that each cost one mistake under the family's cross-seed rule."""
+        return get_family_seed_mistake_fields(self.family_id)
 
     def runtime_profile(self, task: Any) -> ChallengeFamilyRuntimeProfile:
         """Default container settings: the standard resource class, the base image, and the family id stamped into the worker env."""

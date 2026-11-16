@@ -157,8 +157,9 @@ def test_family_is_registered_active_on_its_own_map_type():
     assert CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE[8] == "solar"
 
 
-def test_swarm_sentinel_holds_the_whole_emission_and_the_retired_families_pay_nothing():
-    """Swarm Sentinel holds 1.0; the five families it replaced, both rescue families included, pay nothing."""
+def test_swarm_sentinel_holds_95_percent_and_the_retired_families_pay_nothing():
+    """Swarm Sentinel holds 0.95 and Swarm Test Field 0.05; the five families Sentinel replaced, both rescue families
+    included, pay nothing."""
     shares = {
         family_id: get_challenge_family_definition(family_id)["emission_allocation"]
         for family_id in list_registered_challenge_families()
@@ -167,7 +168,8 @@ def test_swarm_sentinel_holds_the_whole_emission_and_the_retired_families_pay_no
         "cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_search_and_rescue", "cf_swarm_sar",
     ):
         assert shares[family_id] == 0.0
-    assert shares[FAMILY_ID] == pytest.approx(1.0)
+    assert shares[FAMILY_ID] == pytest.approx(0.95)
+    assert shares["cf_test_field"] == pytest.approx(0.05)
     paying = [
         share for family_id, share in shares.items()
         if get_challenge_family_definition(family_id)["emissions_state"] != "archived"
@@ -176,9 +178,10 @@ def test_swarm_sentinel_holds_the_whole_emission_and_the_retired_families_pay_no
 
 
 def test_every_other_family_still_steps_once_per_decision():
-    """Only Solar Patrol holds a decision over several control steps, so no other family's flight changes."""
+    """Only the patrol families, Sentinel and the Test Field that flies its drone, hold a decision over several control
+    steps, so no other family's flight changes."""
     for family_id in list_registered_challenge_families():
-        expected = DECISION_STEPS if family_id == FAMILY_ID else 1
+        expected = DECISION_STEPS if family_id in (FAMILY_ID, "cf_test_field") else 1
         assert get_challenge_family(family_id).decision_steps == expected
 
 

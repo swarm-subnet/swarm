@@ -19,7 +19,8 @@ from swarm.utils.env_factory import make_env
 from swarm.validator import task_gen
 
 AERO = Physics.PYB_GND_DRAG_DW.value
-OPTED_IN = {"SolarPatrolChallengeFamily": Physics.PYB_DRAG.value}  # drag in still air too, like its wind
+# Drag in still air too, like its wind; the Test Field flies Sentinel's drone.
+OPTED_IN = {"SolarPatrolChallengeFamily": Physics.PYB_DRAG.value, "TestFieldChallengeFamily": Physics.PYB_DRAG.value}
 
 
 def _every_family_class(cls=ChallengeFamilyRuntime):

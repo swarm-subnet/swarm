@@ -26,6 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from swarm.core.faults import ReasonCode
 from swarm.core.model_verify import classify_model_validity, inspect_model_structure
 from swarm.core.submission_lane import (
     MODEL_GRAPH_INTERFACE_VERSION,
@@ -35,6 +36,7 @@ from swarm.core.submission_lane import (
 )
 from swarm.core.submission_policy import SUBMISSION_INTERFACE_VERSION
 from swarm.validator.docker.docker_evaluator_parts import batch
+from swarm.validator.utils_parts.model_fetch import _admitted
 
 
 def _graph_manifest(family_id: str = "cf_autopilot") -> dict:
@@ -173,6 +175,27 @@ def test_fetch_admits_a_graph_champion_and_binds_its_family(tmp_path):
     assert _admitted(artifact, "cf_autopilot") is False
 
 
+def test_a_graph_artifact_carrying_native_code_is_refused(tmp_path, monkeypatch):
+    """A shared library posing as a graph model is refused at fetch and before any container starts."""
+    artifact = tmp_path / "graph.zip"
+    with zipfile.ZipFile(artifact, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(_graph_manifest()))
+        zf.writestr("models/policy.onnx", b"\x7fELF\x02\x01\x01\x00" + bytes(56))
+    assert _admitted(artifact) is False
+
+    monkeypatch.setattr(batch, "check_task_versions", lambda *_a: None)
+    monkeypatch.setattr(
+        batch, "_docker_evaluator_facade",
+        lambda: SimpleNamespace(DockerSecureEvaluator=SimpleNamespace(_base_ready=True)),
+    )
+    ctx = SimpleNamespace(
+        uid=1, worker_id=0, tasks=[SimpleNamespace()], model_path=artifact, is_model_graph=True,
+        helpers=SimpleNamespace(notify_all_failed=lambda **_kw: None),
+    )
+    results = batch._validate_inputs(ctx)
+    assert [r.failure_reason for r in results] == [ReasonCode.LOAD_FAILED.value]
+
+
 # ── container staging ────────────────────────────────────────────────────────
 
 def test_graph_lane_skips_the_per_model_dependency_image(tmp_path):
@@ -192,7 +215,6 @@ def _staged(tmp_path, artifact):
                 "SWARM_INFERENCE_THREADS": str(kwargs["thread_cap"]),
             },
             _resolve_base_image_for_key=lambda _k: "swarm_evaluator_base:latest",
-            _get_docker_host_ip=lambda: "127.0.0.1",
             last_selected_runtime_profile=None,
             last_selected_worker_limits=None,
             last_selected_runtime_env=None,

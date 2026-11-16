@@ -87,27 +87,21 @@ def test_the_model_folder_is_a_capped_memory_folder(monkeypatch):
     assert {"uid=1000", "gid=1001", "mode=0700", "nosuid"} <= set(options)
 
 
-def test_the_host_copy_of_the_code_is_mounted_read_only(monkeypatch):
-    """No folder on the validator's disk is writable from inside the container."""
+def test_no_host_folder_is_mounted_into_the_container(monkeypatch):
+    """The submission is never bind-mounted, so no file the model reaches sits on an executable mount."""
     cmd = _launch_cmd(monkeypatch)
     assert "--read-only" in cmd
-    assert _mounts(cmd, "-v") == ["/tmp/submission:/workspace/bundle:ro"]
+    assert _mounts(cmd, "-v") == []
+    assert not any("/tmp/submission" in part for part in cmd)
 
 
-def test_the_code_is_copied_into_the_folder_before_the_agent_starts(monkeypatch):
-    """The container copies the code into its capped folder, waits for the start gate, then runs the agent from there."""
+def test_the_container_only_waits_for_the_gate_then_runs_the_agent(monkeypatch):
+    """The container command copies nothing itself: it waits for the start gate, then runs the agent from its folder."""
     cmd = _launch_cmd(monkeypatch)
     assert cmd[-4:-1] == ["swarm_evaluator_base:latest", "sh", "-c"]
     script = cmd[-1]
-    copy, wait, start = (
-        script.index(step)
-        for step in (
-            "cp -R /workspace/bundle/. /workspace/submission/ || exit 1",
-            "until [ -e /tmp/swarm_start.gate ]",
-            "exec python /workspace/submission/main.py",
-        )
-    )
-    assert copy < wait < start
+    assert "cp " not in script
+    assert script.index("until [ -e /tmp/swarm_start.gate ]") < script.index("exec python /workspace/submission/main.py")
 
 
 def test_the_folder_limits_hold_the_largest_allowed_submission():

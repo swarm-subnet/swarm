@@ -200,6 +200,25 @@ def get_family_seeds_zeroed_per_mistake(
     return int(family_definition.get("seeds_zeroed_per_mistake", 0))
 
 
+DEFAULT_SEED_MISTAKE_FIELDS = ("missed_threats", "false_alarms")
+
+
+def get_family_seed_mistake_fields(
+    family_id: str,
+    *,
+    registry: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """The whole-number seed counts that each cost one mistake under the family's cross-seed rule, missed threats and
+    false alarms when it names none; a list that is not distinct non-empty names is refused."""
+    value = get_challenge_family_definition(family_id, registry=registry).get("seed_mistake_fields")
+    if value is None:
+        return DEFAULT_SEED_MISTAKE_FIELDS
+    if (not isinstance(value, list) or not value or len(set(value)) != len(value)
+            or not all(isinstance(field, str) and field for field in value)):
+        raise ValueError(f"invalid_family_seed_mistake_fields:{family_id}:{value!r}")
+    return tuple(value)
+
+
 def get_family_king_window(
     family_id: str,
     *,
@@ -323,6 +342,7 @@ __all__ = [
     "CHALLENGE_TYPE_TO_BENCHMARK_GROUP",
     "CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE",
     "DEFAULT_CLI_FAMILY_ID",
+    "DEFAULT_SEED_MISTAKE_FIELDS",
     "EMISSIONS_STATES",
     "ENVIRONMENT_TYPES",
     "ENVIRONMENT_TYPE_TO_CHALLENGE_TYPE",
@@ -346,6 +366,7 @@ __all__ = [
     "get_family_benchmark_version",
     "validate_family_task_version",
     "get_family_king_window",
+    "get_family_seed_mistake_fields",
     "get_challenge_family_definition",
     "get_family_screening_policy",
     "get_family_visibility",

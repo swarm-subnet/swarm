@@ -38,7 +38,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import IO, Dict, Iterable, Iterator, List, Optional
+from typing import IO, Callable, Dict, Iterable, Iterator, List, Optional
 
 from swarm.domain_model import get_family_benchmark_version
 from swarm.protocol import MapTask
@@ -163,12 +163,16 @@ def prepare(seeds: Iterable[int], workers: int, *, niceness: int = 0) -> Dict[in
 
 class Flights:
     """Reference flights in processes of their own, at most workers at a time. Each process judges the seeds it is
-    handed one after another and keeps their verdicts, so only its first world is built cold."""
+    handed one after another and keeps their verdicts, so only its first world is built cold. Another family flies
+    its own pilot module and reads its own kept verdicts."""
 
-    def __init__(self, workers: int, niceness: int = 0):
+    def __init__(self, workers: int, niceness: int = 0, pilot: Optional[str] = None,
+                 verdict: Optional[Callable[[int], Optional[Verdict]]] = None):
         """No process yet: one starts, at that niceness, when a seed finds every running one busy."""
         self.workers = max(1, int(workers))
         self.niceness = int(niceness)
+        self.pilot = pilot
+        self.verdict = verdict
         self.runs: Dict[subprocess.Popen, Optional[int]] = {}   # each process and the seed it is judging
         self.logs: Dict[subprocess.Popen, IO[bytes]] = {}
 
@@ -190,6 +194,10 @@ class Flights:
         if crashed is not None:
             raise SeedCheckError(crashed)
 
+    def cached(self, seed: int) -> Optional[Verdict]:
+        """The kept verdict of a seed, read where this family keeps them."""
+        return (self.verdict or cached)(seed)
+
     def _tail(self, run: subprocess.Popen) -> str:
         """The end of a process's error output."""
         self.logs[run].seek(0)
@@ -199,7 +207,7 @@ class Flights:
         """Hand the seeds not being judged yet to free processes, then wait until a seed being judged has its
         verdict. A process that ends while it still holds a seed fails the preparation."""
         for run, seed in self.runs.items():
-            if seed is not None and cached(seed) is not None:
+            if seed is not None and self.cached(seed) is not None:
                 self.runs[run] = None
         flying = set(self.runs.values())
         for seed in dict.fromkeys(seeds):
@@ -210,7 +218,7 @@ class Flights:
                 raise SeedCheckError(f"a seed-check process ended between seeds:\n{self._tail(free)}")
             if free is None and len(self.runs) < self.workers:
                 log = tempfile.TemporaryFile()
-                free = subprocess.Popen([sys.executable, "-m", PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
+                free = subprocess.Popen([sys.executable, "-m", self.pilot or PILOT_MODULE], stdin=subprocess.PIPE, bufsize=0,
                                         stdout=subprocess.DEVNULL, stderr=log, env={**os.environ, **THREAD_CAPS})
                 if self.niceness:
                     # Set from outside: a pre-exec hook is unsafe here, preparation runs in a thread.
@@ -222,10 +230,10 @@ class Flights:
                 free.stdin.write(f"{seed}\n".encode())
             self.runs[free] = seed
         busy = {run: seed for run, seed in self.runs.items() if seed is not None}
-        while busy and all(cached(seed) is None for seed in busy.values()):
+        while busy and all(self.cached(seed) is None for seed in busy.values()):
             for run, seed in busy.items():
                 # It may have ended before reading the seed it was handed, so the seed is not named.
-                if run.poll() is not None and cached(seed) is None:
+                if run.poll() is not None and self.cached(seed) is None:
                     raise SeedCheckError(f"a seed-check process ended and left no verdict:\n{self._tail(run)}")
             time.sleep(POLL_S)
 

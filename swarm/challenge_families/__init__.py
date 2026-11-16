@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from swarm.domain_model import CHALLENGE_FAMILY_IDS
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_SEED_MISTAKE_FIELDS
 
 from .autopilot import AutopilotChallengeFamily
 from .base import (
@@ -36,6 +36,7 @@ from .search_and_rescue import SearchAndRescueChallengeFamily
 from .solar_patrol import SolarPatrolChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
+from .test_field import TestFieldChallengeFamily
 
 DEFAULT_RUNTIME_FAMILY_ID = "cf_autopilot"
 
@@ -48,6 +49,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_interceptor": InterceptorChallengeFamily(),
     "cf_interceptor_office": OfficeInterceptorChallengeFamily(),
     "cf_solar_patrol": SolarPatrolChallengeFamily(),
+    "cf_test_field": TestFieldChallengeFamily(),
 }
 
 
@@ -70,6 +72,13 @@ def require_runtime_family(family_id: str) -> ChallengeFamilyRuntime:
     if not family.runtime_supported:
         raise ChallengeFamilyRuntimeError(f"runtime_not_implemented:{family_id}")
     return family
+
+
+def family_seed_mistake_fields(family_id: Optional[str]) -> tuple[str, ...]:
+    """The seed counts a family's cross-seed rule adds up, from its registry entry; the default pair without a family
+    or for an unknown one."""
+    family = _REGISTERED_FAMILIES.get(family_id or "")
+    return family.seed_mistake_fields() if family is not None else DEFAULT_SEED_MISTAKE_FIELDS
 
 
 def infer_task_family_id(task: Any) -> str:
@@ -202,6 +211,7 @@ __all__ = [
     "SolarPatrolChallengeFamily",
     "SwarmAutopilotChallengeFamily",
     "SwarmSarChallengeFamily",
+    "TestFieldChallengeFamily",
     "build_random_task",
     "benchmark_admission_policy_for_family",
     "build_benchmark_tasks",
@@ -209,6 +219,7 @@ __all__ = [
     "deferred_seed_checks",
     "env_kwargs_for_task",
     "evaluate_rollout",
+    "family_seed_mistake_fields",
     "get_challenge_family",
     "infer_task_family_id",
     "list_registered_challenge_families",

@@ -50,9 +50,10 @@ def _patrol(seed, score, missed, false_alarms):
     return seed, score, {"missed_threats": missed, "false_alarms": false_alarms}
 
 
-def test_registry_carries_the_rule_for_swarm_sentinel_only():
-    """Swarm Sentinel zeroes 5 seeds per mistake and a family without the rule reads 0."""
+def test_registry_carries_the_rule_for_swarm_sentinel_and_the_test_field():
+    """Swarm Sentinel and the Test Field zero 5 seeds per mistake and a family without the rule reads 0."""
     assert get_family_seeds_zeroed_per_mistake("cf_solar_patrol") == 5
+    assert get_family_seeds_zeroed_per_mistake("cf_test_field") == 5
     assert get_family_seeds_zeroed_per_mistake("cf_search_and_rescue") == 0
 
 

@@ -11,6 +11,6 @@ These challenge families are completed: they take no submissions, are not scored
 | [Search and Rescue](search_and_rescue.md) | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest | 5% | Swarm Sentinel took its slice |
 | [Swarm Search and Rescue](swarm_sar.md) | `cf_swarm_sar` | City, Open, Mountain, Village, Forest | 10% | Swarm Sentinel took its slice |
 
-Their slices went to Swarm Sentinel, which now carries 100% of emissions. No live family flies the city, open, mountain, village, warehouse, forest or office maps (challenge types 1 to 7); Swarm Sentinel flies the solar park (challenge type 8).
+Their slices went to Swarm Sentinel, which now carries 95% of emissions; Swarm Test Field carries the other 5%. No live family flies the city, open, mountain, village, warehouse, forest or office maps (challenge types 1 to 7); Swarm Sentinel flies the solar park (challenge type 8) and Swarm Test Field the real test field (challenge type 9).
 
-The live family is [Swarm Sentinel](../solar_patrol.md).
+The live families are [Swarm Sentinel](../solar_patrol.md) and [Swarm Test Field](../test_field.md).

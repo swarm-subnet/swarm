@@ -44,7 +44,6 @@ from .contract import (
     MAX_DESCENT_MPS,
     MAX_HORIZONTAL_MPS,
     MAX_YAW_RATE_DEG_S,
-    PATROL_HEIGHT_M,
     STATE_SLICES,
     Command,
     put,
@@ -142,27 +141,27 @@ def _slope_deg(ground: np.ndarray, spot: np.ndarray) -> float:
     return math.degrees(math.atan(math.hypot(a, b)))
 
 
-def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset,
-              passable: np.ndarray) -> Tuple[float, float]:
-    """A spot for the dock drawn from the seed's own stream: FENCE_MARGIN_M inside the fence, CLEAR_M from every
-    body standing and from every passable outline, on ground no steeper than MAX_SLOPE_DEG.
+def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset, passable: np.ndarray,
+              margin_m: float = FENCE_MARGIN_M, max_slope_deg: float = MAX_SLOPE_DEG) -> Tuple[float, float]:
+    """A spot for the dock drawn from the seed's own stream: margin_m inside the fence, CLEAR_M from every body
+    standing and from every passable outline, on ground no steeper than max_slope_deg.
 
     Only the terrain may meet the rays dropped around the spot, so the check reads whatever the world holds this
     seed, wherever the park put it, and the column the drone climbs through is clear with it.
     """
     rng = np.random.default_rng([SITE_SEED_STREAM, int(seed)])
-    low, high = fence.min(axis=0) + FENCE_MARGIN_M, fence.max(axis=0) - FENCE_MARGIN_M
+    low, high = fence.min(axis=0) + margin_m, fence.max(axis=0) - margin_m
     for _ in range(SITE_BATCHES):
         spots = rng.uniform(low, high, size=(SITE_BATCH, 2))
         spots = spots[_inside(fence, spots)]
-        spots = spots[_edge_distance(fence, spots) >= FENCE_MARGIN_M]
+        spots = spots[_edge_distance(fence, spots) >= margin_m]
         for spot in spots:
             if np.any(np.hypot(*(passable[:, :2] - spot).T) < passable[:, 2] + CLEAR_M):
                 continue
             if _ground(cli, spot, _COARSE, terrain_uids) is None:
                 continue
             ground = _ground(cli, spot, _FINE, terrain_uids)
-            if ground is not None and _slope_deg(ground, spot) <= MAX_SLOPE_DEG:
+            if ground is not None and _slope_deg(ground, spot) <= max_slope_deg:
                 return float(spot[0]), float(spot[1])
     raise NoDockGround(f"no open ground for the dock in seed {seed}")
 
@@ -170,8 +169,12 @@ def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset,
 def reset(env: Any, ep: SolarEpisode) -> None:
     """Stand the dock on this seed's spot, set the drone down on its pad, and tell the environment the pad is a
     landing."""
+    stand(env, ep, *find_site(env.CLIENT, ep.seed, ep.fence, ep.terrain_uids, park.passable_outlines(ep)))
+
+
+def stand(env: Any, ep: SolarEpisode, x: float, y: float) -> None:
+    """Stand the dock at (x, y), set the drone down on its pad, and tell the environment the pad is a landing."""
     cli = env.CLIENT
-    x, y = find_site(cli, ep.seed, ep.fence, ep.terrain_uids, park.passable_outlines(ep))
     model = dock3.spawn(env, x, y, yaw=0.0)
     pad, yaw = dock3.rest_pose(model)
     ep.dock_uid = model.uid
@@ -197,7 +200,7 @@ def _return_height(ep: SolarEpisode, pos: np.ndarray) -> float:
     dock."""
     height = float(pos[2])
     if math.hypot(*(ep.dock_position[:2] - pos[:2])) > RTH_FAR_M:
-        height = max(height, float(ep.dock_position[2]) + PATROL_HEIGHT_M)
+        height = max(height, float(ep.dock_position[2]) + ep.patrol_height_m)
     return max(height, float(ep.dock_position[2]) + WAIT_M)
 
 
@@ -253,7 +256,7 @@ def autopilot(env: Any, ep: SolarEpisode) -> Optional[Setpoint]:
     pos = np.asarray(env.pos[0], dtype=float)
     east, north = (float(v) for v in _towards(ep.dock_position[:2] - pos[:2], MAX_HORIZONTAL_MPS))
     if ep.phase == "taking_off":
-        rise = float(ep.dock_position[2]) + PATROL_HEIGHT_M - pos[2]
+        rise = float(ep.dock_position[2]) + ep.patrol_height_m - pos[2]
         if abs(rise) < ARRIVE_M:
             ep.phase = "flying"
         return Setpoint((east, north, _climb(rise)))

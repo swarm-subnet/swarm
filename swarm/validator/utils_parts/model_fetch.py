@@ -56,6 +56,8 @@ def _admitted(path: Path, expected_family: str | None = None) -> bool:
         # a legacy graph artifact declares its family in the graph manifest and
         # is admitted against the ONNX rules by the runner, inside the sandbox
         accepted, detail = check_safety(path)
+        if accepted:
+            accepted, detail = check_native_code(path)
         declared_family = graph_declared_family
     else:
         accepted, detail = validate_submission_zip(path)
