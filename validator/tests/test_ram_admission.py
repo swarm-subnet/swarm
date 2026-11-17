@@ -77,18 +77,18 @@ def test_sentinel_prior_covers_the_measured_patrol():
 
 
 def test_sixteen_gib_box_admits_only_the_patrols_that_fit():
-    """A 16 GiB box with seven slots starts three patrols, and three measured peaks fit beside the host reserve."""
+    """A 16 GiB box with seven slots starts two patrols, each held with its seed's reference flight, and their measured peaks fit beside the host reserve."""
     scheduler = _scheduler(SIXTEEN_GIB_MB, 15000.0)
 
     admitted = _admit_until_refused(scheduler, "type8_solar")
 
-    assert len(admitted) == 3
+    assert len(admitted) == 2
     assert len(admitted) * MEASURED_PATROL_PEAK_MB + scheduler.ram_reserve_mb <= SIXTEEN_GIB_MB
 
 
 def test_patrols_started_since_a_reading_count_against_it():
-    """One reading of 9 GiB free admits one patrol; the next waits for a fresh reading, which clears the count."""
-    scheduler = _scheduler(32768.0, 9000.0, workers_requested=8)
+    """One reading of 10.5 GiB free admits one patrol; the next waits for a fresh reading, which clears the count."""
+    scheduler = _scheduler(32768.0, 10500.0, workers_requested=8)
 
     admitted = _admit_until_refused(scheduler, "type8_solar")
     assert len(admitted) == 1
@@ -129,8 +129,8 @@ def test_a_patrol_that_fits_starts_without_a_warning():
 @pytest.mark.parametrize(
     ("total_mb", "at_once"),
     [
-        pytest.param(SIXTEEN_GIB_MB, 3, id="16-GiB"),
-        pytest.param(32768.0, 7, id="32-GiB"),
+        pytest.param(SIXTEEN_GIB_MB, 2, id="16-GiB"),
+        pytest.param(32768.0, 4, id="32-GiB"),
         pytest.param(4096.0, 1, id="4-GiB"),
     ],
 )
@@ -140,7 +140,7 @@ def test_startup_banner_says_how_many_patrols_run_at_once(total_mb, at_once):
 
     lines = scheduler.describe_configuration_lines()
 
-    assert f"Scheduler RAM prior: group=type8_solar ram=3700MiB at_once={at_once}" in lines
+    assert f"Scheduler RAM prior: group=type8_solar ram={dispatch._ram_estimate_for_group('type8_solar'):.0f}MiB at_once={at_once}" in lines
 
 
 class _ConcurrencyProbe:
@@ -348,27 +348,27 @@ def _run_benchmark_pool(monkeypatch, tmp_path):
     return launched, recorded
 
 
-def test_validator_runs_at_most_three_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
-    """The validator's worker pool, asked for seven workers on 16 GiB, never holds more than three patrols and charges each start."""
+def test_validator_runs_at_most_two_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
+    """The validator's worker pool, asked for seven workers on 16 GiB, never holds more than two patrols and charges each start."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     results, warnings = _run_validator_pool(monkeypatch, tmp_path)
 
     assert all(result is not None and result.success for result in results)
-    assert host.probe.peak == 3
+    assert host.probe.peak == 2
     assert host.started == ["type8_solar"] * PATROLS
     assert not any("Low memory" in line for line in warnings)
 
 
-def test_benchmark_runs_at_most_three_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
-    """The benchmark's worker pool, asked for seven workers on 16 GiB, never holds more than three patrols and charges each start."""
+def test_benchmark_runs_at_most_two_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
+    """The benchmark's worker pool, asked for seven workers on 16 GiB, never holds more than two patrols and charges each start."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     launched, recorded = _run_benchmark_pool(monkeypatch, tmp_path)
 
     assert launched == PATROLS
     assert len(recorded) == PATROLS
-    assert host.probe.peak == 3
+    assert host.probe.peak == 2
     assert host.started == ["type8_solar"] * PATROLS
 
 

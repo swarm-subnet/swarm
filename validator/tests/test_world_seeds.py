@@ -169,3 +169,20 @@ def test_a_replaced_world_seed_stays_as_wide_as_the_one_it_stands_in_for(checks)
     assert wide[0] == WIDE_A and all(seed > 2**96 for seed in wide[1:]) and len(set(wide)) == len(wide)
     narrow = list(checks.candidates(12345))
     assert narrow[0] == 12345 and all(seed < 2**32 for seed in narrow)
+
+
+@pytest.mark.parametrize("cores, ram_mb, expected", [(32, 32000, 1), (12, 48000, 2), (64, 256000, 10), (2, 256000, 1)])
+def test_seed_checks_never_take_more_memory_than_the_machine_spares(monkeypatch, cores, ram_mb, expected):
+    """Proves the reference flights are bounded by memory as well as cores: a 32-core machine with 32 GB runs one
+    per family, not eight, so two families judging their seeds at once cannot fill it."""
+    monkeypatch.delenv(solar_seed_checks.WORKERS_ENV, raising=False)
+    monkeypatch.setattr(solar_seed_checks.os, "cpu_count", lambda: cores)
+    monkeypatch.setattr(solar_seed_checks, "_total_ram_mb", lambda: float(ram_mb))
+    assert solar_seed_checks.workers() == expected
+
+
+def test_the_seed_check_setting_still_wins_over_the_machine(monkeypatch):
+    """Proves an operator's own worker count is used as given."""
+    monkeypatch.setenv(solar_seed_checks.WORKERS_ENV, "5")
+    monkeypatch.setattr(solar_seed_checks, "_total_ram_mb", lambda: 8000.0)
+    assert solar_seed_checks.workers() == 5

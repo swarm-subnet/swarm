@@ -63,10 +63,12 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type3_mountain": 2300.0,
     "type6_forest": 2400.0,
     "type7_office": 1900.0,
-    # A patrol peaked at 3,344 MB over 100 runs; about 10% on top.
-    "type8_solar": 3700.0,
-    # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top.
-    "type9_testsite": 3250.0,
+    # A patrol peaked at 3,344 MB over 100 runs; about 10% on top. A seed not judged yet is first flown by the
+    # reference pilot in a process of its own, about 2,300 MiB beside the worker, so both are held for it.
+    "type8_solar": 6000.0,
+    # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top, and about 2,750 MiB for the
+    # reference pilot's flight of a seed not judged yet.
+    "type9_testsite": 6000.0,
 }
 _DEFAULT_RAM_ESTIMATE_MB = max(_GROUP_RAM_ESTIMATES_MB.values())
 _RESOURCE_POLL_INTERVAL_SEC = 2.0

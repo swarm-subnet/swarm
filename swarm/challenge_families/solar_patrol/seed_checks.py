@@ -60,6 +60,8 @@ CACHE_ENV = "SWARM_SEED_CHECK_DIR"
 CACHE_DEFAULT = Path.home() / ".cache" / "swarm" / "seed_checks"
 WORKERS_ENV = "SWARM_SEED_CHECK_WORKERS"
 CPU_SHARE = 4                          # by default the flights take a quarter of the machine's cores
+RAM_SHARE = 8                          # and one family's flights at most an eighth of its memory
+CHECK_RAM_MB = 3000.0                  # memory one reference flight is counted at; they peaked near 2,750 MiB
 BACKGROUND_NICENESS = 19               # flights judging ahead yield every core the scoring wants
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
 POLL_S = 0.5                           # how often a busy flight's kept verdict is looked for
@@ -99,9 +101,25 @@ def candidates(seed: int) -> Iterator[int]:
         yield int.from_bytes(digest[:width], "big")
 
 
+def _total_ram_mb() -> float:
+    """The machine's memory in MiB, or infinity where it cannot be read, so the cores alone decide."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return float(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return float("inf")
+
+
 def workers() -> int:
-    """How many reference flights run side by side: the machine's setting, else a share of its cores."""
-    return max(1, int(os.environ.get(WORKERS_ENV) or (os.cpu_count() or 1) // CPU_SHARE))
+    """How many reference flights run side by side: the machine's setting, else a share of its cores, never more
+    than a share of its memory holds, since each open family judges its seeds at the same time as the others."""
+    if os.environ.get(WORKERS_ENV):
+        return max(1, int(os.environ[WORKERS_ENV]))
+    by_cores = (os.cpu_count() or 1) // CPU_SHARE
+    by_memory = _total_ram_mb() / RAM_SHARE // CHECK_RAM_MB
+    return max(1, int(min(by_cores, by_memory)))
 
 
 def cache_dir() -> Path:
