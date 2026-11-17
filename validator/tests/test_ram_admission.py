@@ -146,22 +146,22 @@ def test_startup_banner_says_how_many_patrols_run_at_once(total_mb, at_once):
 @pytest.mark.parametrize(
     ("flying", "room"),
     [
-        pytest.param(0, 7, id="none-flying"),
-        pytest.param(6, 1, id="one-patrol-left"),
-        pytest.param(7, 0, id="budget-full"),
+        pytest.param(0, 4, id="none-flying"),
+        pytest.param(3, 1, id="one-patrol-left"),
+        pytest.param(4, 0, id="budget-full"),
     ],
 )
 def test_a_validator_claims_only_the_patrols_its_memory_can_fly(flying, room):
-    """Sixteen slots on 32 GiB fly seven patrols, so the pool is asked for no more than the patrols still to fit."""
+    """Sixteen slots on 32 GiB fly four patrols, so the pool is asked for no more than the patrols still to fit."""
     scheduler = _scheduler(32768.0, 30000.0, workers_requested=16)
 
     assert scheduler.claim_room(["type8_solar"], ["type8_solar"] * flying) == room
 
 
 def test_claims_stop_at_the_free_memory_of_the_last_reading():
-    """Room in the budget is not room on the host: a reading of 9 GiB free leaves space to claim one patrol, and a
+    """Room in the budget is not room on the host: a reading of 10.5 GiB free leaves space to claim one patrol, and a
     patrol started since that reading spends it."""
-    scheduler = _scheduler(32768.0, 9000.0, workers_requested=16)
+    scheduler = _scheduler(32768.0, 10500.0, workers_requested=16)
 
     assert scheduler.claim_room(["type8_solar"], ["type8_solar"]) == 1
     scheduler.note_group_started("type8_solar", alone=False)
@@ -403,14 +403,14 @@ def _run_validator_pool_from_feeder(monkeypatch, tmp_path, probe):
 
 
 def test_validator_claims_from_the_pool_only_the_patrols_its_memory_flies(monkeypatch, tmp_path, fake_host):
-    """Seven slots on 16 GiB fly three patrols, so no claim asks past three in the air, and every patrol still flies."""
+    """Seven slots on 16 GiB fly two patrols, so no claim asks past two in the air, and every patrol still flies."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     results, feeder = _run_validator_pool_from_feeder(monkeypatch, tmp_path, host.probe)
 
     assert all(result is not None and result.success for result in results)
-    assert host.probe.peak == 3
-    assert all(asked >= 1 and asked + flying <= 3 for asked, flying in feeder.asks)
+    assert host.probe.peak == 2
+    assert all(asked >= 1 and asked + flying <= 2 for asked, flying in feeder.asks)
 
 
 def test_validator_short_of_memory_claims_one_patrol_at_a_time(monkeypatch, tmp_path, fake_host):
