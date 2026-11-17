@@ -90,7 +90,7 @@ class _StillMovers:
 
 
 @pytest.fixture
-def flat_park(monkeypatch):
+def flat_park(monkeypatch, shared_open_ground):
     """Build the patrol's world as flat ground with a square fence around the stand-in dock spot."""
     def build(seed=0, cli=0, asset_dir=None, groups=None):
         """A flat slab standing in for the park's terrain."""
@@ -283,6 +283,7 @@ def test_random_actions_fly_a_whole_patrol(flat_park):
 
 
 @pytest.mark.timeout(1200)
+@pytest.mark.time_budget(30)
 def test_a_patrol_that_never_takes_off_runs_out_of_time(flat_park):
     """A drone left in its dock ends the patrol on the clock at 390 s, one decision every 0.1 s."""
     log = _patrol(12, lambda i, obs: _action())

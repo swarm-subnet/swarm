@@ -109,7 +109,8 @@ jobs:
       - name: Run the validator tests inside the image
         if: steps.plan.outputs.publish == 'true'
         run: |
-          docker run --rm --cpus=4 \
+          cpus="$(nproc)"
+          docker run --rm --cpus="$cpus" \
             -v "$PWD":/app \
             -w /app \
             -e PYTHONDONTWRITEBYTECODE=1 \
@@ -117,7 +118,7 @@ jobs:
             -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
             swarm-validator:candidate \
-            pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
+            pytest -v validator/tests -n"$cpus" --dist worksteal -p no:cacheprovider --timeout=300
 
       - name: Push
         if: steps.plan.outputs.publish == 'true'

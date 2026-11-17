@@ -27,6 +27,8 @@ from pathlib import Path
 import pytest
 from filelock import FileLock
 
+pytest_plugins = ["pytester", "validator.tests.time_budget"]
+
 
 def _ensure_repo_on_syspath() -> None:
     """Put the checkout first on sys.path so tests import it over an installed copy."""

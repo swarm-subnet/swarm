@@ -186,10 +186,17 @@ jobs:
         # once per worker that asks for it, so spreading 35 tests over twelve is slower
         # than running them in order, and the names come out interleaved.
 
+  # The suite is split by recorded run time (.test_durations) so the shards finish together;
+  # a test missing from that file counts as an average one.
   validator:
+    name: validator (${{ matrix.shard }}/4)
     needs: push-validator-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       # On pull_request this checks out the MERGE commit: the PR branch
       # already merged into the base branch. That is the state that would
@@ -216,10 +223,15 @@ jobs:
       - name: Pull test image
         run: docker pull "$VALIDATOR_TEST_IMAGE"
 
+      # One worker per CPU: each Sentinel world takes about 3 GB, so more workers than
+      # CPUs get killed for memory without running any faster. A test that hangs fails
+      # after five minutes, and one that takes over 20 s fails the run unless it carries
+      # a time_budget mark of its own.
       - name: Run the validator tests
         run: |
+          cpus="$(nproc)"
           docker run --rm \
-            --cpus=4 \
+            --cpus="$cpus" \
             -v "$PWD":/app \
             -w /app \
             -e PYTHONDONTWRITEBYTECODE=1 \
@@ -227,9 +239,22 @@ jobs:
             -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
             "$VALIDATOR_TEST_IMAGE" \
-            pytest -v validator/tests -n4 --dist worksteal -p no:cacheprovider
+            pytest -v validator/tests -n"$cpus" --dist worksteal -p no:cacheprovider --timeout=300 \
+              --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration \
+              --durations=20 --max-test-seconds=20
 
-      # The tests above never reach a real Docker daemon, so a path the host cannot see
+  # Apart from the shards so it runs once, beside them, and not after a quarter of the suite.
+  validator-image-checks:
+    needs: push-validator-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The validator tests never reach a real Docker daemon, so a path the host cannot see
       # passes them. This runs the first-time model check through the image the way an
       # operator's validator does, and a failure here also holds back the image publish.
       # Watched: the image inputs, the compose mounts, the code that hands paths to the
@@ -237,7 +262,6 @@ jobs:
       # the image.
       - name: Check whether the image model check applies
         id: image_check
-        if: ${{ !cancelled() }}
         run: |
           case "$GITHUB_EVENT_NAME" in
             pull_request) base="$GITHUB_SHA^1" ;;
@@ -256,9 +280,20 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # It runs even when the tests failed, so both results show on one run.
+      - name: Log in to GHCR
+        if: steps.image_check.outputs.run == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull test image
+        if: steps.image_check.outputs.run == 'true'
+        run: docker pull "$VALIDATOR_TEST_IMAGE"
+
       - name: Check a real model through the validator image
-        if: ${{ !cancelled() && steps.image_check.outputs.run == 'true' }}
+        if: steps.image_check.outputs.run == 'true'
         env:
           SWARM_VALIDATOR_TAG: ci
         run: bash .docker/image_model_check.sh
@@ -266,7 +301,7 @@ jobs:
       # The validator runs as a plain uid, and a capability that does not reach the
       # firewall leaves every flight unlocked and the host excluded, with green unit tests.
       - name: Lock a container down through the validator image
-        if: ${{ !cancelled() && steps.image_check.outputs.run == 'true' }}
+        if: steps.image_check.outputs.run == 'true'
         env:
           SWARM_VALIDATOR_TAG: ci
         run: bash .docker/image_lockdown_check.sh

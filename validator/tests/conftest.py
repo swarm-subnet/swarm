@@ -29,6 +29,7 @@ import types
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 
@@ -321,6 +322,30 @@ def _no_leaked_heartbeat_timer():
         "raises 'Event loop is closed' against whatever test happens to be running then. "
         "Call hb._stop_timer() in a finally, or hb.finish()."
     )
+
+
+_OPEN_GROUND: dict = {}
+
+
+@pytest.fixture
+def shared_open_ground(monkeypatch, request):
+    """Find the decoys' open ground once per test module for each fence, terrain, dock and trunks: a flat stand-in park
+    gives the same cells on every reset, and finding them over a wide fence is most of the reset."""
+    decoys = importlib.import_module("swarm.challenge_families.solar_patrol.decoys")
+    find = decoys.open_ground
+
+    def remembered(cli, fence, terrain, dock_xy, trunks):
+        """The open ground for these arguments, found on their first reset in this module, its arrays read-only."""
+        key = (request.module.__name__, np.asarray(fence, dtype=float).tobytes(), tuple(sorted(terrain)),
+               np.asarray(dock_xy, dtype=float).tobytes(), np.asarray(trunks, dtype=float).tobytes())
+        if key not in _OPEN_GROUND:
+            ground = find(cli, fence, terrain, dock_xy, trunks)
+            for cells in (ground.open, ground.height, ground.planned):
+                cells.setflags(write=False)
+            _OPEN_GROUND[key] = ground
+        return _OPEN_GROUND[key]
+
+    monkeypatch.setattr(decoys, "open_ground", remembered)
 
 
 @pytest.fixture

@@ -1455,6 +1455,7 @@ def test_a_model_that_leaves_mid_patrol_misses_the_men_it_reported(monkeypatch):
 
 @pytest.mark.skipif(bool(install.problems()), reason="this install cannot run Swarm Sentinel")
 @pytest.mark.timeout(1200)
+@pytest.mark.time_budget(45)
 def test_a_model_that_exits_on_its_first_act_on_a_real_theft_seed_misses_every_thief(monkeypatch):
     """On the real park and a theft seed, a model whose process dies on its first act gets the seed scored as its own
     exit, with every thief of the crew counted as missed."""
