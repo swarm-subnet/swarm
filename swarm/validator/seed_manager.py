@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import bittensor as bt
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, ChallengeFamilyRuntimeError, require_runtime_family
 from swarm.challenge_families.solar_patrol.seed_checks import CACHE_ENV as SEED_CHECK_CACHE_ENV
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
@@ -527,7 +527,7 @@ class BenchmarkSeedManager:
             return seeds
         try:
             secret = require_runtime_family(family_id).secret_worlds
-        except UnknownChallengeFamilyError:
+        except ChallengeFamilyRuntimeError:
             secret = False
         if not secret:
             return seeds

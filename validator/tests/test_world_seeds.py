@@ -107,6 +107,14 @@ def test_a_family_without_secret_worlds_flies_its_list(manager):
         KEY, EPOCH, PUBLIC_FAMILY, manager.module.epoch_seed_count(PUBLIC_FAMILY))
 
 
+def test_a_family_with_no_runtime_flies_its_list(manager, monkeypatch):
+    """Proves a family the simulator has no runtime for falls back to its list instead of failing the lookup."""
+    monkeypatch.setattr(manager.module, "require_runtime_family", require_runtime_family)
+    monkeypatch.setattr(manager, "_seeds_for", lambda family_id, epoch: [1, 2, 3])
+    monkeypatch.setattr(manager, "uses_derived_seeds", lambda family_id: True)
+    assert manager.get_all_seeds("cf_not_a_family") == [1, 2, 3]
+
+
 def test_a_new_key_gives_new_world_seeds(manager):
     """Proves the kept world seeds follow the key they were built from."""
     before = manager.get_all_seeds(SENTINEL)
