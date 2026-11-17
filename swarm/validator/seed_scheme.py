@@ -33,6 +33,8 @@ SEED_SCHEME_VERSION = "v1"
 # The backend reports the live value on /sync, so this is only the floor before the first sync.
 DEFAULT_SEED_SCHEME_MIN_VERSION = "5.1.6"
 _SEED_SET_ID_CHARS = 16
+# Bytes of the keyed hash a world seed keeps: wide enough that no table of worlds can be built ahead.
+WORLD_SEED_BYTES = 16
 
 
 def parse_benchmark_version(value: str) -> tuple:
@@ -80,3 +82,19 @@ def derive_seed(key: str, epoch_number: int, family_id: str, index: int) -> int:
 def derive_seeds(key: str, epoch_number: int, family_id: str, count: int) -> List[int]:
     """The first ``count`` seeds of an epoch's list for one family."""
     return [derive_seed(key, epoch_number, family_id, i) for i in range(count)]
+
+
+def derive_world_seed(key: str, epoch_number: int, family_id: str, index: int) -> int:
+    """The number the world at one index is drawn from, for a family that keeps its worlds secret.
+
+    A list seed is 32 bits, few enough to try them all: a model could match what it senses against a table of
+    every seed and replay the world. This one keeps 128 bits of its own keyed hash, so only the key rebuilds it.
+    """
+    message = f"{SEED_SCHEME_VERSION}|world|{family_id}|{epoch_number}|{index}".encode("utf-8")
+    digest = hmac.new(bytes.fromhex(key), message, hashlib.sha256).digest()
+    return int.from_bytes(digest[:WORLD_SEED_BYTES], "big")
+
+
+def derive_world_seeds(key: str, epoch_number: int, family_id: str, count: int) -> List[int]:
+    """The world seeds behind the first ``count`` seeds of an epoch's list for one family."""
+    return [derive_world_seed(key, epoch_number, family_id, i) for i in range(count)]

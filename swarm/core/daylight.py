@@ -179,7 +179,7 @@ def seeded_sun(seed: int, night_share: float = 0.0) -> SunLight:
     night coin, so a seed keeps its heading either way."""
     if not 0.0 <= night_share <= 1.0:
         raise ValueError(f"night_share must be between 0 and 1, got {night_share}")
-    rng = random.Random((int(seed) ^ SUN_SEED_OFFSET) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ SUN_SEED_OFFSET)
     azimuth_deg = rng.uniform(0.0, 360.0)
     if night_share > 0.0 and rng.random() < night_share:
         return _moon(rng, azimuth_deg)

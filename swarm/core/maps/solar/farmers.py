@@ -243,7 +243,7 @@ def plan(seed: int, road: Road) -> List[Trip]:
     speed, and whether and how long it stops before turning; the road then stands empty for a drawn while before the
     next comes.
     """
-    rng = random.Random((int(seed) ^ CONFIG["seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["seed_offset"])
     trips: List[Trip] = []
     clock = None
     while len(trips) < CONFIG["most"] and (clock is None or clock < CONFIG["patrol_s"]):

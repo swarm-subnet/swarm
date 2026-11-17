@@ -422,7 +422,7 @@ A transient timeout or RPC-transport failure is retried once for that seed, subj
 
 ### Epoch Rotation
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds. In Swarm Sentinel and Swarm Test Field a validator does not build the world from the 32-bit list seed: it draws it from a 128-bit world seed that only the same key gives, so a model cannot find which seed it is flying by trying them all. Once the key is published those worlds rebuild too. Your local benchmark is unchanged: it builds each world from the seed you give it.
 
 At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` refuses to commit in that window and tells you when it reopens.
 

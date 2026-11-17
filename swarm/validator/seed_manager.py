@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import bittensor as bt
 
-from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID
+from swarm.challenge_families import DEFAULT_RUNTIME_FAMILY_ID, require_runtime_family
 from swarm.challenge_families.solar_patrol.seed_checks import CACHE_ENV as SEED_CHECK_CACHE_ENV
 from swarm.constants import (
     BENCHMARK_SCREENING_SEED_COUNT,
@@ -45,6 +45,7 @@ from swarm.validator.seed_scheme import (
     DEFAULT_SEED_SCHEME_MIN_VERSION,
     SEED_SCHEME_VERSION,
     derive_seeds,
+    derive_world_seeds,
     key_fingerprint,
     seed_set_id,
     uses_derived_seeds,
@@ -107,6 +108,8 @@ class BenchmarkSeedManager:
         # Set from /sync, which is created after this manager, so it starts keyless.
         self._scheme_min_version = DEFAULT_SEED_SCHEME_MIN_VERSION
         self._epoch_keys: Dict[int, str] = {}
+        # The world seeds built so far, per epoch and family, each beside the key it came from.
+        self._world_seeds: Dict[Tuple[int, str], Tuple[str, List[int]]] = {}
 
         self.epoch_number = self._latest_local_epoch()
         if self.epoch_number > 0:
@@ -510,13 +513,38 @@ class BenchmarkSeedManager:
             return self._ensure_current_family_seeds(family_id)
         return self.seeds_for_epoch(epoch, family_id)
 
+    def _flown_seeds(self, family_id: str, epoch: Optional[int]) -> List[int]:
+        """The seeds a family's worlds are built from, in list order.
+
+        They are the list's own seeds, except for a family that keeps its worlds secret: there each world is
+        drawn from the epoch key's wide world seed at the same index. The list, its file and its publication
+        stay as they are, so the backend and the seed-set identity see no change.
+        """
+        seeds = self._seeds_for(family_id, epoch)
+        target = self.epoch_number if epoch is None else epoch
+        key = self._epoch_keys.get(target)
+        if key is None or not self.uses_derived_seeds(family_id):
+            return seeds
+        try:
+            secret = require_runtime_family(family_id).secret_worlds
+        except UnknownChallengeFamilyError:
+            secret = False
+        if not secret:
+            return seeds
+        built = self.__dict__.setdefault("_world_seeds", {})
+        cached = built.get((target, family_id))
+        if cached is None or cached[0] != key or len(cached[1]) != len(seeds):
+            cached = (key, derive_world_seeds(key, target, family_id, len(seeds)))
+            built[(target, family_id)] = cached
+        return list(cached[1])
+
     def get_screening_seeds(
         self,
         family_id: str = DEFAULT_RUNTIME_FAMILY_ID,
         epoch: Optional[int] = None,
     ) -> List[int]:
         """The screening slice of a family's seeds."""
-        return self._seeds_for(family_id, epoch)[:BENCHMARK_SCREENING_SEED_COUNT]
+        return self._flown_seeds(family_id, epoch)[:BENCHMARK_SCREENING_SEED_COUNT]
 
     def get_benchmark_seeds(
         self,
@@ -524,7 +552,7 @@ class BenchmarkSeedManager:
         epoch: Optional[int] = None,
     ) -> List[int]:
         """The benchmark slice of a family's seeds."""
-        return self._seeds_for(family_id, epoch)[BENCHMARK_SCREENING_SEED_COUNT:]
+        return self._flown_seeds(family_id, epoch)[BENCHMARK_SCREENING_SEED_COUNT:]
 
     def get_all_seeds(
         self,
@@ -532,7 +560,7 @@ class BenchmarkSeedManager:
         epoch: Optional[int] = None,
     ) -> List[int]:
         """Every seed of a family for the epoch."""
-        return list(self._seeds_for(family_id, epoch))
+        return list(self._flown_seeds(family_id, epoch))
 
     def _preeval_file(self, epoch: int, family_id: str) -> Path:
         """Path of the pre-evaluation seed file for one epoch and family."""

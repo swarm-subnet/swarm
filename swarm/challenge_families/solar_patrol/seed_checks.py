@@ -90,11 +90,13 @@ class SeedCheckError(RuntimeError):
 
 
 def candidates(seed: int) -> Iterator[int]:
-    """The seed itself, then the replacements drawn from it in order, each a 32-bit seed."""
+    """The seed itself, then the replacements drawn from it in order: 32-bit seeds for a list seed, and as wide as
+    the seed for a world seed, so a replaced world is no easier to find than the one it stands in for."""
     yield int(seed)
+    width = 4 if int(seed) < 2**32 else 16
     for attempt in range(1, CHECK_TRIES):
         digest = hashlib.sha256(f"{REPLACEMENT_TAG}|{int(seed)}|{attempt}".encode("utf-8")).digest()
-        yield int.from_bytes(digest[:4], "big")
+        yield int.from_bytes(digest[:width], "big")
 
 
 def workers() -> int:

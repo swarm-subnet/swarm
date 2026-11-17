@@ -245,6 +245,9 @@ class ChallengeFamilyRuntime:
     decision_steps: int = 1
     # Whether an epoch's seeds need work before their tasks can be built (seeds_prepared, prepare_seeds).
     prepares_seeds: bool = False
+    # Whether validators build this family's worlds from the epoch key's wide world seeds, never from the list's
+    # 32-bit seeds, so a model cannot find the seed it is flying by trying them all.
+    secret_worlds: bool = False
     # Send the next observation to the model while the last decision's control steps finish (see observation_fixed).
     observation_ahead: bool = False
     # Whether each step measures the drone's closest approach to obstacles, for a score that reads min_clearance.

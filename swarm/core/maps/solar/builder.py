@@ -135,13 +135,13 @@ def _mover_poses(path: str) -> Dict[str, Any]:
 
 def solar_densities(seed: int) -> Dict[str, float]:
     """The share of each vegetation tier this seed keeps, drawn from the map's own random stream."""
-    rng = random.Random((int(seed) ^ CONFIG["seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["seed_offset"])
     return {tier: rng.uniform(low, high) for tier, (low, high) in CONFIG["density"].items()}
 
 
 def solar_mover_rules(seed: int) -> Dict[str, Any]:
     """What this seed decides about the movers: when the truck leaves and where the bird is on its loop."""
-    rng = random.Random((int(seed) ^ CONFIG["mover_seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["mover_seed_offset"])
     delay = rng.uniform(*CONFIG["pickup_delay_s"])
     return {"pickup_delay_s": delay, "bird_phase_share": rng.uniform(*CONFIG["bird_phase_share"])}
 
@@ -682,7 +682,7 @@ def solar_shifts(seed: int, asset_dir: str = SOLAR_ASSET_DIR) -> Dict[int, Dict[
     placements = manifest["placements"]
     units = _shift_units(asset_dir)
     ring = solar_fence(asset_dir)
-    rng = random.Random((int(seed) ^ CONFIG["shift_seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["shift_seed_offset"])
     step = CONFIG["shift_scale_step"]
     standing = {number: list(unit["outlines"]) for number, unit in enumerate(units)}
     shifts: Dict[int, Dict[str, Any]] = {}

@@ -106,6 +106,7 @@ class TestFieldChallengeFamily(ChallengeFamilyRuntime):
     daylight = site.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
+    secret_worlds = True                 # validators draw each world from the epoch key, not from a seed a model can find
     observation_ahead = False
     clearance_metric = False             # the patrol's score reads no min_clearance
 

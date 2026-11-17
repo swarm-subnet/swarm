@@ -80,7 +80,7 @@ def pick_sky(seed: int, sun: SunLight, pack: Sequence[SkyPhoto]) -> Tuple[SkyPho
     candidates = [photo for photo in by_height if abs(photo.sun_elevation_deg - sun.elevation_deg) <= DAYLIGHT_SKY_ELEVATION_TOLERANCE_DEG]
     if not candidates:
         candidates = by_height[:3]
-    rng = random.Random((int(seed) ^ DAYLIGHT_SKY_SEED_OFFSET) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ DAYLIGHT_SKY_SEED_OFFSET)
     photo = rng.choice(sorted(candidates, key=lambda photo: photo.name))
     return photo, sky_yaw_deg(photo, sun)
 
