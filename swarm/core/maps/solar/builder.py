@@ -135,13 +135,13 @@ def _mover_poses(path: str) -> Dict[str, Any]:
 
 def solar_densities(seed: int) -> Dict[str, float]:
     """The share of each vegetation tier this seed keeps, drawn from the map's own random stream."""
-    rng = random.Random((int(seed) ^ CONFIG["seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["seed_offset"])
     return {tier: rng.uniform(low, high) for tier, (low, high) in CONFIG["density"].items()}
 
 
 def solar_mover_rules(seed: int) -> Dict[str, Any]:
     """What this seed decides about the movers: when the truck leaves and where the bird is on its loop."""
-    rng = random.Random((int(seed) ^ CONFIG["mover_seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["mover_seed_offset"])
     delay = rng.uniform(*CONFIG["pickup_delay_s"])
     return {"pickup_delay_s": delay, "bird_phase_share": rng.uniform(*CONFIG["bird_phase_share"])}
 
@@ -425,8 +425,10 @@ def _four_decimals(values: np.ndarray) -> np.ndarray:
     return whole / 1e4
 
 
-def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float]) -> Tuple[List[int], int]:
-    """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets.
+def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: Dict[str, float],
+                  lift_m: float = 0.0) -> Tuple[List[int], int]:
+    """Stand this seed's share of the forest as one body, with a collision trunk for every near tree a drone meets,
+    every tree raised by lift_m.
 
     A tree stands when its rank is below the seed's density for its zone, the rule a single placement follows. The
     trees that stand become a forest file the renderer draws as one instanced batch per mesh. Returns the bodies and
@@ -441,9 +443,11 @@ def _stand_forest(cli: int, asset_dir: str, forest: Dict[str, Any], densities: D
     table = _forest_table(os.path.join(folder, forest["table"]))
     limits = np.array([densities.get(name, 1.0) for name in forest["tiers"]])
     keep = table["rank"] < limits[table["tier"]]
-    position, scale = table["position"][keep], table["scale"][keep]
+    position, scale = table["position"][keep] + np.array([0.0, 0.0, lift_m]), table["scale"][keep]
     # The rows go in binary, carrying the numbers the four-decimal text the forest was first written as gave.
     rows = _forest_rows(os.path.join(folder, forest["table"]))[keep]
+    if lift_m:
+        rows[:, 3] += lift_m
     handle, path = tempfile.mkstemp(suffix=".fst")
     try:
         with os.fdopen(handle, "wb") as out:
@@ -678,7 +682,7 @@ def solar_shifts(seed: int, asset_dir: str = SOLAR_ASSET_DIR) -> Dict[int, Dict[
     placements = manifest["placements"]
     units = _shift_units(asset_dir)
     ring = solar_fence(asset_dir)
-    rng = random.Random((int(seed) ^ CONFIG["shift_seed_offset"]) & 0xFFFFFFFF)
+    rng = random.Random(int(seed) ^ CONFIG["shift_seed_offset"])
     step = CONFIG["shift_scale_step"]
     standing = {number: list(unit["outlines"]) for number, unit in enumerate(units)}
     shifts: Dict[int, Dict[str, Any]] = {}

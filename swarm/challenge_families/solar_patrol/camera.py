@@ -296,6 +296,41 @@ def _object_map(seg: Any, shot: View) -> np.ndarray:
     return np.reshape(np.asarray(seg, dtype=np.int32), (shot.height, shot.width))
 
 
+def white_balance_gains(table: tuple, elevation_deg: float) -> Tuple[float, float, float]:
+    """The red, green and blue gains a white balance table gives at a sun elevation, held at its ends."""
+    rows = sorted(table)
+    elevations = [float(row[0]) for row in rows]
+    return tuple(float(np.interp(float(elevation_deg), elevations, [float(row[c]) for row in rows])) for c in (1, 2, 3))
+
+
+@functools.lru_cache(maxsize=64)
+def white_balance_bytes(gains: Tuple[float, float, float]) -> np.ndarray:
+    """Per channel, the byte each byte becomes under the gains in linear light: decoded with 2.2, multiplied,
+    encoded again and clipped. Worked out once with Python's own pow, so every machine draws the same pixels."""
+    table = np.empty((3, 256), dtype=np.uint8)
+    for c, gain in enumerate(gains):
+        for k in range(256):
+            linear = min(1.0, math.pow(k / 255.0, 2.2) * gain)
+            table[c, k] = int(math.floor(math.pow(linear, 1.0 / 2.2) * 255.0 + 0.5))
+    table.flags.writeable = False
+    return table
+
+
+def balanced(frame: np.ndarray, gains: Tuple[float, float, float]) -> np.ndarray:
+    """A colour frame, RGBA bytes or RGB floats from bytes, with a white balance's gains applied to its colour."""
+    table = white_balance_bytes(gains)
+    if frame.dtype == np.uint8:
+        out = frame.copy()
+        for c in range(3):
+            out[..., c] = table[c][frame[..., c]]
+        return out
+    index = np.rint(frame * np.float32(255.0)).astype(np.uint8)
+    out = np.empty_like(index)
+    for c in range(3):
+        out[..., c] = table[c][index[..., c]]
+    return np.true_divide(out, np.float32(255.0), dtype=np.float32)
+
+
 def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
                  outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
@@ -320,6 +355,10 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
         physicsClientId=cli, **kwargs,
     )
     frame = np.reshape(np.asarray(rgb, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :3].astype(np.float32) / 255.0
+    # A family that sets a white balance has the daylight model's cast taken out by day, as the real camera does.
+    table = getattr(getattr(env, "_solar", None), "white_balance", None)
+    if table is not None and env._sun is not None and not env._sun.night and env._daylight_flags:
+        frame = balanced(frame, white_balance_gains(table, env._sun.elevation_deg))
     return frame, _object_map(seg, shot)
 
 

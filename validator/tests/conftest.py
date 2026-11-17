@@ -302,12 +302,13 @@ def _each_as_itself(seeds: Any, workers: int, *, niceness: int = 0) -> dict:
 
 @pytest.fixture(autouse=True)
 def _seed_checks_pass_every_seed(monkeypatch):
-    """Solar Patrol flies every seed as it is unless a test asks for its seed checks: a check is a whole reference
-    patrol, and the other tests fly the seed they name."""
-    seed_checks = sys.modules.get("swarm.challenge_families.solar_patrol.seed_checks")
-    if seed_checks is not None:
-        monkeypatch.setattr(seed_checks, "approve", _as_it_is)
-        monkeypatch.setattr(seed_checks, "prepare", _each_as_itself)
+    """Both patrol families fly every seed as it is unless a test asks for its seed checks: a check is a whole
+    reference patrol, and the other tests fly the seed they name."""
+    for name in ("swarm.challenge_families.solar_patrol.seed_checks", "swarm.challenge_families.test_field.seed_checks"):
+        seed_checks = sys.modules.get(name)
+        if seed_checks is not None:
+            monkeypatch.setattr(seed_checks, "approve", _as_it_is)
+            monkeypatch.setattr(seed_checks, "prepare", _each_as_itself)
 
 
 @pytest.fixture(autouse=True)

@@ -155,6 +155,14 @@ def _count_obj_faces_cached(path: str, mtime_ns: int, size: int) -> int:
     return data.count(b"\nf ") + (1 if data.startswith(b"f ") else 0)
 
 
+def _seed_stream(seed: int) -> np.random.RandomState:
+    """The legacy generator a seed starts: a 32-bit seed starts it as it always did, a wider one from all its bits."""
+    seed = int(seed)
+    if seed < 2**32:
+        return np.random.RandomState(seed)
+    return np.random.RandomState([(seed >> shift) & 0xFFFFFFFF for shift in range(0, seed.bit_length(), 32)])
+
+
 def _inside_safety_patch(contact_point, safety_patch) -> bool:
     """True when a contact falls inside the disc and the height band a family has excused from clearance scoring."""
     cx, cy = safety_patch.xy
@@ -280,12 +288,12 @@ class MovingDroneAviary(BaseRLAviary):
             requested_mode=bool(sar_mode),
         )
 
-        fov_rng = np.random.RandomState(seed)
+        fov_rng = _seed_stream(seed)
         fov_rng.rand()
         self._fov = CAMERA_FOV_BASE + fov_rng.uniform(-CAMERA_FOV_VARIANCE, CAMERA_FOV_VARIANCE)
 
         if LIGHT_RANDOMIZATION_ENABLED:
-            light_rng = np.random.RandomState(seed)
+            light_rng = _seed_stream(seed)
             light_rng.rand()
             light_rng.rand()
             light_rng.rand()

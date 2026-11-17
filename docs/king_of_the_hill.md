@@ -26,10 +26,10 @@ How emissions are distributed on Swarm Subnet 124.
 
 ## What KotH is
 
-Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **its most recent champions share that family's slice of emissions**: the last 10 in Swarm Sentinel, the last 5 in every other family. Within the window each one's slice is set first by how recently they took the throne, and lifted by up to 30% by how much they improved the family's best score.
+Swarm runs **one King of the Hill per challenge family** (e.g. Search-and-Rescue, Swarm Sentinel). Each family keeps its own lineage of champions, and **its most recent champions share that family's slice of emissions**: the last 10 in Swarm Sentinel, the last 3 in Swarm Test Field, the last 5 in every other family. Within the window each one's slice is set first by how recently they took the throne, and lifted by up to 30% by how much they improved the family's best score.
 
 - The **current champion** of a family is always at the top of that family's lineage.
-- The **most recent past champions** of the family (nine in Swarm Sentinel, four elsewhere) keep earning until they age out of the window.
+- The **most recent past champions** of the family (nine in Swarm Sentinel, two in Swarm Test Field, four elsewhere) keep earning until they age out of the window.
 - Each king's gain is locked at crowning; the rank weight shifts as newer kings arrive, moving share toward the freshest champions.
 
 How the family slices add up is covered in [Per-family emissions](#per-family-emissions). The within-a-family split below is identical to the original single-competition design.
@@ -54,7 +54,7 @@ KotH rewards **the act of moving the frontier**, not just the act of sitting on 
 
 ## The king window
 
-A family's window holds **5 entries**: the current king plus the four most recent past kings. Swarm Sentinel, which carries the largest slice, holds **10**: the current king plus the nine most recent past kings. The size is the `king_window` field of the family's registry entry; a family without one keeps 5.
+A family's window holds **5 entries**: the current king plus the four most recent past kings. Swarm Sentinel, which carries the largest slice, holds **10**: the current king plus the nine most recent past kings. Swarm Test Field holds **3**: the current king plus the two most recent past kings. The size is the `king_window` field of the family's registry entry; a family without one keeps 5.
 
 A 5-king window:
 
@@ -68,11 +68,11 @@ Rank        Slot                          Earning
 −4          4 dethronings ago             yes (leaves on next crowning)
 ```
 
-In Swarm Sentinel the same ladder runs on to slot `−9`.
+In Swarm Sentinel the same ladder runs on to slot `−9`. In Swarm Test Field it stops at slot `−2`.
 
-After the next crowning, the king in the last slot (`−4`, or `−9` in Swarm Sentinel) leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
+After the next crowning, the king in the last slot (`−4`, `−9` in Swarm Sentinel, `−2` in Swarm Test Field) leaves the window and stops earning. The new king takes slot `0`, every other king shifts one slot down.
 
-Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until a full window of newer crownings (five, or ten in Swarm Sentinel) pushes it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
+Being dethroned does **not** remove a king from the window: the seat stays payable, tapered by rank, until a full window of newer crownings (five, ten in Swarm Sentinel, three in Swarm Test Field) pushes it out. The gain is locked at crowning: a window seat's score and prev-score are written once and never touched again, even when the reigning champion is re-scored at the epoch re-eval.
 
 A seat stops paying before it ages out if it fails the [payout eligibility check](#who-a-seat-can-pay): a dead or unreachable repo, or a missing artifact. An ineligible seat keeps its window slot (no older king is backfilled) but it is skipped at payout, so its slice renormalizes onto the family's surviving kings. Taper ranks are assigned among the **payable** kings only, ordered by crowning recency, so the kings behind a skipped seat move up one taper step; the rank badge on the ladder still shows window position, so a badge and its paid share can briefly diverge while a seat is unreachable.
 
@@ -164,7 +164,7 @@ A screening pre-phase exists in the code behind a build-time constant, but it is
 
 ## Per-family emissions
 
-Each family runs its own king window: 10 kings in Swarm Sentinel, 5 in the others. Two levels decide a UID's final weight:
+Each family runs its own king window: 10 kings in Swarm Sentinel, 3 in Swarm Test Field, 5 in the others. Two levels decide a UID's final weight:
 
 ```text
 1.  family_share(f)   = how big a slice family f gets of the emission pool
@@ -181,11 +181,12 @@ Each family has an `emission_allocation` set by governance (not by miners). The 
 
 | Family | emission_allocation |
 |---|---|
-| Swarm Sentinel (`cf_solar_patrol`) | 1.00 |
+| Swarm Sentinel (`cf_solar_patrol`) | 0.95 |
+| Swarm Test Field (`cf_test_field`) | 0.05 |
 | Interceptor | 0.00 (historical 0.30) |
 | Autopilot, Swarm Autopilot, Office Interceptor, Search-and-Rescue, Swarm SAR | 0.00 (completed) |
 
-Allocations are **absolute**, never normalised: each family pays out exactly its own slice. Swarm Sentinel holds the whole `1.00`, so the whole pool is allocated and nothing burns for being unclaimed — a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
+Allocations are **absolute**, never normalised: each family pays out exactly its own slice. The two active slices sum to `1.00`, so the whole pool is allocated and nothing burns for being unclaimed: a slice burns only when its own family stops being payable. A family's **emissions state** then decides whether it participates at all:
 
 ```text
 emissions state                              weight
@@ -194,7 +195,7 @@ active / saturated / incubating / regression   1.0
 archived                                       0.0   (out of payout)
 ```
 
-One family is currently `active`: Swarm Sentinel. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search-and-Rescue and Swarm SAR are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
+Two families are currently `active`: Swarm Sentinel and Swarm Test Field. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search-and-Rescue and Swarm SAR are `completed` with `archived` emissions. Only `archived` changes anything today: the other states are labels on the lifecycle, not payout multipliers.
 
 ### Unpaid slices burn
 
@@ -205,7 +206,7 @@ share(f)   = allocation(f)          for every payable family
 burn share = 1 − sum of paid shares
 ```
 
-Example: when Swarm Sentinel has no payable king, its whole `1.00` slice burns. The moment it crowns a king, its slice pays again.
+Example: when Swarm Test Field has no payable king yet, its `0.05` slice burns while Swarm Sentinel's `0.95` pays as usual. The moment the Test Field crowns a king, its slice pays too.
 
 <a id="who-a-seat-can-pay"></a>
 
@@ -286,7 +287,7 @@ The active family slices are set by the team, not derived automatically, so a ne
 | **King** | A model that took the throne by passing the full benchmark and clearing the dynamic crowning floor. |
 | **Challenge family** | An independent competition (e.g. Search-and-Rescue, Swarm Sentinel), each with its own lineage, window, and emission slice. |
 | **Lineage** | The permanent ordered list of every king ever in a family, stored by the backend. |
-| **Active window** | A family's current kings (10 in Swarm Sentinel, 5 elsewhere) whose shares are summed and used for that family's slice. |
+| **Active window** | A family's current kings (10 in Swarm Sentinel, 3 in Swarm Test Field, 5 elsewhere) whose shares are summed and used for that family's slice. |
 | **Family share** | A family's own `emission_allocation`, absolute. Non-payable families' slices burn instead of redistributing. |
 | **Payable seat** | A window seat that passes the eligibility check: the crowned archive still in the backend vault (private track) or an intact and accessible repo (public track). |
 | **Headroom** | The distance from the previous king's score to the perfect score of 1.0. The "room left to grow". |

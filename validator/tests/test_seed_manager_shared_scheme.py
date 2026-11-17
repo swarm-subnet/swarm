@@ -236,15 +236,16 @@ def test_changing_the_scheme_drops_what_the_other_one_cached(manager):
 
 
 def test_sentinel_flies_a_list_of_two_thousand_seeds(manager):
-    """Proves Swarm Sentinel's epoch list is 2,000 long and its indexes 1000 to 1999 resolve to the derived seeds."""
+    """Proves Swarm Sentinel's epoch list is 2,000 long and its indexes 1000 to 1999 resolve to the derived seeds; the
+    patrols flown from it are as many, one world seed per list seed."""
     _go_live(manager)
 
-    seeds = manager.get_all_seeds(SENTINEL)
+    seeds = manager._seeds_for(SENTINEL, None)
 
     assert seeds == derive_seeds(KEY, EPOCH, SENTINEL, SENTINEL_SEED_COUNT)
     assert seeds[1000:] == [derive_seed(KEY, EPOCH, SENTINEL, index) for index in range(1000, SENTINEL_SEED_COUNT)]
     assert len(manager.get_screening_seeds(SENTINEL)) == BENCHMARK_SCREENING_SEED_COUNT
-    assert manager.get_benchmark_seeds(SENTINEL) == seeds[BENCHMARK_SCREENING_SEED_COUNT:]
+    assert len(manager.get_benchmark_seeds(SENTINEL)) == SENTINEL_SEED_COUNT - BENCHMARK_SCREENING_SEED_COUNT
 
 
 def test_other_families_keep_one_thousand_seeds_and_their_values(manager):
@@ -263,12 +264,12 @@ def test_a_stored_file_of_the_families_length_is_reused(manager, seed_manager_mo
     """Proves a cached epoch file with the family's own length is accepted, not rebuilt."""
     module = seed_manager_module
     _go_live(manager)
-    first = manager.get_all_seeds(family_id)
+    first = manager._seeds_for(family_id, None)
     assert len(first) == expected
     manager._family_seeds = {}
     manager._build_seeds = lambda *_: pytest.fail("a file of the right length must not be rebuilt")
 
-    assert manager.get_all_seeds(family_id) == first == json.loads(_stored_file(module, family_id=family_id).read_text())["seeds"]
+    assert manager._seeds_for(family_id, None) == first == json.loads(_stored_file(module, family_id=family_id).read_text())["seeds"]
 
 
 def test_sentinel_file_from_before_the_growth_is_rebuilt_with_the_same_first_seeds(manager, seed_manager_module):
@@ -280,7 +281,7 @@ def test_sentinel_file_from_before_the_growth_is_rebuilt_with_the_same_first_see
     manager._save_epoch_file(EPOCH, SENTINEL, old, published=False)
     assert path.exists()
 
-    rebuilt = manager.get_all_seeds(SENTINEL)
+    rebuilt = manager._seeds_for(SENTINEL, None)
 
     assert len(rebuilt) == SENTINEL_SEED_COUNT
     assert rebuilt[:BENCHMARK_TOTAL_SEED_COUNT] == old
@@ -314,11 +315,11 @@ def test_family_bump_keeps_seed_bytes_and_publication_provenance(manager, seed_m
     manager._family_seeds.clear()
     assert manager.get_all_seeds(OTHER_FAMILY) == first
     assert path.read_bytes() == original
-    solar = manager.get_all_seeds(SENTINEL)
+    solar = manager._seeds_for(SENTINEL, None)
     assert json.loads(_stored_file(module, family_id=SENTINEL).read_text())['benchmark_version'] == '6.0.0'
     versions[SENTINEL] = '6.0.1'
     manager._family_seeds.clear()
-    assert manager.get_all_seeds(SENTINEL) == solar
+    assert manager._seeds_for(SENTINEL, None) == solar
     assert json.loads(_stored_file(module, family_id=SENTINEL).read_text())['benchmark_version'] == '6.0.0'
     manager._publish_unpublished_epochs()
     manager.epoch_number = EPOCH + 1

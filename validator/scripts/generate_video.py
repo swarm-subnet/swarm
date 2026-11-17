@@ -84,7 +84,8 @@ from swarm.domain_model import (  # noqa: E402
 
 def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
     """Location of the recorded-action JSON for one seed, named after its map label."""
-    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office", 8: "solar"}.get(
+    label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office", 8: "solar",
+             9: "testsite"}.get(
         challenge_type, f"type{challenge_type}"
     )
     return Path(directory) / f"seed{seed}_{label}_actions.json"
@@ -121,6 +122,7 @@ TYPE_LABELS: Dict[int, str] = {
     6: "forest",
     7: "office",
     8: "solar",
+    9: "testsite",
 }
 BENCH_GROUP_ORDER: List[str] = [
     "type1_city",
@@ -131,6 +133,7 @@ BENCH_GROUP_ORDER: List[str] = [
     "type6_forest",
     "type7_office",
     "type8_solar",
+    "type9_testsite",
 ]
 BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type1_city": 1,
@@ -141,6 +144,7 @@ BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type6_forest": 6,
     "type7_office": 7,
     "type8_solar": 8,
+    "type9_testsite": 9,
 }
 
 # --- output defaults ---
@@ -257,7 +261,7 @@ def build_task(seed: int, challenge_type: int, family_id: str = "cf_autopilot"):
         raise ValueError(f"{family_id} never flies type {int(challenge_type)} ({environment}); it flies {', '.join(flown)}")
     from swarm.constants import SIM_DT
 
-    if family_id == "cf_solar_patrol":
+    if family_id in ("cf_solar_patrol", "cf_test_field"):
         from swarm.challenge_families import build_random_task
 
         return build_random_task(sim_dt=SIM_DT, seed=int(seed), family_id=family_id)
@@ -1106,7 +1110,7 @@ def _agent_action(agent, obs, env, n_drones, act_dim, act_lo, act_hi, velocity_t
     act = np.asarray(raw, dtype=np.float32)
     act = act.reshape(n_drones, act_dim) if n_drones > 1 else act.flatten()
     act = np.clip(act, act_lo, act_hi)
-    if getattr(env, "ACT_TYPE", None) == velocity_type and getattr(env.task, "family_id", "") != "cf_solar_patrol":
+    if getattr(env, "ACT_TYPE", None) == velocity_type and getattr(env.task, "family_id", "") not in ("cf_solar_patrol", "cf_test_field"):
         speed = act[..., :3]
         norm = np.maximum(np.linalg.norm(speed, axis=-1, keepdims=True), 1e-6)
         speed *= np.minimum(1.0, float(speed_limit) / norm)
@@ -1406,9 +1410,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8],
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar)",
+        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site)",
     )
     req.add_argument(
         "--seed-file",

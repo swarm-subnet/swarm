@@ -74,11 +74,11 @@ def _env(monkeypatch, daylight=True, raycast=True, sky_from_sun=True, sun=None, 
 
 
 def test_no_family_uses_the_daylight_model_today():
-    """Every registered family keeps its light and its pixels, but Solar Patrol, which opts in to the daylight model on
-    an engine that has it."""
+    """Every registered family keeps its light and its pixels, but Solar Patrol and the Test Field, which opt in to the
+    daylight model on an engine that has it."""
     assert ChallengeFamilyRuntime.daylight is False
     for family_id in list_registered_challenge_families():
-        if family_id == SOLAR_FAMILY_ID:
+        if family_id in (SOLAR_FAMILY_ID, "cf_test_field"):
             continue
         assert not get_challenge_family(family_id).daylight, family_id
 

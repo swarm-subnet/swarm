@@ -56,6 +56,7 @@ def test_domain_model_schema_snapshot():
             "cf_solar_patrol",
             "cf_swarm_autopilot",
             "cf_swarm_sar",
+            "cf_test_field",
         ],
         "challenge_instance_key_fields": [
             "challenge_family",
@@ -92,6 +93,7 @@ def test_domain_model_schema_snapshot():
             "forest",
             "office",
             "solar",
+            "testsite",
         ],
         "challenge_type_to_environment_type": {
             1: "city",
@@ -102,6 +104,7 @@ def test_domain_model_schema_snapshot():
             6: "forest",
             7: "office",
             8: "solar",
+            9: "testsite",
         },
         "challenge_type_to_benchmark_group": {
             1: "type1_city",
@@ -112,6 +115,7 @@ def test_domain_model_schema_snapshot():
             6: "type6_forest",
             7: "type7_office",
             8: "type8_solar",
+            9: "type9_testsite",
         },
         "benchmark_group_order": [
             "type1_city",
@@ -122,6 +126,7 @@ def test_domain_model_schema_snapshot():
             "type6_forest",
             "type7_office",
             "type8_solar",
+            "type9_testsite",
         ],
     }
 
@@ -186,11 +191,12 @@ def test_challenge_family_registry_contains_canonical_metadata():
         "cf_solar_patrol": ("submission_zip.v1",),
         "cf_swarm_autopilot": ("submission_zip.v1",),
         "cf_swarm_sar": ("submission_zip.v1",),
+        "cf_test_field": ("submission_zip.v1",),
     }
 
 
 def test_retired_families_are_closed_and_unpaid():
-    """The families Swarm Sentinel replaced, both rescue families included, are completed with archived emissions; only Sentinel stays open."""
+    """The families Swarm Sentinel replaced, both rescue families included, are completed with archived emissions; Sentinel and the Test Field stay open."""
     for family_id in (
         "cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_search_and_rescue", "cf_swarm_sar",
     ):
@@ -198,7 +204,7 @@ def test_retired_families_are_closed_and_unpaid():
         assert definition["family_state"] == "completed"
         assert definition["emissions_state"] == "archived"
         assert definition["emission_allocation"] == 0.0
-    assert OPEN_CHALLENGE_FAMILY_IDS == ("cf_solar_patrol",)
+    assert OPEN_CHALLENGE_FAMILY_IDS == ("cf_solar_patrol", "cf_test_field")
     assert DEFAULT_CLI_FAMILY_ID == "cf_solar_patrol"
 
 def test_get_challenge_family_definition_rejects_unknown_family():

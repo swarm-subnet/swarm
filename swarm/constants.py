@@ -51,6 +51,8 @@ RESULT_SUBMIT_BASE_DELAY_SEC = 2.0      # First wait between result tries; doubl
 RESULT_SUBMIT_MAX_DELAY_SEC = 60.0      # Longest wait between result tries
 SCORE_UPLOAD_GRACE_SEC = 180.0          # After the last seed lands, how long parked score batches wait out an outage
 BACKEND_GRACE_PERIOD_SEC = 3600         # Use cached weights for 1h after last successful sync
+BACKEND_CLIENT_RESET_SEC = 300.0        # Backend calls failing this long replace the HTTP client; as long again on the new one exits
+BACKEND_CLIENT_CLOSE_TIMEOUT_SEC = 10.0  # Longest wait to close a replaced HTTP client, which may be the jammed one
 WANDB_IDLE_RESTART_SEC = 5 * 3600      # Restart W&B run every 5h when idle
 
 # =============================================================================

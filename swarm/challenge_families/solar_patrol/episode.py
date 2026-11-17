@@ -26,7 +26,7 @@ import numpy as np
 
 from swarm.constants import SIM_DT
 
-from .contract import Command, Frames, Outcome
+from .contract import HEIGHT_LIMIT_M, PATROL_HEIGHT_M, Command, Frames, Outcome
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,9 @@ class SolarEpisode:
     frames: Frames = field(default_factory=Frames)
     view_step: int = -1                              # the decision step the view is shown at
     view: dict = field(default_factory=dict)
+    height_limit_m: float = HEIGHT_LIMIT_M           # above the dock: the aircraft stops rising there
+    patrol_height_m: float = PATROL_HEIGHT_M         # above the dock: where the take-off ends and a far return flies
+    white_balance: Optional[tuple] = None            # (sun elevation, red, green, blue gain) rows; None draws as is
 
     park: Any = None
     dock: Any = None

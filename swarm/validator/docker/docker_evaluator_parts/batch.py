@@ -56,7 +56,7 @@ from swarm.constants import (
 )
 from swarm.core.faults import ReasonCode
 from swarm.core.submission_lane import is_model_graph_artifact
-from swarm.core.submission_policy import check_safety, validate_submission_zip
+from swarm.core.submission_policy import check_native_code, check_safety, validate_submission_zip
 from swarm.protocol import (
     SCHEMA_VERSION,
     FailureReason,
@@ -550,7 +550,6 @@ class _BatchContext:
     current_gid: Optional[int] = None
     worker_limits: Optional[dict] = None
     docker_envs: Optional[dict] = None
-    validator_ip: Optional[str] = None
     runtime_profile: Optional[Any] = None
 
     connected: bool = False
@@ -574,7 +573,7 @@ class _BatchContext:
 # The container fields a warm spare hands over to the seed that adopts it.
 _CONTAINER_FIELDS = (
     "container_name", "host_port", "tmpdir", "submission_dir", "run_image",
-    "current_uid", "current_gid", "worker_limits", "docker_envs", "validator_ip",
+    "current_uid", "current_gid", "worker_limits", "docker_envs",
     "runtime_profile", "connected", "container_pid", "container_started_at", "container_startup_sec",
     "setup_sec", "launch_sec", "lockdown_sec", "serve_sec",
 )
@@ -799,6 +798,8 @@ def _validate_inputs(ctx: _BatchContext) -> Optional[list]:
     # inside the container, where the ONNX rules are enforced
     if ctx.is_model_graph:
         accepted, detail = check_safety(model_path)
+        if accepted:
+            accepted, detail = check_native_code(model_path)
     else:
         accepted, detail = validate_submission_zip(model_path)
     if not accepted:
@@ -1581,7 +1582,6 @@ def _setup_workspace(ctx: _BatchContext) -> Optional[ReasonCode]:
     ctx.run_image = ctx.model_image or ctx.self._resolve_base_image_for_key(
         runtime_profile.image_key
     )
-    ctx.validator_ip = ctx.self._get_docker_host_ip()
     ctx.runtime_profile = runtime_profile
     ctx.self.last_selected_runtime_profile = runtime_profile.as_dict()
     ctx.self.last_selected_worker_limits = dict(worker_limits)
@@ -1596,7 +1596,8 @@ _START_GATE_PATH = "/tmp/swarm_start.gate"
 _START_GATE_TIMEOUT_SEC = 120.0
 _START_GATE_POLL_SEC = 0.05
 _SUBMISSION_MOUNT = "/workspace/submission"
-_BUNDLE_MOUNT = "/workspace/bundle"
+_COPY_IN_TIMEOUT_SEC = 60.0
+_COPY_IN_PACK_WAIT_SEC = 10.0
 
 
 def _open_start_gate(container_name: str) -> bool:
@@ -1616,13 +1617,11 @@ def _gated_runner_command(
     entry: str,
     gate: str = _START_GATE_PATH,
     timeout_sec: float = _START_GATE_TIMEOUT_SEC,
-    prepare: str = "",
 ) -> list[str]:
     """Container command that starts Python on ``entry`` only once the start gate exists.
 
     The shell waits instead of the runner because Python imports from the
-    submission folder as it starts, and the network is open until the gate.
-    ``prepare`` runs first, before the wait, and a failure there ends the start."""
+    submission folder as it starts, and the network is open until the gate."""
     polls = max(1, math.ceil(timeout_sec / _START_GATE_POLL_SEC))
     script = (
         f"n=0; until [ -e {shlex.quote(gate)} ]; do "
@@ -1631,8 +1630,6 @@ def _gated_runner_command(
         f"sleep {_START_GATE_POLL_SEC}; done; "
         f"exec python {shlex.quote(entry)}"
     )
-    if prepare:
-        script = f"{prepare} || exit 1; {script}"
     return ["sh", "-c", script]
 
 
@@ -1706,7 +1703,6 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
             f"uid={ctx.current_uid},gid={ctx.current_gid},mode=0700"
         ),
         "-p", f"127.0.0.1:{ctx.host_port}:8000",
-        "-v", f"{ctx.submission_dir}:{_BUNDLE_MOUNT}:ro",
     ]
     if warm:
         cmd.extend([f"--cpus={_WARM_CPU_LIMIT}", f"--cpu-shares={_WARM_CPU_SHARES}"])
@@ -1719,13 +1715,7 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
     if obs_shm_path:
         cmd.extend(["-v", f"{obs_shm_path}:/workspace/obs_shm.bin:ro"])
         cmd.extend(["-e", "SWARM_OBS_SHM=/workspace/obs_shm.bin"])
-    cmd.extend([
-        ctx.run_image,
-        *_gated_runner_command(
-            f"{_SUBMISSION_MOUNT}/main.py",
-            prepare=f"cp -R {_BUNDLE_MOUNT}/. {_SUBMISSION_MOUNT}/",
-        ),
-    ])
+    cmd.extend([ctx.run_image, *_gated_runner_command(f"{_SUBMISSION_MOUNT}/main.py")])
     ctx.container_started_at = time.monotonic()
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -1739,6 +1729,51 @@ def _launch_container(ctx: _BatchContext, warm: bool = False) -> Optional[Reason
     return None
 
 
+def _copy_submission_in(ctx: _BatchContext) -> Optional[ReasonCode]:
+    """Stream the staged files into the container's in-memory folder while the agent still waits at the gate.
+
+    Nothing from the host is mounted, so every file the model can reach lies on
+    the noexec folder and no shipped library can be mapped as code. The stream
+    exists because docker cp does not write into a tmpfs mount. Returns the
+    failure reason, with the container removed, or None once every file landed."""
+    t_copy = time.monotonic()
+    error = ""
+    pack = None
+    try:
+        pack = subprocess.Popen(
+            ["tar", "-C", str(ctx.submission_dir), "-cf", "-", "."],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        unpack = subprocess.run(
+            [
+                "docker", "exec", "-i", "--user", f"{ctx.current_uid}:{ctx.current_gid}",
+                ctx.container_name, "tar", "-xf", "-", "-C", _SUBMISSION_MOUNT,
+            ],
+            stdin=pack.stdout, capture_output=True, text=True, timeout=_COPY_IN_TIMEOUT_SEC,
+        )
+        if unpack.returncode != 0:
+            error = f"copy into the container failed: {unpack.stderr[:300]}"
+    except Exception as exc:
+        error = f"copy into the container failed: {type(exc).__name__}: {exc}"
+    finally:
+        if pack is not None:
+            pack.stdout.close()
+            try:
+                pack.wait(timeout=_COPY_IN_PACK_WAIT_SEC)
+            except subprocess.TimeoutExpired:
+                pack.kill()
+                pack.wait()
+    if not error and pack.returncode != 0:
+        error = f"packing the submission failed with exit code {pack.returncode}"
+    # counted as part of the launch so the per-seed timing record keeps its fields
+    ctx.launch_sec += time.monotonic() - t_copy
+    if error:
+        ctx.failure_error = error
+        ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
+        return ReasonCode.INFRA_DOCKER
+    return None
+
+
 async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     """Lock the container's network, open the start gate and wait for the agent.
 
@@ -1747,7 +1782,7 @@ async def _prepare_network_and_rpc(ctx: _BatchContext) -> Optional[ReasonCode]:
     container_pid = ctx.self._get_container_pid(ctx.container_name)
     if (
         not container_pid
-        or not ctx.self._apply_network_lockdown(container_pid, ctx.validator_ip)
+        or not ctx.self._apply_network_lockdown(container_pid)
         or not _open_start_gate(ctx.container_name)
     ):
         ctx.helpers.run_docker_cmd_quiet(["docker", "rm", "-f", ctx.container_name])
@@ -1799,10 +1834,12 @@ def _fail_batch(ctx: _BatchContext, reason: ReasonCode) -> list:
 
 
 async def _prepare_container(ctx: _BatchContext, warm: bool = False) -> Optional[ReasonCode]:
-    """Run the whole container start: workspace, launch, lockdown, agent ready."""
+    """Run the whole container start: workspace, launch, copy in, lockdown, agent ready."""
     failure = _setup_workspace(ctx)
     if failure is None:
         failure = _launch_container(ctx, warm=warm)
+    if failure is None:
+        failure = _copy_submission_in(ctx)
     if failure is None:
         failure = await _prepare_network_and_rpc(ctx)
     return failure

@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Tests for the validator's backend HTTP client: signing, heartbeats, sync and authorize retries."""
+"""Tests for the validator's backend HTTP client: signing, heartbeats, sync, authorize retries and self-healing."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from swarm.validator import backend_api
 
@@ -578,5 +579,164 @@ def test_uploads_use_the_family_version_and_refuse_relabelling(monkeypatch, tmp_
             else:
                 raise AssertionError('mismatched result accepted')
         assert len(captured) == 2
+    finally:
+        _run(client.close())
+
+
+class _Clock:
+    """A hand-set stand-in for the client's failure clock."""
+
+    def __init__(self):
+        """Start the clock at zero seconds."""
+        self.now = 0.0
+
+    def __call__(self):
+        """Return the time the test last set."""
+        return self.now
+
+
+def _backend_client_with(monkeypatch, tmp_path, handler):
+    """Return a client whose every HTTP client answers through handler, its clock, and the HTTP clients it opened."""
+    clock = _Clock()
+    opened = []
+
+    def open_http_client(self):
+        """Open an HTTP client that never touches the network and remember it."""
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        opened.append(http)
+        return http
+
+    monkeypatch.setattr(backend_api, "_monotonic", clock)
+    monkeypatch.setattr(backend_api.BackendApiClient, "_open_http_client", open_http_client)
+    return _build_client(monkeypatch, tmp_path, wallet=_DummyWallet()), clock, opened
+
+
+def _never_sent(request):
+    """Fail every request the way the stuck validators did: a pool timeout before anything leaves the machine."""
+    raise httpx.PoolTimeout("", request=request)
+
+
+async def _fails_without_reply(call):
+    """Await a backend call and require that it reports a transport failure."""
+    with pytest.raises(backend_api.BackendTransportError):
+        await call
+
+
+def test_a_jammed_client_is_replaced_after_five_minutes_and_the_validator_exits_after_ten(monkeypatch, tmp_path):
+    """Calls that never reach the backend swap the HTTP client at 300 s and exit the process at 600 s."""
+    client, clock, opened = _backend_client_with(monkeypatch, tmp_path, _never_sent)
+
+    async def scenario():
+        """Walk the clock through both windows with the calls a validator makes."""
+        for now in (0.0, 299.0):
+            clock.now = now
+            await _fails_without_reply(client.next_task())
+        assert len(opened) == 1
+
+        clock.now = 300.0
+        await _fails_without_reply(client.post_heartbeat(status="idle"))
+        assert len(opened) == 2
+        assert client.client is opened[1]
+        assert opened[0].is_closed
+
+        clock.now = 599.0
+        await _fails_without_reply(client._get_signed("/validators/sync"))
+        assert len(opened) == 2
+
+        clock.now = 600.0
+        with pytest.raises(SystemExit) as exited:
+            await client.next_task()
+        assert exited.value.code == 1
+        await client.close()
+
+    _run(scenario())
+
+
+def test_any_reply_from_the_backend_restarts_the_count(monkeypatch, tmp_path):
+    """An error reply proves the line works, and a new client that gets a reply is never followed by an exit."""
+    replies = []
+
+    def handler(request):
+        """Answer with the next queued status, or fail without a reply when none is queued."""
+        if replies:
+            return httpx.Response(replies.pop(0), json={}, request=request)
+        _never_sent(request)
+
+    client, clock, opened = _backend_client_with(monkeypatch, tmp_path, handler)
+
+    async def scenario():
+        """Interleave failures with replies and check the swap and exit move with them."""
+        await _fails_without_reply(client.next_task())
+        clock.now = 290.0
+        replies.append(503)
+        await _fails_without_reply(client._get_signed("/validators/sync"))
+
+        for now in (300.0, 599.0):
+            clock.now = now
+            await _fails_without_reply(client.next_task())
+        assert len(opened) == 1
+
+        clock.now = 600.0
+        await _fails_without_reply(client.next_task())
+        assert len(opened) == 2
+
+        clock.now = 610.0
+        replies.append(200)
+        assert await client._get_signed("/validators/sync") == {}
+
+        for now in (900.0, 1200.0, 1499.0):
+            clock.now = now
+            await _fails_without_reply(client.next_task())
+        assert len(opened) == 3
+        await client.close()
+
+    _run(scenario())
+
+
+def test_a_close_that_hangs_does_not_block_the_swap(monkeypatch, tmp_path):
+    """A jammed client whose close never returns is abandoned after the close timeout."""
+    client, clock, opened = _backend_client_with(monkeypatch, tmp_path, _never_sent)
+    monkeypatch.setattr(backend_api, "BACKEND_CLIENT_CLOSE_TIMEOUT_SEC", 0.01)
+
+    async def hang():
+        """Never finish closing."""
+        await asyncio.sleep(3600)
+
+    async def scenario():
+        """Reach the swap with a client that cannot be closed."""
+        opened[0].aclose = hang
+        await _fails_without_reply(client.next_task())
+        clock.now = 300.0
+        await _fails_without_reply(client.next_task())
+        assert client.client is opened[1]
+        await client.close()
+
+    _run(scenario())
+
+
+def test_transport_errors_name_the_error_type_and_the_pool_state(monkeypatch, tmp_path):
+    """A timeout with an empty message is still logged by type, beside the connection pool's counts."""
+    client, _, _ = _backend_client_with(monkeypatch, tmp_path, _never_sent)
+    warnings = []
+    monkeypatch.setattr(backend_api.bt.logging, "warning", warnings.append)
+    monkeypatch.setattr(client, "_pool_state", lambda: "<pool>")
+
+    async def scenario():
+        """Make one failing call and close the client."""
+        with pytest.raises(backend_api.BackendTransportError, match="PoolTimeout"):
+            await client.next_task()
+        await client.close()
+
+    _run(scenario())
+    assert warnings == ["Backend transport error (/validators/next-task): PoolTimeout; <pool>"]
+
+
+def test_pool_state_reads_the_real_connection_pool(monkeypatch, tmp_path):
+    """The pool description comes from httpx's own connection pool, with its request and connection counts."""
+    client = _build_client(monkeypatch, tmp_path)
+    try:
+        state = client._pool_state()
+        assert "Requests: 0 active, 0 queued" in state
+        assert "Connections: 0 active, 0 idle" in state
     finally:
         _run(client.close())

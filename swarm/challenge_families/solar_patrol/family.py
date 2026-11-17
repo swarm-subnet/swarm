@@ -103,6 +103,7 @@ class SolarPatrolChallengeFamily(ChallengeFamilyRuntime):
     daylight = park.DAYLIGHT
     render_backend = camera.RENDER_BACKEND
     prepares_seeds = True                # every seed is flown once by the seed checks' reference pilot
+    secret_worlds = True                 # validators draw each world from the epoch key, not from a seed a model can find
     # Off until the fairness of acts timed beside a frame is decided; on needs a wheel with CAMERA_RELEASES_GIL.
     observation_ahead = False
     clearance_metric = False             # the patrol's score reads no min_clearance

@@ -38,7 +38,7 @@ The model never sees that wind, only the two values DJI's Cloud API sends, each 
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -78,16 +78,18 @@ def is_night(seed: int) -> bool:
     return bool(park.SEEDED_SUN) and seeded_sun(int(seed), park.NIGHT_SHARE).night
 
 
-def strength(seed: int) -> str:
-    """The seed's wind strength: none, light or strong, in the site's day or night shares."""
-    shares = NIGHT_SHARES if is_night(seed) else DAY_SHARES
+def strength(seed: int, night: Optional[bool] = None) -> str:
+    """The seed's wind strength: none, light or strong, in the site's day or night shares; night, when given, overrides
+    the seed's own sun."""
+    shares = NIGHT_SHARES if (is_night(seed) if night is None else night) else DAY_SHARES
     rng = np.random.default_rng([SEED_STREAM, int(seed)])
     return STRENGTHS[int(np.searchsorted(np.cumsum(shares), rng.random(), side="right"))]
 
 
-def for_seed(seed: int) -> dict[str, Any]:
-    """The task's wind fields for a seed, the ones the environment's seeded wind reads."""
-    kind = strength(seed)
+def for_seed(seed: int, night: Optional[bool] = None) -> dict[str, Any]:
+    """The task's wind fields for a seed, the ones the environment's seeded wind reads; night, when given, overrides
+    the seed's own sun."""
+    kind = strength(seed, night)
     if kind == "none":
         return dict(STILL_AIR)
     rng = np.random.default_rng([SEED_STREAM, int(seed), 1])
@@ -96,12 +98,13 @@ def for_seed(seed: int) -> dict[str, Any]:
             "wind_gusts": int(rng.integers(GUSTS[0], GUSTS[1] + 1))}
 
 
-def reset(env: Any, ep: SolarEpisode) -> None:
-    """Draw this seed's reading errors and push clocks; the gauge starts on the steady wind, the estimate at zero."""
+def reset(env: Any, ep: SolarEpisode, night: Optional[bool] = None) -> None:
+    """Draw this seed's reading errors and push clocks; the gauge starts on the steady wind, the estimate at zero.
+    night, when given, overrides the seed's own sun."""
     rng = np.random.default_rng([SEED_STREAM, ep.seed, 2])
     turn = float(rng.uniform(-ESTIMATE_TURN_TAN, ESTIMATE_TURN_TAN))
     norm = math.sqrt(1.0 + turn * turn)
-    gauge_share = rng.uniform(*(NIGHT_GAUGE_SHARE if is_night(ep.seed) else DAY_GAUGE_SHARE))
+    gauge_share = rng.uniform(*(NIGHT_GAUGE_SHARE if (is_night(ep.seed) if night is None else night) else DAY_GAUGE_SHARE))
     ep.wind = {
         "scale": float(rng.uniform(*ESTIMATE_SCALE)),
         "turn": (1.0 / norm, turn / norm),

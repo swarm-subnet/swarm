@@ -529,24 +529,6 @@ def test_check_rpc_ready_late_bind():
         server.close()
 
 
-def test_get_docker_host_ip_and_fallback(monkeypatch):
-    """The bridge address comes from docker inspect, falling back to 172.17.0.1 when it fails."""
-    ev = _new_evaluator()
-    monkeypatch.setattr(
-        de.subprocess,
-        "run",
-        lambda *a, **k: _ProcResult(returncode=0, stdout="172.18.0.1\n"),
-    )
-    assert ev._get_docker_host_ip() == "172.18.0.1"
-
-    monkeypatch.setattr(
-        de.subprocess,
-        "run",
-        lambda *a, **k: _ProcResult(returncode=1, stdout=""),
-    )
-    assert ev._get_docker_host_ip() == "172.17.0.1"
-
-
 def test_get_container_pid(monkeypatch):
     """A reported pid of 0 comes back as None, any other value as an int."""
     ev = _new_evaluator()
@@ -566,7 +548,7 @@ def test_get_container_pid(monkeypatch):
 
 
 def test_apply_network_lockdown_success(monkeypatch):
-    """A full lockdown lays down six rules: four on IPv4 and two on IPv6."""
+    """A full lockdown lays down five rules: three on IPv4 and two on IPv6."""
     ev = _new_evaluator()
     calls = {"count": 0}
 
@@ -577,8 +559,28 @@ def test_apply_network_lockdown_success(monkeypatch):
         return _ProcResult(returncode=0)
 
     monkeypatch.setattr(de.subprocess, "run", _run)
-    assert ev._apply_network_lockdown(9999, "10.0.0.1") is True
-    assert calls["count"] == 6  # 4 IPv4 iptables rules + 2 IPv6 ip6tables rules
+    assert ev._apply_network_lockdown(9999) is True
+    assert calls["count"] == 5  # 3 IPv4 iptables rules + 2 IPv6 ip6tables rules
+
+
+def test_apply_network_lockdown_lets_no_traffic_reach_the_host(monkeypatch):
+    """The only IPv4 address the container may dial is its own loopback, so services on the host stay out of reach."""
+    ev = _new_evaluator()
+    rules: list[list[str]] = []
+
+    def _run(cmd, *args, **kwargs):
+        """Record every firewall rule and report success."""
+        _ = args, kwargs
+        rules.append(list(cmd))
+        return _ProcResult(returncode=0)
+
+    monkeypatch.setattr(de.subprocess, "run", _run)
+    assert ev._apply_network_lockdown(9999) is True
+    ipv4 = [rule[rule.index("iptables") + 1:] for rule in rules if "iptables" in rule]
+    accepted = [rule[rule.index("-d") + 1] for rule in ipv4 if "-d" in rule]
+    assert accepted == ["127.0.0.1"]
+    assert ["-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"] in ipv4
+    assert ipv4[-1] == ["-A", "OUTPUT", "-j", "DROP"]
 
 
 def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
@@ -595,7 +597,7 @@ def test_apply_network_lockdown_failure_when_rule_fails(monkeypatch):
         return _ProcResult(returncode=0)
 
     monkeypatch.setattr(de.subprocess, "run", _run)
-    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+    assert ev._apply_network_lockdown(9999) is False
 
 
 def test_a_rejected_rule_is_logged_with_the_firewall_reason(monkeypatch):
@@ -610,7 +612,7 @@ def test_a_rejected_rule_is_logged_with_the_firewall_reason(monkeypatch):
         ),
     )
     monkeypatch.setattr(de.networking.bt.logging, "warning", lambda msg: warnings.append(str(msg)))
-    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+    assert ev._apply_network_lockdown(9999) is False
     assert len(warnings) == 1
     assert warnings[0].endswith("Permission denied (you must be root)")
 
@@ -624,12 +626,12 @@ def test_apply_network_lockdown_fails_closed_on_ipv6_rule_failure(monkeypatch):
         """Fail the last ip6tables call and let every other one succeed."""
         _ = args, kwargs
         calls["count"] += 1
-        if calls["count"] == 6:  # last IPv6 ip6tables DROP rule
+        if calls["count"] == 5:  # last IPv6 ip6tables DROP rule
             return _ProcResult(returncode=1, stderr="ip6tables failed")
         return _ProcResult(returncode=0)
 
     monkeypatch.setattr(de.subprocess, "run", _run)
-    assert ev._apply_network_lockdown(9999, "10.0.0.1") is False
+    assert ev._apply_network_lockdown(9999) is False
 
 
 def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
@@ -641,7 +643,7 @@ def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
         """Fail the first ip6tables call the way an ipv6.disable=1 host does."""
         _ = args, kwargs
         calls["count"] += 1
-        if calls["count"] == 5:  # first IPv6 rule on an ipv6.disable=1 host
+        if calls["count"] == 4:  # first IPv6 rule on an ipv6.disable=1 host
             return _ProcResult(
                 returncode=1,
                 stderr="ip6tables: can't initialize ip6tables table 'filter': "
@@ -650,8 +652,8 @@ def test_apply_network_lockdown_tolerates_ipv6_disabled_host(monkeypatch):
         return _ProcResult(returncode=0)
 
     monkeypatch.setattr(de.subprocess, "run", _run)
-    assert ev._apply_network_lockdown(9999, "10.0.0.1") is True
-    assert calls["count"] == 5  # remaining IPv6 rules skipped
+    assert ev._apply_network_lockdown(9999) is True
+    assert calls["count"] == 4  # remaining IPv6 rules skipped
 
 
 def test_docker_env_overrides_enable_thread_caps_by_default(monkeypatch):

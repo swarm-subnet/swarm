@@ -104,11 +104,12 @@ The policy reads a depth image and its own flight state 50 times a second and an
 
 ## Challenge Families
 
-The benchmark runs **one open challenge family**, Swarm Sentinel, and it carries the whole emission. Each family is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
+The benchmark runs **two open challenge families**: Swarm Sentinel carries 95% of the emission and Swarm Test Field 5%. Each family is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
 
 | Family | ID | Mission | Emissions |
 |--------|----|---------|:--------:|
-| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 100% |
+| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 95% |
+| [Swarm Test Field](https://github.com/swarm-subnet/swarm/blob/main/docs/families/test_field.md) | `cf_test_field` | Fly the real test field from its dock, report where every person stands, keep 1 m inside its edge, land back in the dock | 5% |
 | [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | Completed |
 | [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | Completed |
 
@@ -126,11 +127,11 @@ Each guide spells out the full contract: observation layout, action bounds, maps
 seed score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Swarm Sentinel is the one exception: **0.70 × detection + 0.20 × coverage + 0.10 × flight** per seed, and every missed intruder or false alarm turns 5 of the model's best seeds to 0. Its guide has the details.
+Swarm Sentinel and Swarm Test Field are the exceptions: **0.70 × detection + 0.20 × coverage + 0.10 × flight** per seed, and every missed person or false alarm turns 5 of the model's best seeds to 0, as does every edge trip on the Test Field. Their guides have the details.
 
 Every submission runs the **family's full benchmark** (1,000 seeds, 2,000 for Swarm Sentinel) and is ranked by its **mean score across them**. Seeds rotate every 14-day epoch (Monday 16:00 UTC) and champions are re-evaluated on the fresh set. To take a crown, a challenger must beat the champion by the family's improvement floor: **+0.015** while the champion is at or below 0.5, easing to **+0.005** as it nears 1.0.
 
-Each family's emission slice is split among its **last champions: 10 in Swarm Sentinel, 5 in every other family**, weighted by how much each one raised the family's best score. Full spec in [King of the Hill](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
+Each family's emission slice is split among its **last champions: 10 in Swarm Sentinel, 3 in Swarm Test Field, 5 in every other family**, weighted by how much each one raised the family's best score. Full spec in [King of the Hill](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
 
 ## Build Your Own Entry
 

@@ -79,7 +79,6 @@ DockerSecureEvaluator._setup_base_container = lifecycle._setup_base_container
 
 DockerSecureEvaluator._find_free_port = networking._find_free_port
 DockerSecureEvaluator._check_rpc_ready = networking._check_rpc_ready
-DockerSecureEvaluator._get_docker_host_ip = networking._get_docker_host_ip
 DockerSecureEvaluator._get_container_pid = networking._get_container_pid
 DockerSecureEvaluator._apply_network_lockdown = networking._apply_network_lockdown
 

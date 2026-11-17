@@ -44,6 +44,7 @@ from swarm.constants import BLACKLIST_FILE, HORIZON_SEC, MODEL_DIR
 from swarm.core.submission_lane import is_model_graph_artifact
 from swarm.core.submission_policy import (
     MAX_UNCOMPRESSED_BYTES,
+    check_native_code,
     check_safety,
     check_structure,
 )
@@ -110,6 +111,8 @@ def inspect_model_structure(zip_path: Path) -> Dict:
 
     ok, reason = check_structure(zip_path)
     if ok:
+        ok, reason = check_native_code(zip_path)
+    if ok:
         return {
             "submission_type": "rpc",
             "has_mlp_extractor": True,
@@ -126,6 +129,15 @@ def inspect_model_structure(zip_path: Path) -> Dict:
     if reason.startswith("forbidden_suffix:"):
         suffixes = reason.removeprefix("forbidden_suffix:").split(",")
         return {"error": f"Dangerous executable files detected: {suffixes}"}
+
+    if reason.startswith("native_code:"):
+        names = reason.removeprefix("native_code:").split(",")
+        return {
+            "error": (
+                f"Dangerous executable files detected: {names} hold compiled native code; "
+                "only Python code and model files are allowed"
+            )
+        }
 
     return {"error": f"ZIP inspection failed: {reason}"}
 

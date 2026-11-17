@@ -397,10 +397,10 @@ def test_update_min_clearance_counts_obstacle_below_the_pad_top(monkeypatch) -> 
 
 
 def test_only_swarm_sentinel_skips_the_clearance_sweep() -> None:
-    """Swarm Sentinel, whose score reads no clearance, opts out of the sweep and every other family keeps it: even a
-    collision, which zeroes the clearance of any other family, leaves Sentinel's untouched."""
+    """Swarm Sentinel and the Test Field, whose scores read no clearance, opt out of the sweep and every other family
+    keeps it: even a collision, which zeroes the clearance of any other family, leaves Sentinel's untouched."""
     opted_out = {name for name in list_registered_challenge_families() if not get_challenge_family(name).clearance_metric}
-    assert opted_out == {"cf_solar_patrol"}
+    assert opted_out == {"cf_solar_patrol", "cf_test_field"}
     env = moving_drone_mod.MovingDroneAviary.__new__(moving_drone_mod.MovingDroneAviary)
     env.family_runtime = get_challenge_family("cf_solar_patrol")
     env.NUM_DRONES = 1

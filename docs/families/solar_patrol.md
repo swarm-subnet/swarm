@@ -17,7 +17,7 @@ Everything the model gets is what the real drone gives through its dock: the sam
 | Drones | 1 |
 | Decision rate | 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz |
 | Episode horizon | 390 s (up to 3,900 `act()` calls) |
-| Emission allocation | 1.00 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 0.95 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
 | Benchmark | 2,000 seeds per epoch, one solar park, scored with the cross-seed ×5 rule |
 | Champion | Private: crowned and paid like every other family, but never published or downloadable (see [Private Until Crowned](../../miner/docs/miner.md#private-until-crowned)) |
 
@@ -309,7 +309,7 @@ Every row below lands after its own `return_home` and never flies higher than 22
 
 ### Across the epoch: the ×5 rule
 
-After every seed is scored on its own, **each miss and each false alarm turns 5 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. Over 2,000 seeds, a strong model at 0.97 that misses one thief drops to about 0.968; a model that never reports, or reports everything, ends at 0. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every intruder of the seed as missed, the ones it already reported included, from its very first decision. This rule is for Swarm Sentinel only; the other families keep the plain mean.
+After every seed is scored on its own, **each miss and each false alarm turns 5 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. Over 2,000 seeds, a strong model at 0.97 that misses one thief drops to about 0.968; a model that never reports, or reports everything, ends at 0. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every intruder of the seed as missed, the ones it already reported included, from its very first decision. Swarm Test Field applies the same rule, with an edge trip as a third mistake; the other families keep the plain mean.
 
 <p align="right">(<a href="#sentinel-top">back to top</a>)</p>
 

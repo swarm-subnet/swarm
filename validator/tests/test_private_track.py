@@ -68,6 +68,7 @@ def _client_stub(handler):
         base_url="https://backend.test",
         _sign_request=lambda method, endpoint, body: {"X-Validator-Hotkey": "hk"},
         _fence_duplicate_instance=fence,
+        _note_reply=lambda: None,
     )
 
 

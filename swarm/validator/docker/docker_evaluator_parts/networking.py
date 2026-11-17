@@ -50,28 +50,6 @@ def _check_rpc_ready(self, host_port: int, timeout: float = 0.2) -> bool:
     except OSError:
         return False
 
-def _get_docker_host_ip(self) -> str:
-    """Get the Docker bridge gateway IP (host IP as seen from containers)"""
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "network",
-                "inspect",
-                "bridge",
-                "-f",
-                "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return "172.17.0.1"
-
 def _get_container_pid(self, container_name: str) -> Optional[int]:
     """Get the PID of a running container"""
     try:
@@ -93,23 +71,11 @@ def _rule_error(result: subprocess.CompletedProcess) -> str:
     """The firewall's own reason for rejecting a rule, or its exit code when it gave none."""
     return (result.stderr or "").strip() or f"exit code {result.returncode}"
 
-def _apply_network_lockdown(self, container_pid: int, validator_ip: str) -> bool:
+def _apply_network_lockdown(self, container_pid: int) -> bool:
     """Apply iptables rules in container's network namespace from HOST using nsenter"""
     try:
+        # No accept for the bridge gateway: it is the host, and the validator only ever dials in.
         rules = [
-            [
-                "nsenter",
-                "-t",
-                str(container_pid),
-                "-n",
-                "iptables",
-                "-A",
-                "OUTPUT",
-                "-d",
-                validator_ip,
-                "-j",
-                "ACCEPT",
-            ],
             [
                 "nsenter",
                 "-t",

@@ -65,6 +65,8 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type7_office": 1900.0,
     # A patrol peaked at 3,344 MB over 100 runs; about 10% on top.
     "type8_solar": 3700.0,
+    # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top.
+    "type9_testsite": 3250.0,
 }
 _DEFAULT_RAM_ESTIMATE_MB = max(_GROUP_RAM_ESTIMATES_MB.values())
 _RESOURCE_POLL_INTERVAL_SEC = 2.0

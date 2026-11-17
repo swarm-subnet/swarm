@@ -101,7 +101,8 @@ def test_only_sentinel_raises_the_worker_memory_ceiling():
 
 def test_only_sentinel_sets_its_own_per_step_compute_budget():
     """Sentinel grants 500 ms per camera frame, shared by its five decisions, and keeps both across the process
-    boundary; every other family leaves the shared budget, judged per act()."""
+    boundary; the Test Field, which flies Sentinel's drone, grants the same; every other family leaves the shared
+    budget, judged per act()."""
     solar = runtime_profile_for_task(_sample_task(family_id="cf_solar_patrol"))
     rebuilt = type(solar).from_mapping(solar.as_dict())
 
@@ -109,8 +110,10 @@ def test_only_sentinel_sets_its_own_per_step_compute_budget():
     assert solar.miner_compute_window_acts == 5
     assert rebuilt.miner_compute_budget_sec == pytest.approx(0.5)
     assert rebuilt.miner_compute_window_acts == 5
+    field = runtime_profile_for_task(_sample_task(family_id="cf_test_field"))
+    assert (field.miner_compute_budget_sec, field.miner_compute_window_acts) == (0.5, 5)
     for family_id in list_registered_challenge_families():
-        if family_id != "cf_solar_patrol" and get_challenge_family(family_id).runtime_supported:
+        if family_id not in ("cf_solar_patrol", "cf_test_field") and get_challenge_family(family_id).runtime_supported:
             profile = runtime_profile_for_task(_sample_task(family_id=family_id))
             assert profile.miner_compute_budget_sec is None, family_id
             assert profile.miner_compute_window_acts == 1, family_id
