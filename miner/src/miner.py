@@ -458,8 +458,9 @@ def submit_private(
 ) -> int:
     """Commit the artifact's digest on-chain and upload the bytes to the vault.
 
-    Every check that can fail runs before anything touches the chain, so a
-    rejected archive costs the miner nothing.
+    Local archive checks, family validation, the backend health check and the
+    epoch freeze run before anything touches the chain; a backend rejection
+    (such as a digest already registered) is reported by the upload after the commit.
     """
     families = _known_families()
     if families is not None and family_id not in families:
