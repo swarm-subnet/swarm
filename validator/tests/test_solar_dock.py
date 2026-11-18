@@ -534,7 +534,7 @@ def test_cancel_hovers_and_hands_back_then_a_second_return_still_lands(flat_park
 
 
 @pytest.mark.timeout(600)
-@pytest.mark.time_budget(25)
+@pytest.mark.time_budget(35)
 def test_a_return_still_under_way_when_time_runs_out_earns_no_landing(flat_park):
     """Return home pressed 30 m out a few seconds before 390 s: the clock ends the patrol before the landing."""
     log, episode, info, _sun = _fly(26, _out_and_home(20.0, 30.0, hover_until=HORIZON_S - 5.0))

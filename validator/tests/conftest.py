@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pybullet as p
 import pytest
 
 
@@ -327,17 +328,29 @@ def _no_leaked_heartbeat_timer():
 _OPEN_GROUND: dict = {}
 
 
+def _world(cli: int) -> tuple:
+    """Where everything in a physics world stands: the bounds of every body and link, to the millimetre."""
+    bounds = []
+    for index in range(p.getNumBodies(physicsClientId=cli)):
+        body = p.getBodyUniqueId(index, physicsClientId=cli)
+        for link in range(-1, p.getNumJoints(body, physicsClientId=cli)):
+            low, high = p.getAABB(body, link, physicsClientId=cli)
+            bounds.append((body, link, *np.round(np.concatenate([low, high]), 3)))
+    return tuple(bounds)
+
+
 @pytest.fixture
 def shared_open_ground(monkeypatch, request):
-    """Find the decoys' open ground once per test module for each fence, terrain, dock and trunks: a flat stand-in park
-    gives the same cells on every reset, and finding them over a wide fence is most of the reset."""
+    """Find the decoys' open ground once per test module for each world: a flat stand-in park gives the same cells on
+    every reset, and finding them over a wide fence is most of the reset. Anything standing differently changes the
+    key, so a body added to the slab gets a ground of its own."""
     decoys = importlib.import_module("swarm.challenge_families.solar_patrol.decoys")
     find = decoys.open_ground
 
     def remembered(cli, fence, terrain, dock_xy, trunks):
-        """The open ground for these arguments, found on their first reset in this module, its arrays read-only."""
+        """The open ground for these arguments and this world, found on their first reset in this module, read-only."""
         key = (request.module.__name__, np.asarray(fence, dtype=float).tobytes(), tuple(sorted(terrain)),
-               np.asarray(dock_xy, dtype=float).tobytes(), np.asarray(trunks, dtype=float).tobytes())
+               np.asarray(dock_xy, dtype=float).tobytes(), np.asarray(trunks, dtype=float).tobytes(), _world(cli))
         if key not in _OPEN_GROUND:
             ground = find(cli, fence, terrain, dock_xy, trunks)
             for cells in (ground.open, ground.height, ground.planned):
