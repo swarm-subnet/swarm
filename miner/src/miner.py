@@ -53,7 +53,15 @@ os.environ.setdefault("BT_NO_PARSE_CLI_ARGS", "false")
 
 import bittensor as bt
 
-from swarm.constants import DOCKER_PIP_WHITELIST, MAX_MODEL_BYTES
+from swarm.constants import (
+    DOCKER_PIP_WHITELIST,
+    EPOCH_ANCHOR_UTC,
+    EPOCH_DURATION_LONG_SECONDS,
+    EPOCH_DURATION_SECONDS,
+    EPOCH_FREEZE_SECONDS,
+    EPOCH_SWITCH_TS,
+    MAX_MODEL_BYTES,
+)
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.policy_interface import PolicyInterfaceError, read_policy_contract_from_zip
 
@@ -167,26 +175,16 @@ def _backend_reachable(backend_url: str) -> bool:
     return resp.status_code == 200
 
 
-def _submission_window(backend_url: str) -> dict | None:
-    """{"open": bool, "reopens_in_seconds": int} from the backend, or None."""
-    try:
-        resp = httpx.get(f"{backend_url.rstrip('/')}/miners/submission-window", timeout=15)
-        if resp.status_code != 200:
-            return None
-        return resp.json()
-    except Exception:
-        return None
-
-
-def _submission_status(backend_url: str, digest: str) -> dict | None:
-    """The backend's view of a committed digest, or None when it cannot answer."""
-    try:
-        resp = httpx.get(f"{backend_url.rstrip('/')}/miners/models/{digest}/status", timeout=15)
-        if resp.status_code != 200:
-            return None
-        return resp.json()
-    except Exception:
-        return None
+def _submission_window(now_ts: float) -> dict:
+    """Return the commit window from the shared epoch schedule at the supplied time."""
+    anchor, duration = (
+        (EPOCH_ANCHOR_UTC.timestamp(), EPOCH_DURATION_SECONDS)
+        if now_ts < EPOCH_SWITCH_TS
+        else (EPOCH_SWITCH_TS, EPOCH_DURATION_LONG_SECONDS)
+    )
+    remaining = duration - (now_ts - anchor) % duration
+    is_open = remaining >= EPOCH_FREEZE_SECONDS
+    return {"open": is_open, "reopens_in_seconds": 0 if is_open else int(remaining)}
 
 
 def _sha256_file(path: str) -> str:
@@ -211,26 +209,9 @@ def _load_local_families() -> dict | None:
         return None
 
 
-def _fetch_backend_families(backend_url: str) -> dict | None:
-    """Same mapping fetched from the backend registry, or None on any failure."""
-    try:
-        resp = httpx.get(backend_url.rstrip("/") + "/families/metadata", timeout=30)
-        if resp.status_code != 200:
-            return None
-        families = resp.json()["challenge_families"]
-        return {fid: str(fam.get("visibility", "public")) for fid, fam in families.items()}
-    except Exception:
-        return None
-
-
-def _known_families(backend_url: str) -> dict | None:
-    """The visibility map from the backend, falling back to the local schema, warning on each miss."""
-    families = _fetch_backend_families(backend_url)
-    if families is None:
-        bt.logging.warning(
-            "Could not reach the backend to verify the family list; using the local registry."
-        )
-        families = _load_local_families()
+def _known_families() -> dict | None:
+    """Return family visibility from the bundled schema, warning if it cannot be read."""
+    families = _load_local_families()
     if families is None:
         bt.logging.warning("Family registry unavailable; skipping family validation.")
     return families
@@ -323,6 +304,18 @@ def _response_detail(response) -> str:
     return response.text.strip()
 
 
+def _rejection_reason(response) -> str:
+    """Why a 422 upload reply turned the commitment away, explained when it names a reason code."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("reason_code"), str):
+        detail = payload.get("detail")
+        return explain_rejection(payload["reason_code"], detail if isinstance(detail, str) else None)
+    return _response_detail(response)
+
+
 def _resume_hint(family_id: str, artifact_path: str, wallet, backend_url: str) -> str:
     """The exact command that retries the upload, carrying the wallet that signed the commitment."""
     parts = [
@@ -345,8 +338,8 @@ def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, 
     """Upload the private artifact to the operator vault, signed by the hotkey.
 
     Retries with backoff while the backend has not yet scanned the commitment
-    (404) or answers with a server error (5xx). A 404 that the backend explains
-    as a rejection stops at once with the reason; any other status fails
+    (404) or answers with a server error (5xx). A 422 carries the reason the
+    commitment was turned away and stops at once; any other status fails
     immediately with the backend's own message.
     """
     path = f"/miners/models/{digest}/private-upload"
@@ -387,14 +380,10 @@ def _upload_private_artifact(backend_url: str, artifact_path: str, digest: str, 
             if response.status_code == 200:
                 bt.logging.info(f"Artifact uploaded to the private vault: {response.json()}")
                 return True
+            if response.status_code == 422:
+                bt.logging.error("The backend rejected the commitment: " + _rejection_reason(response))
+                return False
             if response.status_code == 404:
-                status = _submission_status(backend_url, digest)
-                if status and not status.get("registered") and status.get("reason_code"):
-                    bt.logging.error(
-                        "The backend rejected the commitment: "
-                        + explain_rejection(status.get("reason_code"), status.get("detail"))
-                    )
-                    return False
                 reason = "backend has not scanned the commitment yet (it scans every 3 minutes)"
             elif response.status_code >= 500:
                 reason = f"backend unavailable ({response.status_code})"
@@ -469,10 +458,11 @@ def submit_private(
 ) -> int:
     """Commit the artifact's digest on-chain and upload the bytes to the vault.
 
-    Every check that can fail runs before anything touches the chain, so a
-    rejected archive costs the miner nothing.
+    Local archive checks, family validation, the backend health check and the
+    epoch freeze run before anything touches the chain; a backend rejection
+    (such as a digest already registered) is reported by the upload after the commit.
     """
-    families = _known_families(backend_url)
+    families = _known_families()
     if families is not None and family_id not in families:
         bt.logging.error(f"Unknown family_id '{family_id}'.")
         bt.logging.error(f"Valid families: {', '.join(sorted(families))}")
@@ -504,19 +494,12 @@ def submit_private(
             bt.logging.error(f"Backend {backend_url} is unreachable; nothing was committed on-chain.")
             bt.logging.error("Verify --backend_url and your connection, then retry.")
             return 1
-        window = _submission_window(backend_url)
-        if window is not None and not window.get("open", True):
-            minutes = max(1, int(window.get("reopens_in_seconds", 0)) // 60)
+        window = _submission_window(time.time())
+        if not window["open"]:
+            minutes = max(1, window["reopens_in_seconds"] // 60)
             bt.logging.error(
                 "The submission window is closed for the pre-epoch freeze; "
                 f"it reopens in about {minutes} minutes. Nothing was committed on-chain."
-            )
-            return 1
-        status = _submission_status(backend_url, digest)
-        if status and status.get("registered") and status.get("uid") is not None:
-            bt.logging.error(
-                f"This exact archive is already registered to UID {status['uid']}; "
-                "change the model and package it again."
             )
             return 1
 
@@ -569,7 +552,7 @@ def _submit_public(args: argparse.Namespace) -> int:
     if not github_url:
         bt.logging.error("Invalid GitHub URL. Must be https://github.com/{owner}/{repo}")
         return 1
-    families = _known_families(args.backend_url)
+    families = _known_families()
     manifest_reason, declared_family = _check_public_manifest(github_url)
     if manifest_reason is not None:
         bt.logging.error(f"Submission rejected before committing: {manifest_reason}")

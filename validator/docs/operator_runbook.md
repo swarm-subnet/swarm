@@ -29,7 +29,7 @@ an empty `safe_family_ids`, and reason `validator_contract_upgrade_required`.
 
 Two things to know when operating this:
 
-- The full rollout payload (`{mode, default_family_id, enabled_family_ids, required_validator_contract, enforce_validator_contract}`) is attached to task-authorize / next-task responses and to the public `GET /families/metadata` as `payload['rollout']`. Validators persist it (plus their own `validator_compatibility`) into `swarm/state/runtime_state.json`, so you can inspect what a validator last saw.
+- The full rollout payload (`{mode, default_family_id, enabled_family_ids, required_validator_contract, enforce_validator_contract}`) is attached to task-authorize / next-task responses. Validators persist it (plus their own `validator_compatibility`) into `swarm/state/runtime_state.json`, so you can inspect what a validator last saw.
 - The enabled set gates **validator task authorization only**. Miner submission ingestion (chain scanner) validates family existence and visibility against the registry, not the rollout enabled set: `is_rollout_enabled_family` exists in `rollout.py` but has no callers.
 
 ---
@@ -210,7 +210,7 @@ The production docker-compose additionally sets `PYTHONPATH=/app` and loads `../
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `SWARM_BACKEND_API_URL` | required (no code default; the `swarm` CLI defaults it to the public backend API) | Backend URL |
+| `SWARM_BACKEND_API_URL` | required (no code default; the `swarm` CLI defaults it to the Swarm backend upload service) | Backend URL |
 | `WANDB_API_KEY` | optional | wandb logging |
 | `VALIDATOR_NAME` | `validator-{uid}` | Display name |
 | `SWARM_WEIGHT_SETTER_POLL_SEC` | 60 | Weight-setter poll interval |

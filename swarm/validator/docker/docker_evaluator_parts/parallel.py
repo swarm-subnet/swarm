@@ -513,12 +513,15 @@ async def _run_process_parallel(
                     checked.add(index)
                     return True
                 unchecked.add(index)
-            if len(seed_checks) < effective_workers:
+            flying = [str(task_meta[request.batch_indices[0]]["group"]) for request in worker_active_requests.values()]
+            if len(seed_checks) < effective_workers and scheduler.can_start_seed_check(flying):
+                scheduler.note_seed_check_started()
                 seed_checks[index] = asyncio.ensure_future(asyncio.to_thread(runtime.check_seed, task))
             return False
         if not job.done():
             return False
         del seed_checks[index]
+        scheduler.note_seed_check_finished()
         all_tasks[index] = job.result()
         task_meta[index]["seed"] = _task_seed(all_tasks[index], index)
         checked.add(index)
@@ -908,6 +911,7 @@ async def _run_process_parallel(
                 )
             return done_count < len(batch_plan)
 
+        task_groups = sorted({str(meta["group"]) for meta in task_meta})
         while _more_work_expected(completed_batches):
             if stop_reason is None and should_stop is not None:
                 reason = should_stop()
@@ -945,7 +949,18 @@ async def _run_process_parallel(
                 and len(worker_active_requests) < scheduler.active_worker_cap
                 and time.time() >= feeder_next_call_at
             ):
-                free_slots = scheduler.active_worker_cap - len(worker_active_requests)
+                # A seed claimed beyond what memory lets fly waits here while other validators could fly it.
+                free_slots = scheduler.claim_room(
+                    task_groups,
+                    [
+                        str(task_meta[batch_plan[request.batch_index][0]]["group"])
+                        for request in worker_active_requests.values()
+                        if batch_plan[request.batch_index]
+                    ],
+                )
+            else:
+                free_slots = 0
+            if free_slots > 0:
                 granted, drained = await seed_feeder(free_slots)
                 for task_index in granted:
                     task_index = int(task_index)

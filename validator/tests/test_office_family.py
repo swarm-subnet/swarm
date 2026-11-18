@@ -1137,6 +1137,7 @@ def test_office_target_size_varies_per_episode():
     assert len(sizes) == 3, "each seed must deal its own silhouette"
 
 
+@pytest.mark.time_budget(55)
 def test_office_spawns_spread_over_the_floor():
     """Spawns are drawn over free space, not nudged from one suggested point, so
     no spatial prior over spawn location is worth memorising. Every spawn must

@@ -48,7 +48,7 @@ from swarm.constants import MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import sun_render_kwargs
 
 from . import airframe, park, theft
-from .contract import GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
+from .contract import BLANK_RGB, BLANK_THERMAL, GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
 from .episode import SolarEpisode
 
 # The ray caster is the only path with thermal and daylight; an engine without it draws colour on TinyRenderer and
@@ -223,11 +223,11 @@ def capture(env: Any, ep: SolarEpisode) -> None:
     theft.show(env, ep, shot)
     if cam["thermal"]:
         ep.frames.thermal, objects = _thermal_frame(env, ep, shot)
-        ep.frames.rgb = np.zeros(RGB_SHAPE, dtype=np.float32)
+        ep.frames.rgb = BLANK_RGB
     else:
         ep.frames.rgb, objects = colour_frame(env, shot, night_camera(env, WIDE_LENS, shot, _night_scene(cam, env), ep.seed,
                                                                       cam["captures"]))
-        ep.frames.thermal = np.zeros(THERMAL_SHAPE, dtype=np.float32)
+        ep.frames.thermal = BLANK_THERMAL
     cam.update(view=replace(shot, objects=objects), captured_s=ep.time_s, captures=cam["captures"] + 1)
 
 
@@ -365,7 +365,7 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
 def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """A White Hot frame from the engine's thermal mode and its object map; blank and no map on an engine without it."""
     if not THERMAL:
-        return np.zeros(THERMAL_SHAPE, dtype=np.float32), None
+        return BLANK_THERMAL, None
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction

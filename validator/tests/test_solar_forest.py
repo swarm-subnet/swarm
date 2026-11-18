@@ -109,11 +109,12 @@ def test_two_seeds_stand_different_forests():
     assert counts[0] != counts[1]
 
 
-def test_the_forest_file_is_removed_after_the_build(client):
+def test_the_forest_file_is_removed_after_the_build(client, tmp_path, monkeypatch):
     """The per-build forest file the renderer reads is gone once the body stands."""
-    before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst")))
+    # A temp folder of its own, so a build in another test running alongside never shows up in it.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     build_solar_map(seed=0, cli=client, asset_dir=ASSET_DIR, groups=("plants",))
-    assert set(glob.glob(os.path.join(tempfile.gettempdir(), "*.fst"))) == before
+    assert not glob.glob(os.path.join(tmp_path, "*.fst"))
 
 
 def test_binary_rows_carry_the_numbers_their_text_gave():

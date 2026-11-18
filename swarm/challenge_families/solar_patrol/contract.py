@@ -312,10 +312,22 @@ RESULT_METRICS = tuple(Outcome.__dataclass_fields__) + ("time_sec", "horizon_sec
 SCORE_TERMS = ("detection_term", "coverage_term", "flight_term", "final_score")
 
 
+def _blank_frame(shape: tuple) -> np.ndarray:
+    """A shared blank frame that no observation consumer can modify."""
+    frame = np.zeros(shape, dtype=np.float32)
+    frame.flags.writeable = False
+    return frame
+
+
+BLANK_RGB = _blank_frame(RGB_SHAPE)
+BLANK_THERMAL = _blank_frame(THERMAL_SHAPE)
+BLANK_ZOOM = BLANK_RGB if ZOOM_SHAPE == RGB_SHAPE else _blank_frame(ZOOM_SHAPE)
+
+
 @dataclass
 class Frames:
     """The images the model is shown, kept between steps so a held frame costs nothing to resend."""
 
-    rgb: np.ndarray = field(default_factory=lambda: np.zeros(RGB_SHAPE, dtype=np.float32))
-    thermal: np.ndarray = field(default_factory=lambda: np.zeros(THERMAL_SHAPE, dtype=np.float32))
-    zoom: np.ndarray = field(default_factory=lambda: np.zeros(ZOOM_SHAPE, dtype=np.float32))
+    rgb: np.ndarray = field(default_factory=lambda: BLANK_RGB)
+    thermal: np.ndarray = field(default_factory=lambda: BLANK_THERMAL)
+    zoom: np.ndarray = field(default_factory=lambda: BLANK_ZOOM)

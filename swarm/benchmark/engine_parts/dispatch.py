@@ -68,6 +68,9 @@ _GROUP_RAM_ESTIMATES_MB = {
     # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top.
     "type9_testsite": 3250.0,
 }
+# A seed not judged yet is first flown by the reference pilot in a process of its own; the flights peaked near
+# 2,750 MiB. It is held only while that flight runs, so a host whose seeds are judged books nothing for it.
+_SEED_CHECK_RAM_MB = 3000.0
 _DEFAULT_RAM_ESTIMATE_MB = max(_GROUP_RAM_ESTIMATES_MB.values())
 _RESOURCE_POLL_INTERVAL_SEC = 2.0
 
@@ -251,6 +254,7 @@ class _RamWorkerScheduler:
     group_dispatch_counts: Counter = field(default_factory=Counter)
     ram_started_since_snapshot_mb: float = 0.0
     memory_warned_groups: set = field(default_factory=set)
+    seed_checks_running: int = 0
 
     def __post_init__(self) -> None:
         """Resolve vCPUs and installed memory, then cap the slots at what the lightest seed prior fits in the budget."""
@@ -435,8 +439,11 @@ class _RamWorkerScheduler:
         )
 
     def _reserved_ram_mb(self, active_groups: List[str]) -> float:
-        """Sum of the memory priors for the map types currently in flight."""
-        return sum(_ram_estimate_for_group(group) for group in active_groups)
+        """Sum of the memory priors for the map types currently in flight and for the seed checks running beside them."""
+        return (
+            sum(_ram_estimate_for_group(group) for group in active_groups)
+            + self.seed_checks_running * _SEED_CHECK_RAM_MB
+        )
 
     def seeds_at_once(self, group_name: str) -> int:
         """How many seeds of that map type the memory budget holds side by side, never fewer than one."""
@@ -445,7 +452,26 @@ class _RamWorkerScheduler:
 
     def _ram_fits(self, group_name: str, active_groups: List[str]) -> bool:
         """True when the seed's prior fits beside the priors in flight and in free memory less the seeds started since the reading."""
-        seed_ram_mb = _ram_estimate_for_group(group_name)
+        return self._mb_fits(_ram_estimate_for_group(group_name), active_groups)
+
+    def can_start_seed_check(self, active_groups: List[str]) -> bool:
+        """True when one more reference flight fits beside the patrols in flight and the checks already running, or when
+        nothing at all is running, so a short host still judges its seeds one at a time instead of stalling."""
+        if not active_groups and self.seed_checks_running == 0:
+            return True
+        return self._mb_fits(_SEED_CHECK_RAM_MB, active_groups)
+
+    def note_seed_check_started(self) -> None:
+        """Hold a reference flight's memory until it ends, and charge it against the last reading."""
+        self.seed_checks_running += 1
+        self.ram_started_since_snapshot_mb += _SEED_CHECK_RAM_MB
+
+    def note_seed_check_finished(self) -> None:
+        """Release the memory held for one reference flight."""
+        self.seed_checks_running = max(0, self.seed_checks_running - 1)
+
+    def _mb_fits(self, seed_ram_mb: float, active_groups: List[str]) -> bool:
+        """True when that much memory fits beside what is booked and in free memory less what started since the reading."""
         if (
             self._reserved_ram_mb(active_groups) + seed_ram_mb
             > self._ram_budget_mb()
@@ -463,6 +489,23 @@ class _RamWorkerScheduler:
         ):
             return False
         return True
+
+    def claim_room(self, group_names: List[str], active_groups: List[str]) -> int:
+        """How many more seeds to take from a shared pool: the free slots, capped by how many seeds of the lightest of
+        these map types the memory budget and the last reading's free memory still hold beside the ones in flight,
+        never fewer than one with nothing in flight."""
+        free_slots = max(0, self.active_worker_cap - len(active_groups))
+        if not group_names:
+            return free_slots
+        lightest_mb = min(_ram_estimate_for_group(group) for group in group_names)
+        fits = int((self._ram_budget_mb() - self._reserved_ram_mb(active_groups)) // lightest_mb)
+        snapshot = self.latest_snapshot
+        if snapshot is not None and snapshot.mem_available_mb > 0.0:
+            free_mb = snapshot.mem_available_mb - self.ram_reserve_mb - self.ram_started_since_snapshot_mb
+            fits = min(fits, int(free_mb // lightest_mb))
+        if not active_groups:
+            fits = max(1, fits)
+        return max(0, min(free_slots, fits))
 
     def can_admit_group(self, group_name: str, active_groups: List[str]) -> bool:
         """True when a slot is free and the seed fits in memory, or when nothing is in flight, so a short host runs seeds one at a time instead of stalling."""

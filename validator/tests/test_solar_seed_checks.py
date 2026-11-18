@@ -770,6 +770,7 @@ def test_a_thief_in_the_open_is_seen_and_the_seed_passes(flat_park, monkeypatch,
 
 
 @pytest.mark.timeout(600)
+@pytest.mark.time_budget(45)
 def test_a_thief_no_camera_can_see_fails_the_seed(flat_park, monkeypatch):
     """A thief inside a closed shed for the whole patrol shows no pixel, and the seed fails on him."""
     _skip_without_m4td()

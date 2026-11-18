@@ -212,6 +212,36 @@ def test_the_image_installs_the_validator_requirements() -> None:
     assert "validator/requirements.txt" in VALIDATOR_DOCKERFILE.read_text()
 
 
+def test_the_image_installs_its_dependencies_before_the_code_goes_in() -> None:
+    """Proves a commit that changes only code reuses the dependency layer: the requirements are copied and
+    installed before the checkout is copied in."""
+    text = VALIDATOR_DOCKERFILE.read_text()
+    install = text.index("uv pip install --system --no-cache -r /tmp/validator-requirements.txt")
+    assert text.index("COPY validator/requirements.txt") < install < text.index("COPY . /opt/swarm-validator")
+
+
+def test_main_builds_one_image_per_commit_and_the_publish_tags_it() -> None:
+    """Proves the image is built once: main builds it under its commit, the tests and the image checks run on that
+    tag, and the publish workflow gives the same image its tags instead of building and testing it again."""
+    tests = TESTS_WORKFLOW.read_text()
+    assert 'echo "tag=sha-$GITHUB_SHA"' in tests
+    assert tests.count("needs.push-validator-image.outputs.tag") >= 4
+    publish = WORKFLOW.read_text()
+    assert '"$IMAGE:sha-${{ github.event.workflow_run.head_sha || github.sha }}"' in publish
+    assert "docker buildx imagetools create" in publish
+
+
+def test_a_publish_without_a_tested_image_still_tests_before_it_pushes() -> None:
+    """Proves the fallback keeps the old guarantee: with no tested image to reuse, the image is built, the suite
+    runs inside it, and only then is it pushed."""
+    publish = WORKFLOW.read_text()
+    guard = "steps.tested.outputs.found != 'true'"
+    build, tests, push = (publish.index(name) for name in (
+        "- name: Build for the test run", "- name: Run the validator tests inside the image", "- name: Push"))
+    assert build < tests < push
+    assert publish.count(guard) == 3
+
+
 def test_the_update_script_finds_the_checkout_from_its_copy(tmp_path: Path) -> None:
     """Proves the script still resolves the repository once it re-runs itself from a copy.
 
