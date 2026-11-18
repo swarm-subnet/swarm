@@ -85,12 +85,39 @@ jobs:
             echo "$IMAGE:$version exists and the image inputs are unchanged; nothing to publish"
           fi
 
+      # The Tests workflow built this commit's image, ran the suite and the image checks
+      # on it, and left it as :sha-<commit>. Publishing is giving that same image its tags,
+      # so what operators pull is byte for byte what passed, and nothing is built twice.
+      - name: Find the image the tests ran on
+        id: tested
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          source="$IMAGE:sha-${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && docker manifest inspect "$source" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Publishing the tested image $source"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No tested image to reuse; building and testing here"
+          fi
+
       - name: Set up buildx
         if: steps.plan.outputs.publish == 'true'
         uses: docker/setup-buildx-action@v3
 
+      - name: Tag the tested image
+        if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found == 'true'
+        run: |
+          tags=()
+          IFS=, read -ra names <<< "${{ steps.plan.outputs.tags }}"
+          for name in "${names[@]}"; do tags+=(-t "$name"); done
+          docker buildx imagetools create "${tags[@]}" "${{ steps.tested.outputs.source }}"
+
+      # A manual run, or a commit with no tested image, still builds and tests the image
+      # here before anything is published.
       - name: Build for the test run
-        if: steps.plan.outputs.publish == 'true'
+        if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -99,15 +126,14 @@ jobs:
           build-args: |
             SWARM_VERSION=${{ steps.version.outputs.version }}
           tags: swarm-validator:candidate
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache
 
       # The validator tests run inside the image itself, as a plain uid with no wallet, so
       # what gets published is what passed and not merely what built. The checkout is
       # mounted the way the Tests workflow mounts it: the image ships neither .github nor a
       # writable state directory, and the suite reads one and writes the other.
       - name: Run the validator tests inside the image
-        if: steps.plan.outputs.publish == 'true'
+        if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found != 'true'
         run: |
           cpus="$(nproc)"
           docker run --rm --cpus="$cpus" \
@@ -121,7 +147,7 @@ jobs:
             pytest -v validator/tests -n"$cpus" --dist worksteal -p no:cacheprovider --timeout=300
 
       - name: Push
-        if: steps.plan.outputs.publish == 'true'
+        if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -130,5 +156,4 @@ jobs:
           build-args: |
             SWARM_VERSION=${{ steps.version.outputs.version }}
           tags: ${{ steps.plan.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache
