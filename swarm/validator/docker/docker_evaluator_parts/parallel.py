@@ -513,12 +513,15 @@ async def _run_process_parallel(
                     checked.add(index)
                     return True
                 unchecked.add(index)
-            if len(seed_checks) < effective_workers:
+            flying = [str(task_meta[request.batch_indices[0]]["group"]) for request in worker_active_requests.values()]
+            if len(seed_checks) < effective_workers and scheduler.can_start_seed_check(flying):
+                scheduler.note_seed_check_started()
                 seed_checks[index] = asyncio.ensure_future(asyncio.to_thread(runtime.check_seed, task))
             return False
         if not job.done():
             return False
         del seed_checks[index]
+        scheduler.note_seed_check_finished()
         all_tasks[index] = job.result()
         task_meta[index]["seed"] = _task_seed(all_tasks[index], index)
         checked.add(index)
