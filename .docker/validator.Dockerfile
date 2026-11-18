@@ -61,12 +61,17 @@ RUN iptables_bin="$(readlink -f "$(command -v iptables)")" \
     && [ "$(readlink -f "$(command -v ip6tables)")" = "$iptables_bin" ]
 
 WORKDIR /opt/swarm-validator
+
+# The validator's own list decides what it runs on. It goes in before the code, so a
+# commit that changes only code reuses this layer instead of installing everything
+# again, the worlds package included.
+COPY validator/requirements.txt /tmp/validator-requirements.txt
+RUN uv pip install --system --no-cache -r /tmp/validator-requirements.txt
+
 COPY . /opt/swarm-validator
 
-# The validator's own list decides what it runs on; the package itself is then
-# installed without resolving the root requirements a second time.
-RUN uv pip install --system --no-cache -r /opt/swarm-validator/validator/requirements.txt \
-    && uv pip install --system --no-cache --no-deps -e /opt/swarm-validator
+# The package itself is installed without resolving the root requirements a second time.
+RUN uv pip install --system --no-cache --no-deps -e /opt/swarm-validator
 
 COPY .docker/validator-entrypoint.sh /usr/local/bin/validator-entrypoint
 RUN chmod +x /usr/local/bin/validator-entrypoint
