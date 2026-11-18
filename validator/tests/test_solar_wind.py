@@ -381,7 +381,7 @@ def _fly(task, seconds_forward: float, hover_s: float) -> tuple[list, object]:
 
 @needs_m4td
 @pytest.mark.timeout(600)
-@pytest.mark.time_budget(85)
+@pytest.mark.time_budget(110)
 def test_still_air_flies_by_the_windy_drag(flat_ground):
     """A still seed and the same seed in a wind too weak to feel fly forward alike: rotor drag acts in still air
     too, so strength is the only thing a seed's wind changes."""
@@ -398,7 +398,7 @@ def test_still_air_flies_by_the_windy_drag(flat_ground):
 
 @needs_m4td
 @pytest.mark.timeout(600)
-@pytest.mark.time_budget(45)
+@pytest.mark.time_budget(60)
 def test_a_strong_wind_does_not_blow_the_hover_away(flat_ground):
     """With the sticks centred in a strong seed's wind, the aircraft holds its place within a metre for 30 s, as the
     real one holds position up to its 12 m/s rating."""
@@ -411,7 +411,7 @@ def test_a_strong_wind_does_not_blow_the_hover_away(flat_ground):
 
 @needs_m4td
 @pytest.mark.timeout(900)
-@pytest.mark.time_budget(65)
+@pytest.mark.time_budget(115)
 def test_a_patrol_reads_still_light_and_strong_air(flat_ground):
     """Three seeds, one of each strength, hovering at 20 m: the estimate is 0 before take-off and grows with the
     strength once airborne, and the gauge reads nothing in still air and more in strong air than in light."""

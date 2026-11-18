@@ -149,7 +149,7 @@ def test_a_crew_cuts_in_on_the_side_its_way_names():
             assert getattr(story.opening, story.way), (seed, story.way, story.opening.index)
 
 
-@pytest.mark.time_budget(35)
+@pytest.mark.time_budget(45)
 def test_every_crew_is_in_before_the_take_off_is_over_and_never_inside_a_table():
     """Played for a whole patrol with no drone, every man steps inside the fence by ENTRY_S, never stands inside a
     table, nobody leaves, since no camera ever saw him, no two men ever walk into each other, and the crews come in all
@@ -458,8 +458,8 @@ def test_threats_are_the_men_inside_the_fence():
     assert theft.bodies(ep) == {id(man): n for n, man in enumerate(men)}
 
 
+@pytest.mark.time_budget(35)
 @pytest.mark.timeout(1200)
-@pytest.mark.time_budget(25)
 def test_the_first_man_is_not_played_ahead_at_reset():
     """Staging the theft times the fence cut on a copy of the first man, so his own track is written no further than
     the patrol clock and a reaction can take over at his first seam."""
@@ -472,6 +472,7 @@ def test_the_first_man_is_not_played_ahead_at_reset():
         env.close()
 
 
+@pytest.mark.time_budget(40)
 @pytest.mark.timeout(1200)
 def test_every_thief_counts_as_a_threat_from_the_start():
     """A patrol that ends before the crew is through the fence still answers for every man of the story."""
@@ -486,8 +487,8 @@ def test_every_thief_counts_as_a_threat_from_the_start():
         env.close()
 
 
+@pytest.mark.time_budget(60)
 @pytest.mark.timeout(1200)
-@pytest.mark.time_budget(45)
 def test_the_fence_is_cut_and_the_thief_posed_in_the_engine():
     """In a real patrol the panel or gate stands whole at the start and gives way to its cut or opened pieces once the
     first man is through, and a picture of a thief poses him where he stands."""

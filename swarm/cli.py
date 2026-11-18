@@ -38,6 +38,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+import httpx
+
 from swarm.constants import N_DOCKER_WORKERS
 from swarm.core.sandbox_lockdown import lockdown_permission
 from swarm.core.submission_policy import validate_submission_zip
@@ -393,50 +395,80 @@ def _champion_zip_name(uid: int, family_id: Optional[str]) -> str:
     return f"champion_UID_{uid}.zip"
 
 
-def _download_champion_model(family_id: Optional[str] = None) -> Optional[Path]:
-    """Fetch the released crown zip from the backend, reusing a cached copy whose hash matches.
+def _champion_release(client: httpx.Client, family_id: Optional[str]) -> dict:
+    """Find each family's newest public release and select the requested or highest-scoring crown."""
+    latest = {}
+    page = 1
+    while True:
+        response = client.get(
+            "https://api.github.com/repos/swarm-subnet/swarm-champions/releases",
+            params={"per_page": 100, "page": page},
+        )
+        if response.status_code in (403, 429):
+            raise ValueError("GitHub rate limit or access restriction; set GITHUB_TOKEN and retry.")
+        response.raise_for_status()
+        releases = response.json()
+        for release in releases:
+            match = re.fullmatch(r"(.+)-uid(\d+)-([0-9a-f]{8})", release.get("tag_name", ""))
+            if not match or release.get("draft") or release.get("prerelease"):
+                continue
+            family = match[1]
+            if family_id and family != family_id:
+                continue
+            if family not in latest or release["published_at"] > latest[family]["published_at"]:
+                latest[family] = release
+        if len(releases) < 100:
+            break
+        page += 1
+    if not latest:
+        raise ValueError(f"No champion release exists for {family_id or 'any family'}.")
+    candidates = []
+    for family, release in latest.items():
+        body = release.get("body") or ""
+        score = re.search(r"Score: \*\*([0-9.]+)\*\*", body)
+        crowned = re.search(r"Crowned: (\S+)", body)
+        candidates.append((-(float(score[1]) if score else -1.0), crowned[1] if crowned else "~", family, release))
+    release = min(candidates, key=lambda candidate: candidate[:3])[3]
+    tag = re.fullmatch(r"(.+)-uid(\d+)-([0-9a-f]{8})", release["tag_name"])
+    digest = re.search(r"Archive SHA-256: `([0-9a-f]{64})`", release.get("body") or "")
+    asset = next((a for a in release.get("assets", []) if a.get("name") == "submission.zip"), None)
+    if not digest or not digest[1].startswith(tag[3]) or asset is None:
+        raise ValueError("Champion release is missing a valid archive digest or submission.zip asset.")
+    score = re.search(r"Score: \*\*([0-9.]+)\*\*", release.get("body") or "")
+    return {
+        "uid": int(tag[2]),
+        "score": float(score[1]) if score else None,
+        "digest": digest[1],
+        "url": asset["browser_download_url"],
+    }
 
-    None whenever the fetch fails, the crown is unreleased, or the digest does not check out.
-    """
-    import httpx
 
-    base_url = os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com").rstrip("/")
-    params = {"family_id": family_id} if family_id else {}
+def _download_champion_model(
+    family_id: Optional[str] = None, output: Optional[Path] = None,
+) -> Optional[Path]:
+    """Download a GitHub champion archive, reusing a cached copy with the published SHA-256."""
+    headers = {"Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.get(f"{base_url}/champion", params=params)
-            if resp.status_code != 200:
-                print("No champion model available to download.", file=sys.stderr)
-                return None
-            champ = resp.json()
-            if not champ.get("is_released"):
-                print(f"Champion UID {champ['uid']} is not released for download yet.", file=sys.stderr)
-                return None
-
-            uid = champ["uid"]
-            expected_hash = champ.get("model_hash")
-            output = Path(_champion_zip_name(uid, family_id))
-
-            if output.exists() and expected_hash:
-                existing_hash = hashlib.sha256(output.read_bytes()).hexdigest()
-                if existing_hash == expected_hash:
-                    print(f"Using cached champion: {output}")
-                    return output
-
-            print(f"Downloading champion UID {uid} (score: {champ.get('benchmark_score', 0):.4f})...")
-            dl = client.get(f"{base_url}/models/{uid}/download", params=params)
-            if dl.status_code != 200:
-                print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
-                return None
-
-            if expected_hash:
-                dl_hash = hashlib.sha256(dl.content).hexdigest()
-                if dl_hash != expected_hash:
-                    print("Download integrity check failed.", file=sys.stderr)
-                    return None
-
-            output.write_bytes(dl.content)
-            print(f"Saved: {output} ({len(dl.content) / (1024*1024):.1f} MB)")
+        with httpx.Client(timeout=30.0, headers=headers, follow_redirects=True) as client:
+            champion = _champion_release(client, family_id)
+            output = output or Path(_champion_zip_name(champion["uid"], family_id))
+            expected_hash = champion["digest"]
+            if output.exists() and hashlib.sha256(output.read_bytes()).hexdigest() == expected_hash:
+                print(f"Using cached champion: {output}")
+                return output
+            score = f" (score: {champion['score']:.4f})" if champion["score"] is not None else ""
+            print(f"Downloading champion UID {champion['uid']}{score} ...")
+            download = client.get(champion["url"])
+            if download.status_code in (403, 429):
+                raise ValueError("GitHub rate limit or access restriction; set GITHUB_TOKEN and retry.")
+            download.raise_for_status()
+            if hashlib.sha256(download.content).hexdigest() != expected_hash:
+                raise ValueError("Download integrity check failed.")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(download.content)
+            print(f"Saved: {output} ({len(download.content) / (1024 * 1024):.1f} MB)")
             return output
     except Exception as exc:
         print(f"Failed to download champion: {exc}", file=sys.stderr)
@@ -1276,76 +1308,8 @@ def _cmd_monitor(args: argparse.Namespace) -> int:
 
 
 def _cmd_champion(args: argparse.Namespace) -> int:
-    """Save the reigning crown zip from the backend, checking its published hash.
-
-    Returns 2 when a crown exists but has not been published for download yet.
-    """
-    import httpx
-
-    base_url = args.backend_url
-    if not base_url:
-        print("Backend URL required. Set --backend-url or SWARM_BACKEND_API_URL.", file=sys.stderr)
-        return 1
-    base_url = base_url.rstrip("/")
-    params = {"family_id": args.family_id} if args.family_id else {}
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.get(f"{base_url}/champion", params=params)
-            if resp.status_code == 404:
-                print("No champion model yet.", file=sys.stderr)
-                return 1
-            if resp.status_code != 200:
-                print(f"Failed to fetch champion: HTTP {resp.status_code}", file=sys.stderr)
-                return 1
-
-            champ = resp.json()
-            uid = champ["uid"]
-            score = champ.get("benchmark_score", 0)
-            released = champ.get("is_released", False)
-            per_type = champ.get("per_type_scores") or {}
-            expected_hash = champ.get("model_hash")
-
-            if not released:
-                print(f"Champion: UID {uid}  Score: {score:.4f}")
-                print("Model is not published for download yet; a fresh crown is published within minutes.")
-                return 2
-
-            output = args.output or Path(_champion_zip_name(uid, args.family_id))
-            print(f"Champion: UID {uid}  Score: {score:.4f}")
-            if per_type:
-                parts = [f"{k}: {v:.3f}" for k, v in sorted(per_type.items()) if v]
-                if parts:
-                    print(f"Per-map:  {', '.join(parts)}")
-            print(f"Downloading to {output} ...")
-
-            dl = client.get(f"{base_url}/models/{uid}/download", params=params)
-            if dl.status_code == 403:
-                print("Model not released for public download.", file=sys.stderr)
-                return 1
-            if dl.status_code != 200:
-                print(f"Download failed: HTTP {dl.status_code}", file=sys.stderr)
-                return 1
-
-            if expected_hash:
-                dl_hash = hashlib.sha256(dl.content).hexdigest()
-                if dl_hash != expected_hash:
-                    print(f"Download integrity check failed (expected {expected_hash[:16]}...)", file=sys.stderr)
-                    return 1
-
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_bytes(dl.content)
-
-            size_mb = len(dl.content) / (1024 * 1024)
-            print(f"Saved: {output} ({size_mb:.1f} MB)")
-            return 0
-
-    except httpx.ConnectError:
-        print(f"Cannot connect to backend at {base_url}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    """Save the selected GitHub champion archive after verifying its published digest."""
+    return 0 if _download_champion_model(args.family_id, args.output) is not None else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1626,12 +1590,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(CHALLENGE_FAMILY_IDS),
         default=None,
         help="Challenge family to download the champion for (default: the best champion across families).",
-    )
-    champion_parser.add_argument(
-        "--backend-url",
-        type=str,
-        default=os.environ.get("SWARM_BACKEND_API_URL", "https://api.swarm124.com"),
-        help="Backend API URL (default: https://api.swarm124.com).",
     )
     champion_parser.set_defaults(func=_cmd_champion)
 

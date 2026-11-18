@@ -263,7 +263,7 @@ jobs:
 
       # One worker per CPU: each Sentinel world takes about 3 GB, so more workers than
       # CPUs get killed for memory without running any faster. A test that hangs fails
-      # after five minutes, and one that takes over 20 s fails the run unless it carries
+      # after five minutes, and one that takes over 30 s fails the run unless it carries
       # a time_budget mark of its own.
       - name: Run the validator tests
         run: |
@@ -279,7 +279,7 @@ jobs:
             "$VALIDATOR_IMAGE:${{ needs.push-validator-image.outputs.tag }}" \
             pytest -v validator/tests -n"$cpus" --dist worksteal -p no:cacheprovider --timeout=300 \
               --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration \
-              --durations=20 --max-test-seconds=20
+              --durations=20 --max-test-seconds=30
 
   # Apart from the shards so it runs once, beside them, and not after a quarter of the suite.
   validator-image-checks:

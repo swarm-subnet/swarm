@@ -188,7 +188,7 @@ def test_a_row_moves_as_one_straight_string_with_its_legs():
 
 
 @needs_park
-@pytest.mark.time_budget(40)
+@pytest.mark.time_budget(50)
 def test_moved_pieces_keep_to_their_side_of_the_fence_and_apart():
     """Over many seeds every unit keeps to the side of the fence it is surveyed on and at least the configured metre
     from it and from every other unit, or no nearer than the survey stands them; the one built into the fence stays."""

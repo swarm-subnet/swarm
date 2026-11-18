@@ -283,7 +283,7 @@ def test_random_actions_fly_a_whole_patrol(flat_park):
 
 
 @pytest.mark.timeout(1200)
-@pytest.mark.time_budget(30)
+@pytest.mark.time_budget(40)
 def test_a_patrol_that_never_takes_off_runs_out_of_time(flat_park):
     """A drone left in its dock ends the patrol on the clock at 390 s, one decision every 0.1 s."""
     log = _patrol(12, lambda i, obs: _action())

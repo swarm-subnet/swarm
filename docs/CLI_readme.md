@@ -76,7 +76,7 @@ swarm benchmark --model Submission/submission.zip --seeds-per-group 1
 swarm benchmark --model Submission/submission.zip --workers 3 --relax-timeouts --rpc-verbosity low
 ```
 
-If `--model` is omitted, the champion of the family given by `--family-id` is downloaded (with SHA-256 verification) and benchmarked instead. Without `--family-id` the backend returns the highest-scoring champion across the families whose champions are published. Swarm Sentinel champions are not published, so a Swarm Sentinel benchmark always needs `--model`.
+If `--model` is omitted, the champion of the family given by `--family-id` is downloaded (with SHA-256 verification) and benchmarked instead. Without `--family-id` the highest-scoring champion across each family's newest GitHub release is selected.
 
 Useful options:
 
@@ -189,7 +189,7 @@ Options:
 
 ### `swarm model submit`
 
-Packages a source folder (or takes an already packaged archive), verifies it locally, commits its SHA-256 on-chain from your hotkey, and uploads the archive to the Swarm backend, where it stays private unless it takes the crown. Every check runs before the chain commit, so a refused archive costs nothing.
+Packages a source folder (or takes an already packaged archive), verifies it locally, commits its SHA-256 on-chain from your hotkey, and uploads the archive to the Swarm backend, where it stays private unless it takes the crown. Local archive checks, bundled family validation, the backend health check, and the locally computed epoch freeze run before the chain commit. The signed upload reports any backend rejection after committing.
 
 ```bash
 # Package, verify, commit and upload in one step
@@ -211,10 +211,10 @@ Options:
 - `--family-id <id>`: the family the model competes in; prompted in a terminal when omitted, required in scripts.
 - `--output <path>`: where `--source` is packaged to (default `Submission/submission.zip`).
 - `--wallet.name`, `--wallet.hotkey`, `--netuid`, `--subtensor.network`: the usual Bittensor identity flags.
-- `--backend-url <url>`: override the backend API URL (defaults to the public API, or `SWARM_BACKEND_API_URL`).
+- `--backend-url <url>`: override the backend API URL (defaults to the Swarm upload service, or `SWARM_BACKEND_API_URL`).
 - `--upload-only`: skip packaging, verification and the chain commit; only (re)upload the archive.
 
-The upload waits for the backend's chain scanner and retries with backoff for up to 30 minutes; if it cannot land, the command prints the exact `--upload-only` line to run later. Refusals come with the backend's reason. The miner guide covers the full flow.
+The upload waits for the backend's chain scanner and retries with backoff for up to 30 minutes; if it cannot land, the command prints the exact `--upload-only` line to run later. A 422 refusal stops retries and explains the backend's reason. The backend API is private; miners use only its health check and signed private upload. The miner guide covers the full flow.
 
 ### `swarm model test`
 
@@ -283,10 +283,9 @@ swarm champion --family-id cf_search_and_rescue
 Options:
 
 - `--output <path>`: output file path. Defaults to `champion_UID_{uid}.zip` in the current directory.
-- `--family-id <id>`: challenge family to download the champion for. Without it the backend returns the highest-scoring champion across the families whose champions are published, which is rarely the one you are working on. With it, the output file defaults to `champion_{family_id}_UID_{uid}.zip` so champions from different families do not overwrite each other.
-- `--backend-url <url>`: override the backend API URL (defaults to the public API).
+- `--family-id <id>`: challenge family to download the champion for. Without it the command selects the highest-scoring champion across each family's newest GitHub release, which is rarely the one you are working on. With it, the output file defaults to `champion_{family_id}_UID_{uid}.zip` so champions from different families do not overwrite each other.
 
-The download includes SHA-256 integrity verification against the hash reported by the backend.
+Downloads come from [swarm-subnet/swarm-champions releases](https://github.com/swarm-subnet/swarm-champions/releases), selecting the newest published release for the requested family. The archive is verified against the release body's `Archive SHA-256` value, and cached files with the same hash are reused. Set `GITHUB_TOKEN` if the public GitHub API rate limits your requests.
 
 ## Tests
 

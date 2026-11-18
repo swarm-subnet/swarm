@@ -22,6 +22,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -130,7 +131,7 @@ def test_benchmark_invokes_engine_directly(monkeypatch, tmp_path):
     model_path = tmp_path / "graph.zip"
     model_path.write_bytes(b"zip")
     captured = {}
-    monkeypatch.setattr("swarm.benchmark.engine.main", lambda argv: captured.setdefault("argv", list(argv)))
+    monkeypatch.setitem(sys.modules, "swarm.benchmark.engine", SimpleNamespace(main=lambda argv: captured.setdefault("argv", list(argv))))
     assert cli.main(["benchmark", "--model", str(model_path), "--workers", "3"]) == 0
     assert captured["argv"][captured["argv"].index("--workers") + 1] == "3"
 
@@ -260,72 +261,101 @@ def test_required_template_files_match_what_the_validator_stages():
 ZIP_BYTES = b"champion-zip"
 
 
-def _fake_champion_client(monkeypatch, calls, uid=7):
-    """Patch httpx.Client with a stub serving a released crown record then the zip bytes, recording each url and params."""
-    class FakeResponse:
-        """A stand-in httpx response: status 200 over either a JSON payload or raw bytes."""
-        def __init__(self, payload=None, content=b""):
-            """Store the JSON payload and the body bytes the caller will read back."""
-            self.status_code = 200
-            self._payload = payload
-            self.content = content
-
-        def json(self):
-            """Return the payload the fake was constructed with."""
-            return self._payload
-
-    class FakeClient:
-        """A stand-in httpx client answering the crown lookup and the zip download."""
-        def __init__(self, *args, **kwargs):
-            """Accept and discard the timeout and every other client argument."""
-            pass
-
-        def __enter__(self):
-            """Return the client itself so the with block binds the fake."""
-            return self
-
-        def __exit__(self, *exc):
-            """Return False so an exception raised inside the with block propagates."""
-            return False
-
-        def get(self, url, params=None):
-            """Record the call, answering /champion with the crown record and anything else with the zip bytes."""
-            calls.append((url, params))
-            if url.endswith("/champion"):
-                return FakeResponse(payload={
-                    "uid": uid,
-                    "benchmark_score": 0.5,
-                    "is_released": True,
-                    "model_hash": hashlib.sha256(ZIP_BYTES).hexdigest(),
-                })
-            return FakeResponse(content=ZIP_BYTES)
-
-    monkeypatch.setattr(httpx, "Client", FakeClient)
+def _release(family="cf_search_and_rescue", uid=7, published="2026-10-01T00:00:00Z", score=0.8):
+    """Build a public release with the real publisher's tag, body and asset format."""
+    digest = hashlib.sha256(ZIP_BYTES).hexdigest()
+    return {
+        "tag_name": f"{family}-uid{uid}-{digest[:8]}",
+        "published_at": published,
+        "body": f"- Score: **{score}**\n- Crowned: {published}\n- Archive SHA-256: `{digest}`",
+        "assets": [{"name": "submission.zip", "browser_download_url": f"https://github.com/archive/{uid}/submission.zip"}],
+    }
 
 
-def test_champion_scopes_both_requests_to_the_family(monkeypatch, tmp_path):
-    """The lookup and the download both carry family_id, and the zip is saved under a family-named file."""
+def _fake_champion_client(monkeypatch, calls, releases=None, content=ZIP_BYTES, status=200):
+    """Serve release pages and archive bytes through a network-free HTTP transport."""
+    real_client = httpx.Client
+
+    def respond(request):
+        """Record requests and return the requested page or download."""
+        calls.append(request)
+        if request.url.host == "api.github.com":
+            return httpx.Response(status, json=[_release()] if releases is None else releases)
+        return httpx.Response(200, content=content)
+
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs))
+
+
+def test_champion_scopes_release_to_family(monkeypatch, tmp_path):
+    """The requested family selects its newest release even when another family was published later."""
     calls = []
-    _fake_champion_client(monkeypatch, calls)
+    _fake_champion_client(monkeypatch, calls, [
+        _release(uid=6, score=0.99),
+        _release(uid=7, published="2026-10-02T00:00:00Z"),
+        _release("cf_swarm_sar", uid=8, published="2026-10-03T00:00:00Z"),
+    ])
     monkeypatch.chdir(tmp_path)
-
     assert cli.main(["champion", "--family-id", "cf_search_and_rescue"]) == 0
-    assert [params for _, params in calls] == [
-        {"family_id": "cf_search_and_rescue"},
-        {"family_id": "cf_search_and_rescue"},
-    ]
+    assert calls[-1].url.path == "/archive/7/submission.zip"
     assert (tmp_path / "champion_cf_search_and_rescue_UID_7.zip").read_bytes() == ZIP_BYTES
 
 
-def test_champion_without_a_family_keeps_the_old_filename(monkeypatch, tmp_path):
-    """With no family flag the requests send no params and the zip keeps its champion_UID_N name."""
+def test_champion_without_family_selects_best_current_score(monkeypatch, tmp_path):
+    """No family preserves the highest-score default and the original filename."""
+    calls = []
+    _fake_champion_client(monkeypatch, calls, [
+        _release(uid=6, score=1.0),
+        _release(uid=7, published="2026-10-02T00:00:00Z", score=0.9),
+        _release("cf_swarm_sar", uid=8, published="2026-10-03T00:00:00Z", score=0.8),
+    ])
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["champion"]) == 0
+    assert (tmp_path / "champion_UID_7.zip").exists()
+
+
+@pytest.mark.parametrize("command", [True, False])
+def test_champion_reuses_cached_digest(monkeypatch, tmp_path, command):
+    """Both download entry points reuse matching local bytes without fetching the archive."""
     calls = []
     _fake_champion_client(monkeypatch, calls)
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "champion_UID_7.zip").write_bytes(ZIP_BYTES)
+    if command:
+        assert cli.main(["champion"]) == 0
+    else:
+        assert cli._download_champion_model() == Path("champion_UID_7.zip")
+    assert len(calls) == 1
 
-    assert cli.main(["champion"]) == 0
-    assert [params for _, params in calls] == [{}, {}]
-    assert (tmp_path / "champion_UID_7.zip").exists()
+
+@pytest.mark.parametrize("status,releases,content,message", [
+    (200, [], ZIP_BYTES, "No champion release"),
+    (403, [], ZIP_BYTES, "rate limit"),
+    (429, [], ZIP_BYTES, "rate limit"),
+    (200, [_release()], b"wrong zip", "integrity check failed"),
+    (200, [{**_release(), "body": "no digest"}], ZIP_BYTES, "valid archive digest"),
+    (200, [{**_release(), "assets": []}], ZIP_BYTES, "submission.zip asset"),
+    (200, [{**_release(), "tag_name": "cf_search_and_rescue-uid7-00000000"}], ZIP_BYTES, "valid archive digest"),
+    (200, [{**_release(), "draft": True}], ZIP_BYTES, "No champion release"),
+    (200, [{**_release(), "prerelease": True}], ZIP_BYTES, "No champion release"),
+])
+def test_champion_download_failures(monkeypatch, tmp_path, capsys, status, releases, content, message):
+    """Lookup and integrity failures leave no output and explain the problem."""
+    _fake_champion_client(monkeypatch, [], releases, content, status)
+    output = tmp_path / "download.zip"
+    assert cli.main(["champion", "--output", str(output)]) == 1
+    assert not output.exists()
+    assert message in capsys.readouterr().err
+
+
+def test_champion_honors_github_token_and_custom_output(monkeypatch, tmp_path):
+    """An optional token authenticates the API request and a custom output is created."""
+    calls = []
+    _fake_champion_client(monkeypatch, calls)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    output = tmp_path / "nested" / "crown.zip"
+    assert cli.main(["champion", "--output", str(output)]) == 0
+    assert calls[0].headers["Authorization"] == "Bearer test-token"
+    assert output.read_bytes() == ZIP_BYTES
 
 
 def test_champion_rejects_an_unknown_family(capsys):
@@ -347,7 +377,42 @@ def test_benchmark_auto_download_uses_the_benchmark_family(monkeypatch, tmp_path
         return model_path
 
     monkeypatch.setattr(cli, "_download_champion_model", fake_download)
-    monkeypatch.setattr("swarm.benchmark.engine.main", lambda argv: 0)
+    monkeypatch.setitem(sys.modules, "swarm.benchmark.engine", SimpleNamespace(main=lambda argv: 0))
 
     assert cli.main(["benchmark", "--family-id", "cf_search_and_rescue"]) == 0
     assert captured["family_id"] == "cf_search_and_rescue"
+
+
+def test_champion_searches_all_release_pages(monkeypatch):
+    """A family whose latest release is on a later API page remains discoverable."""
+    calls = []
+    real_client = httpx.Client
+
+    def respond(request):
+        """Return a full unrelated page before the requested family's release."""
+        calls.append(request)
+        releases = [_release("cf_swarm_sar")] * 100 if request.url.params["page"] == "1" else [_release()]
+        return httpx.Response(200, json=releases)
+
+    with real_client(transport=httpx.MockTransport(respond)) as client:
+        release = cli._champion_release(client, "cf_search_and_rescue")
+    assert release["uid"] == 7
+    assert len(calls) == 2
+
+
+def test_champion_missing_requested_family(monkeypatch, tmp_path, capsys):
+    """Releases from another family cannot satisfy an explicit family selection."""
+    _fake_champion_client(monkeypatch, [], [_release("cf_swarm_sar")])
+    assert cli._download_champion_model("cf_search_and_rescue", tmp_path / "crown.zip") is None
+    assert "No champion release exists for cf_search_and_rescue" in capsys.readouterr().err
+
+
+def test_champion_replaces_invalid_cache(monkeypatch, tmp_path):
+    """A stale local archive is replaced only after a valid download."""
+    calls = []
+    _fake_champion_client(monkeypatch, calls)
+    output = tmp_path / "crown.zip"
+    output.write_bytes(b"stale")
+    assert cli._download_champion_model(output=output) == output
+    assert output.read_bytes() == ZIP_BYTES
+    assert len(calls) == 2
