@@ -247,3 +247,43 @@ def test_a_flown_command_reaches_the_aircraft_one_step_later():
     first = int(np.argmax(forward > 0.0))
     assert first == 300 * DECISION_STEPS + 1
     assert np.all(forward[:first] == 0.0) and np.all(forward[first:] == 1.0)
+
+
+@pytest.mark.parametrize("channels", [3, 4])
+def test_byte_colour_look_keeps_every_float_bit(channels, monkeypatch):
+    """Byte RGB and RGBA keep the existing float look and numpy fallback."""
+    rng = np.random.default_rng(192)
+    raw = rng.integers(0, 256, (48, 80, channels), dtype=np.uint8)
+    floats = raw[:, :, :3].astype(np.float32) / np.float32(255.0)
+    for quality in (1, 35, 70, 100):
+        expected = sensor_noise.stream_look(floats, quality)
+        actual = sensor_noise.stream_look(raw, quality)
+        assert actual.tobytes() == expected.tobytes()
+    monkeypatch.setattr(sensor_noise, "_ENGINE_BYTE_LOOK", None)
+    assert sensor_noise.stream_look(raw, 70).tobytes() == sensor_noise.stream_look(floats, 70).tobytes()
+
+
+def test_blank_byte_colour_stays_float_and_cached():
+    """Opaque black RGBA stays a cached zero float RGB image."""
+    raw = np.zeros((16, 32, 4), dtype=np.uint8)
+    raw[:, :, 3] = 255
+    noise = {"streamed": {}}
+    actual = sensor_noise._streamed(noise, "rgb", raw)
+    assert actual.dtype == np.float32
+    assert actual.shape == (16, 32, 3)
+    assert not actual.any()
+    assert sensor_noise._streamed(noise, "rgb", raw) is actual
+
+
+def test_colour_bytes_find_colour_exactly_as_the_rgb_slice_does():
+    """The masked word test sees a frame as blank exactly when its red, green and blue bytes are all zero, whatever the
+    alpha bytes hold, and a strided frame falls back to the slice."""
+    rng = np.random.default_rng(7)
+    for _ in range(40):
+        frame = np.zeros((48, 64, 4), dtype=np.uint8)
+        frame[..., 3] = rng.integers(0, 256)
+        if rng.random() < 0.75:
+            frame.reshape(-1, 4)[rng.integers(0, 48 * 64), rng.integers(0, 3)] = rng.integers(1, 256)
+        assert bool(sensor_noise._colour_bytes(frame).any()) == bool(frame[:, :, :3].any())
+        strided = frame[:, ::2]
+        assert bool(sensor_noise._colour_bytes(strided).any()) == bool(strided[:, :, :3].any())

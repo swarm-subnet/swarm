@@ -40,6 +40,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.7.22-hbd8a1cb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - pypi: ./
+      - pypi: git+https://github.com/swarm-subnet/swarm-description.git?rev=v1.0.0#229cee6f7cbd134fc0a7a7a32b4bc8bae85ed44f
       - pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.1.1#31ae85321828acd1a888237879fefce689fe5ed0
       - pypi: https://download-r2.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/00/b7/e3bf5133d697a08128598c8d0abc5e16377b51465a33756de24fa7dee953/aiosqlite-0.22.1-py3-none-any.whl
@@ -54,6 +55,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0d/35/731ac04aa0a097fc1c97f0994c375bdb230c6c96619db794208fe664e9ce/charset_normalizer-3.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/0f/d2/0cb3b1ea7a5da5496e7f485ebf7771ffd983ed0c7cd71fff87b1f97ec0b7/swarm_bullet3-2.0.0.6-cp311-cp311-manylinux_2_34_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/11/b1/71a477adc7c36e5fb628245dfbdea2166feae310757dea848d02bd0689fd/frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/12/cc/f4fe2c7ce68b92cbf5b2d379ca366e1edae38cccaad00f69f529b460c3ef/netaddr-1.3.0-py3-none-any.whl
@@ -65,7 +67,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/1b/d0/397f9626e711ff749a95d96b7af99b9c566a9bb5129b8e4c10fc4d100304/python_multipart-0.0.22-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1f/d8/55d924a6391a8bfca251f59c06431888c3c8ef43a97af6112001506173a4/asyncstdlib-3.13.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/21/dd/3b7c53f1dbbf736fd27041aee68f8ac52226b610f914085b1652c2323442/sqlalchemy-2.0.48-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/24/f1/91ce2dc83d4e539fb529c82948511b1f5871bd782ab8ee58322baa78e71c/swarm_bullet3-2.0.0.5-cp311-cp311-manylinux_2_34_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/27/1b/16ab7f2cf2041da2f60d156ba64c2484eadf9168075b4ff43c3ef60045af/propcache-0.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2b/a0/c9d9d56ceadb1c0a90a7cbec5a0510520ab6538938944fa84548e4b5b054/onnx-1.22.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -542,7 +543,7 @@ packages:
   - loguru==0.7.3
   - xmldiff==2.7.0
   - filelock==3.25.2
-  - swarm-bullet3==2.0.0.5
+  - swarm-bullet3==2.0.0.6
   - bittensor==10.5.0
   - async-substrate-interface==2.2.1
   - msgpack==1.1.2
@@ -561,6 +562,7 @@ packages:
   - pycapnp==2.2.2
   - shapely==2.1.2
   - swarm-drone-gym==2.0.0.3
+  - swarm-description @ git+https://github.com/swarm-subnet/swarm-description.git@v1.0.0
   - swarm-worlds @ git+https://github.com/swarm-subnet/swarm-worlds.git@v1.1.1
   - pygame==2.6.1
   - pytest==8.4.2
@@ -578,6 +580,10 @@ packages:
   - python-multipart==0.0.22
   - apscheduler==3.11.2
   - psycopg2-binary==2.9.11
+  requires_python: '>=3.11'
+- pypi: git+https://github.com/swarm-subnet/swarm-description.git?rev=v1.0.0#229cee6f7cbd134fc0a7a7a32b4bc8bae85ed44f
+  name: swarm-description
+  version: 1.0.0
   requires_python: '>=3.11'
 - pypi: git+https://github.com/swarm-subnet/swarm-worlds.git?rev=v1.1.1#31ae85321828acd1a888237879fefce689fe5ed0
   name: swarm-worlds
@@ -768,6 +774,12 @@ packages:
   version: 3.5.1
   sha256: c7b742bf31c88566b4bb6335a7f393bb322e580b6bb98df7bd0c25e6e3519ce8
   requires_python: '>=3.7'
+- pypi: https://files.pythonhosted.org/packages/0f/d2/0cb3b1ea7a5da5496e7f485ebf7771ffd983ed0c7cd71fff87b1f97ec0b7/swarm_bullet3-2.0.0.6-cp311-cp311-manylinux_2_34_x86_64.whl
+  name: swarm-bullet3
+  version: 2.0.0.6
+  sha256: c02b4572b01ea61cffd4205b840c6bfba3ef96ea7aa880c51df10f22678ab765
+  requires_dist:
+  - numpy
 - pypi: https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
   name: pyparsing
   version: 3.3.2
@@ -901,12 +913,6 @@ packages:
   - typing-extensions!=3.10.0.1 ; extra == 'aiosqlite'
   - sqlcipher3-binary ; extra == 'sqlcipher'
   requires_python: '>=3.7'
-- pypi: https://files.pythonhosted.org/packages/24/f1/91ce2dc83d4e539fb529c82948511b1f5871bd782ab8ee58322baa78e71c/swarm_bullet3-2.0.0.5-cp311-cp311-manylinux_2_34_x86_64.whl
-  name: swarm-bullet3
-  version: 2.0.0.5
-  sha256: 6d7dd79ddd190276621b7291b446ee90a87a32a0b44a19bc2e3e82c0c62e3f2d
-  requires_dist:
-  - numpy
 - pypi: https://files.pythonhosted.org/packages/27/1b/16ab7f2cf2041da2f60d156ba64c2484eadf9168075b4ff43c3ef60045af/propcache-0.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
   name: propcache
   version: 0.5.2

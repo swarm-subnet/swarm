@@ -40,16 +40,20 @@ import pybullet as p
 from scipy.signal import lfilter
 
 from swarm.constants import SIM_DT
+from swarm.core.observation.frozen import freeze
 
+from . import airframe
 from .camera import View
 from .contract import ACTION_DIM, DECISION_STEPS, HORIZON_S, STATE_SLICES, Command, decode_action
 from .episode import SolarEpisode
 
-RTK_HORIZONTAL_M = 0.1                 # DJI: M4TD hovering accuracy with RTK
-RTK_VERTICAL_M = 0.1
+RTK_HORIZONTAL_M = airframe.PARAMS["positioning"]["rtk_horizontal_m"]
+RTK_VERTICAL_M = airframe.PARAMS["positioning"]["rtk_vertical_m"]
 RTK_CORRELATION_S = 30.0               # how slowly the reading wanders
-COMMAND_DELAY_STEPS = 1                # DJI: sdr_cmd_delay 10 ms, under one 20 ms control step
-DATA_DELAY_STEPS = (3, 4)              # DJI: liveview_delay_time 60 and 80 ms
+_STEP_MS = round(SIM_DT * 1000.0)
+# The aircraft's link delays in whole control steps, rounded up: a delay under one step still costs one.
+COMMAND_DELAY_STEPS = int(-(-airframe.PARAMS["link"]["command_delay_ms"] // _STEP_MS))
+DATA_DELAY_STEPS = tuple(int(-(-ms // _STEP_MS)) for ms in airframe.PARAMS["link"]["data_delay_ms"])
 VIDEO_QUALITY = 70                     # the stream's quantisation on the JPEG quality scale
 
 DRIFT_SEED_STREAM = 0x5E16             # each error's own stream, so its draws never move another part's
@@ -79,6 +83,7 @@ _TO_YCC = ((19595, 38470, 7471), (-11059, -21709, 32768), (32768, -27439, -5329)
 _FROM_YCC = np.array([[0, 91881], [-22554, -46802], [116130, 0]], dtype=np.float64)
 # The engine's compiled copy of the look, the same whole-number steps to the byte; an older engine has none.
 _ENGINE_LOOK = getattr(p, "swarmStreamLook", None)
+_ENGINE_BYTE_LOOK = getattr(p, "swarmStreamLookBytes", None)
 
 
 def reset(env: Any, ep: SolarEpisode) -> None:
@@ -167,14 +172,31 @@ def _streamed(noise: dict, key: str, frame: np.ndarray) -> np.ndarray:
     """A colour image as the stream delivers it, worked out once per image; a blank image stays blank."""
     source, streamed = noise["streamed"].get(key, (None, None))
     if frame is not source:
-        streamed = stream_look(frame) if frame.any() else frame
+        if frame.dtype == np.uint8:
+            streamed = stream_look(frame) if _colour_bytes(frame).any() else np.zeros(frame.shape[:2] + (3,), dtype=np.float32)
+        else:
+            streamed = stream_look(frame) if frame.any() else frame
+        freeze(streamed)
         noise["streamed"][key] = (frame, streamed)
     return streamed
+
+
+def _colour_bytes(frame: np.ndarray) -> np.ndarray:
+    """Each RGBA pixel's red, green and blue bytes as one little-endian word, alpha masked off, read in one pass."""
+    if frame.flags.c_contiguous:
+        return frame.view(np.dtype("<u4")) & np.uint32(0x00FFFFFF)
+    return frame[:, :, :3]
 
 
 def stream_look(frame: np.ndarray, quality: int = VIDEO_QUALITY) -> np.ndarray:
     """A float colour frame in 0..1 as a live video stream delivers it: colour at half resolution, 8 x 8 blocks
     quantised. Whole numbers throughout, each held exactly, so the bytes never depend on the machine."""
+    if frame.dtype == np.uint8:
+        if _ENGINE_BYTE_LOOK is not None and frame.flags.c_contiguous:
+            streamed = np.empty(frame.shape[:2] + (3,), dtype=np.float32)
+            _ENGINE_BYTE_LOOK(frame, streamed, quality)
+            return streamed
+        frame = np.true_divide(frame[:, :, :3], np.float32(255.0), dtype=np.float32)
     if _ENGINE_LOOK is not None and frame.dtype == np.float32 and frame.flags.c_contiguous:
         streamed = np.empty(frame.shape, dtype=np.float32)
         _ENGINE_LOOK(frame, streamed, quality)

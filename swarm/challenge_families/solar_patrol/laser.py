@@ -38,17 +38,18 @@ from .contract import LASER_STATUSES, STATE_SLICES, put
 from .episode import SolarEpisode
 from .fixed_order import dot, norm
 
-READING_HZ = 1.0
+READING_HZ = airframe.PARAMS["laser"]["reading_hz"]
 READING_STEPS = int(round(1.0 / (READING_HZ * SIM_DT)))
-BLIND_ZONE_M = 1.0                      # DJI: blind zone
-MAX_RANGE_M = 1800.0                    # DJI: 1 Hz, 20 % reflectivity target
-OBLIQUE_RANGE_M = 600.0                 # DJI: oblique incidence range, 1:5
-OBLIQUE_SLOPE = 1.0 / 5.0               # the beam meets the surface at this rise over run, or shallower
+BLIND_ZONE_M = airframe.PARAMS["laser"]["blind_zone_m"]
+MAX_RANGE_M = airframe.PARAMS["laser"]["max_range_m"]
+OBLIQUE_RANGE_M = airframe.PARAMS["laser"]["oblique_range_m"]
+# The beam meets the surface at this rise over run, or shallower.
+OBLIQUE_SLOPE = 1.0 / airframe.PARAMS["laser"]["oblique_run_over_rise"]
 SEARCH_M = 2000.0                       # past the range, so a surface too far is told apart from open sky
 COARSE_SIZE, COARSE_TAN, COARSE_NEAR_M = 2, 1e-4, 0.005
 FINE_SIZE, FINE_SPACING_M = 4, 0.1      # neighbour pixels this far apart on the surface, for its slope
 FLAGS = getattr(p, "ER_SWARM_RAYCAST", 0) | getattr(p, "ER_ALPHA_CUTOUT", 0)
-ERROR_M, ERROR_SHARE = 0.2, 0.0015      # DJI: range accuracy +-(0.2 m + 0.15 % of the distance)
+ERROR_M, ERROR_SHARE = airframe.PARAMS["laser"]["error_m"], airframe.PARAMS["laser"]["error_share"]
 NOISE_SEED_STREAM = 0x1A5E              # the laser's own stream, so its error never moves another part's draws
 
 

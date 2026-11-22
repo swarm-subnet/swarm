@@ -15,9 +15,10 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-"""Solar Patrol's seed checks (task 24): the replacement chain, the kept verdicts, the reference pilot's route, how the
-validator judges seeds in the background and just before they fly without ever waiting for them, and whole reference
-flights judged on flat ground with a square fence, as the other patrol tests fly them.
+"""Solar Patrol's seed checks (task 24): the replacement chain, the kept verdicts, the reference pilot's route and the
+thieves it goes back for after its search, how the validator judges seeds in the background and just before they fly
+without ever waiting for them, and whole reference flights judged on flat ground with a square fence, as the other
+patrol tests fly them.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from types import SimpleNamespace
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 from shapely.geometry import Point, Polygon
 
 from swarm.benchmark import engine as bench_engine
@@ -59,7 +60,7 @@ from swarm.validator.utils_parts import heartbeat as heartbeat_module
 from swarm.validator.utils_parts import run_task as run_task_module
 from validator.tests.test_docker_evaluator import _ScriptedContext
 
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _APPROVE = seed_checks.approve
 _PREPARE = seed_checks.prepare
 _FENCE = np.array([[20.0, 60.0], [100.0, 60.0], [100.0, 140.0], [20.0, 140.0]])
@@ -136,7 +137,7 @@ def _thief(monkeypatch, shed):
 def _skip_without_m4td():
     """Whole flights need the aircraft the patrol flies."""
     if not _M4TD_SHIPPED:
-        pytest.skip(f"the installed swarm-worlds has no {airframe.URDF} yet")
+        pytest.skip(f"the installed swarm-description has no {airframe.URDF} yet")
 
 
 def _fly_with(monkeypatch, seeds_passing):
@@ -380,6 +381,53 @@ def test_the_route_searches_the_whole_park_without_leaving_the_fence(spacing):
                      if inner.covers(Point(x, y))])
     gaps = np.min(np.hypot(*(grid[:, None, :] - points[None, :, :]).transpose(2, 0, 1)), axis=1)
     assert gaps.max() <= spacing / 2.0 + 1.0
+
+
+def test_the_pilot_looks_again_for_each_thief_not_yet_seen_and_for_men_still_to_step_in(monkeypatch):
+    """After the search the pilot wants each thief inside the fence not yet seen well enough where he stands, and a man
+    still to step in at the way in, never one already seen."""
+    people = [{"bodies": [11], "xy": (40.0, 80.0), "threat": True},
+              {"bodies": [12], "xy": (70.0, 90.0), "threat": True}]
+    monkeypatch.setattr(theft, "people", lambda ep, step=None: people)
+    monkeypatch.setattr(theft, "bodies", lambda ep: {11: 0, 12: 1})
+    men = [SimpleNamespace(entered=True), SimpleNamespace(entered=True), SimpleNamespace(entered=False)]
+    ep = SimpleNamespace(theft=SimpleNamespace(men=men, story=SimpleNamespace(hole=(20.0, 100.0))))
+    wanted = reference_pilot.still_to_see(ep, {1: reference_pilot.PIXELS_ACROSS})
+    assert {n: tuple(xy) for n, xy in wanted.items()} == {0: (40.0, 80.0), 2: (20.0, 100.0)}
+    men[2].entered = True
+    assert reference_pilot.still_to_see(ep, {0: 9.0, 1: 7.0}) == {}
+
+
+def test_the_pilot_visits_the_nearest_thief_first_and_stays_on_him():
+    """The pilot flies over the nearest thief it still wants and keeps to him until he is seen."""
+    wanted = {0: np.array([90.0, 70.0]), 1: np.array([35.0, 70.0])}
+    assert reference_pilot.nearest_visit(np.array([30.0, 70.0]), wanted, None) == 1
+    assert reference_pilot.nearest_visit(np.array([30.0, 70.0]), wanted, 0) == 0
+    assert reference_pilot.nearest_visit(np.array([30.0, 70.0]), {0: wanted[0]}, 1) == 0
+
+
+def test_a_visit_waits_for_a_thief_and_the_time_to_come_home(monkeypatch):
+    """With every thief seen the pilot never leaves its route; a thief still wanted is flown over, at the lanes' inset
+    when he stands by the fence, only while the flight home from here still fits in the time left."""
+    pilot = object.__new__(reference_pilot._Pilot)
+    fence = Polygon(_FENCE)
+    pilot.env = SimpleNamespace(EP_LEN_SEC=HORIZON_S)
+    pilot.ep = SimpleNamespace(time_s=200.0, dock_position=np.array([30.0, 100.0, 0.0]))
+    pilot.sightings = SimpleNamespace(best={})
+    pilot.home_area = fence.buffer(-reference_pilot.RETURN_CLEAR_M)
+    pilot.lane_area = fence.buffer(-reference_pilot.FENCE_INSET_M)
+    pilot.visiting, pilot.visited = None, False
+    here = np.array([60.0, 100.0, 20.0])
+    wanted = {}
+    monkeypatch.setattr(reference_pilot, "still_to_see", lambda ep, best: wanted)
+    assert pilot._visit(here) is None and not pilot.visited
+    wanted[0] = np.array([20.0, 120.0])
+    assert np.allclose(pilot._visit(here), (20.0 + reference_pilot.FENCE_INSET_M, 120.0)) and pilot.visited
+    home_s = 30.0 / reference_pilot.HOME_SPEED_MPS + reference_pilot.HOME_MARGIN_S
+    pilot.ep.time_s = HORIZON_S - home_s - 0.1
+    assert pilot._visit(here) is not None
+    pilot.ep.time_s = HORIZON_S - home_s
+    assert pilot._visit(here) is None
 
 
 def test_narrow_side_is_measured_across_the_shape():

@@ -32,7 +32,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families import build_benchmark_tasks
 from swarm.challenge_families.solar_patrol import airframe, dock3, drone_state, park
@@ -52,9 +52,8 @@ from swarm.core.moving_drone import MovingDroneAviary
 from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
-ROBOTS = swarm_worlds.robots_dir()
-pytestmark = [pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
-                                 reason=f"the installed swarm-worlds has no {airframe.URDF} yet"),
+pytestmark = [pytest.mark.skipif(not os.path.isfile(swarm_description.get_urdf(airframe.DRONE)),
+                                 reason=f"the installed swarm-description has no {airframe.URDF} yet"),
               pytest.mark.usefixtures("blank_camera")]
 _FENCE = np.array([[0.0, 40.0], [120.0, 40.0], [120.0, 160.0], [0.0, 160.0]])
 _CONTROL_ENV = types.SimpleNamespace(G=9.8, GRAVITY=18.13, KF=3.0833e-07, KM=4.9333e-09, HOVER_RPM=3834.08,
@@ -150,7 +149,7 @@ class _Stub:
 
 def test_the_aircraft_carries_dji_numbers():
     """1,850 g, the 498.5 mm wheelbase, DJI's motor spacings and a 6,300 rpm top speed at the thrust it was given."""
-    root = ET.parse(os.path.join(ROBOTS, airframe.URDF)).getroot()
+    root = ET.parse(swarm_description.get_urdf(airframe.DRONE)).getroot()
     props = root.find("properties").attrib
     assert float(root.find("link/inertial/mass").get("value")) == pytest.approx(1.85)
     rotors = [np.array([float(v) for v in root.find(f"link[@name='prop{i}_link']/inertial/origin").get("xyz").split()])
@@ -165,7 +164,7 @@ def test_the_aircraft_carries_dji_numbers():
 
 def test_the_collision_shape_is_the_real_outline():
     """The collision compound spans DJI's 377.7 x 416.2 mm within 1 %, and the CAD's height with its rear motors."""
-    size = _collision_extent(os.path.join(ROBOTS, airframe.URDF))
+    size = _collision_extent(swarm_description.get_urdf(airframe.DRONE))
     assert size[0] == pytest.approx(0.3777, rel=0.01)
     assert size[1] == pytest.approx(0.4162, rel=0.01)
     assert 0.2125 <= size[2] <= 0.2225
@@ -173,7 +172,7 @@ def test_the_collision_shape_is_the_real_outline():
 
 def test_the_moving_parts_never_collide(world):
     """Rotors, blades and the camera head carry no collision shape, so nothing can hit them or be hit by them."""
-    uid = p.loadURDF(os.path.join(ROBOTS, airframe.MOVING_URDF), [0, 0, 1], physicsClientId=world)
+    uid = p.loadURDF(swarm_description.get_urdf(airframe.DRONE, "moving"), [0, 0, 1], physicsClientId=world)
     assert p.getNumJoints(uid, physicsClientId=world) == 13
     for link in range(-1, p.getNumJoints(uid, physicsClientId=world)):
         assert p.getCollisionShapeData(uid, link, physicsClientId=world) == ()
@@ -253,7 +252,7 @@ def test_the_aircraft_rests_on_the_pad_as_dji_draws_it(world):
     """Set down on the pad, the aircraft settles on its four feet where DJI's CAD puts it, touching only the pad."""
     dock = dock3.spawn(_Stub(world), 0.0, 0.0)
     rest, _ = dock3.rest_pose(dock)
-    drone = p.loadURDF(os.path.join(ROBOTS, airframe.URDF), rest.tolist(), flags=p.URDF_USE_INERTIA_FROM_FILE,
+    drone = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), rest.tolist(), flags=p.URDF_USE_INERTIA_FROM_FILE,
                        physicsClientId=world)
     for _ in range(480):
         p.stepSimulation(physicsClientId=world)
@@ -300,7 +299,7 @@ def test_the_gimbal_holds_the_view_level_while_the_airframe_leans(world, roll_de
 def test_the_drawn_head_holds_the_tilt_against_the_airframe_pitch(world, roll_deg, pitch_deg, yaw_deg):
     """The drawn camera head turns its one tilt joint against the airframe's pitch, so it points where the stabilised
     camera looks, off only by a roll it cannot show, and the camera's glass stays on it."""
-    uid = p.loadURDF(os.path.join(ROBOTS, airframe.MOVING_URDF), [0, 0, 20], physicsClientId=world)
+    uid = p.loadURDF(swarm_description.get_urdf(airframe.DRONE, "moving"), [0, 0, 20], physicsClientId=world)
     joints = {p.getJointInfo(uid, j, physicsClientId=world)[1].decode(): j for j in range(p.getNumJoints(uid, physicsClientId=world))}
     env = _Stub(world)
     env.quat = [np.array(p.getQuaternionFromEuler([math.radians(a) for a in (roll_deg, pitch_deg, yaw_deg)]))]
@@ -321,7 +320,7 @@ def test_the_drawn_head_holds_the_tilt_against_the_airframe_pitch(world, roll_de
 def test_the_body_blocks_the_view_above_plus_70(world, tilt, low, high):
     """DJI: from +70 to +90 of tilt the aircraft's body blocks the wide camera. The share of the frame the body
     covers is next to nothing up to +60, a third at +70 and all of it at +90."""
-    drone = p.loadURDF(os.path.join(ROBOTS, airframe.URDF), [0, 0, 20], physicsClientId=world)
+    drone = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), [0, 0, 20], physicsClientId=world)
     env = _Stub(world, drone)
     w, h = 320, 240
     vfov = 2 * math.degrees(math.atan(math.tan(math.radians(41.0)) * h / math.hypot(w, h)))

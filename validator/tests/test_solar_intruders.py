@@ -165,6 +165,25 @@ def test_thief_is_one_visual_body_per_colour(client):
     assert thief.bodies == [] and p.getNumBodies(physicsClientId=client) == before - bodies
 
 
+def test_only_the_cutters_are_held_and_the_pack_and_coil_are_the_man(client):
+    """The bolt cutters a thief holds are held bodies, apart from the man; what he wears, a coil on his back included,
+    is the man, and a thief without cutters holds nothing."""
+    cat = intruders.catalogue()
+    worn = ["puffer", "cargo", "work_boots", "gloves", "bolt_cutters", "cable_coil_puffer"]
+    dress = {"build": "stocky", "garments": worn,
+             "skin": [0.5, 0.35, 0.25], "undershirt": [0.2, 0.2, 0.2],
+             "colours": {}}
+    dress["colours"] = {pc["file"]: pc["colours"][0] for g in dress["garments"] for pc in cat.pieces[g]}
+    thief = intruders.Intruder(dress, STANDING, client)
+    assert len(thief.held) == len(cat.pieces["bolt_cutters"])
+    assert set(thief.person) | set(thief.held) == set(thief.bodies) and not set(thief.person) & set(thief.held)
+    thief.remove()
+    assert thief.held == [] and thief.person == []
+    dress["garments"].remove("bolt_cutters")
+    bare = intruders.Intruder(dress, STANDING, client)
+    assert bare.held == [] and bare.person == bare.bodies
+
+
 def test_pose_moves_the_thief_where_the_engine_can(client):
     """A new frame lands the lowest point on the place, and rewrites every piece in place or reports it cannot."""
     thief = intruders.Intruder(intruders.outfit(np.random.default_rng(5)), STANDING, client)

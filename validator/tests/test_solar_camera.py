@@ -27,7 +27,7 @@ import os
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families.solar_patrol import airframe, camera, park
 from swarm.challenge_families.solar_patrol.contract import (
@@ -43,7 +43,7 @@ from swarm.constants import MOON_AMBIENT_RANGE, MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import seeded_sun, sky_render_kwargs
 from validator.tests.test_solar_patrol_family import _action, _patrol, flat_park  # noqa: F401
 
-_M4TD_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF))
+_M4TD_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE))
 _HEIGHT_M = 20.0
 _RED = [0.9, 0.1, 0.1, 1.0]
 
@@ -92,6 +92,11 @@ def scene():
     camera.reset(env, ep)
     yield env, ep
     p.disconnect(cli)
+
+
+def _colour(frame):
+    """Read raw capture storage as the same normalised RGB values."""
+    return frame[:, :, :3].astype(np.float32) / np.float32(255.0) if frame.dtype == np.uint8 else frame
 
 
 def _ask(env, ep, tilt=0.0, thermal=False, night_mode="off"):
@@ -174,14 +179,14 @@ def test_the_frame_follows_the_tilt(scene):
     env, ep = scene
     _ask(env, ep, tilt=-90.0)
     camera.capture(env, ep)
-    down = ep.frames.rgb
+    down = _colour(ep.frames.rgb)
     assert down.shape == RGB_SHAPE and down.dtype == np.float32
     assert 0.0 <= float(down.min()) and float(down.max()) <= 1.0
     assert _is_red(_centre(down))
     _ask(env, ep, tilt=0.0)
     camera.capture(env, ep)
-    assert not _is_red(_centre(ep.frames.rgb))
-    assert np.count_nonzero(np.apply_along_axis(_is_red, 2, ep.frames.rgb[::16, ::16])) == 0
+    assert not _is_red(_centre(_colour(ep.frames.rgb)))
+    assert np.count_nonzero(np.apply_along_axis(_is_red, 2, _colour(ep.frames.rgb)[::16, ::16])) == 0
 
 
 def test_the_view_is_the_wide_lens_where_the_frame_was_taken(scene):
@@ -204,11 +209,11 @@ def test_one_feed_at_a_time(scene):
     env, ep = scene
     _ask(env, ep, tilt=-90.0)
     camera.capture(env, ep)
-    assert np.any(ep.frames.rgb) and not np.any(ep.frames.thermal)
+    assert np.any(_colour(ep.frames.rgb)) and not np.any(ep.frames.thermal)
     _ask(env, ep, tilt=-90.0, thermal=True)
     camera.capture(env, ep)
     assert ep.frames.thermal.shape == THERMAL_SHAPE and ep.frames.thermal.dtype == np.float32
-    assert not np.any(ep.frames.rgb)
+    assert not np.any(_colour(ep.frames.rgb))
     assert camera.view(ep).feed == "thermal" and camera.view(ep).width == 640 and camera.view(ep).height == 512
     if camera.THERMAL:
         assert np.any(ep.frames.thermal) and float(ep.frames.thermal.max()) <= 1.0
@@ -240,9 +245,9 @@ def test_the_same_view_draws_the_same_pixels(scene):
     env, ep = scene
     _ask(env, ep, tilt=-60.0)
     camera.capture(env, ep)
-    first = ep.frames.rgb.copy()
+    first = _colour(ep.frames.rgb).copy()
     camera.capture(env, ep)
-    assert np.array_equal(first, ep.frames.rgb)
+    assert np.array_equal(first, _colour(ep.frames.rgb))
 
 
 @pytest.mark.skipif(not hasattr(p, "ER_SWARM_FRAME_REUSE"), reason="engine without frame reuse")
@@ -260,7 +265,7 @@ def test_a_still_camera_gets_the_frames_it_would_draw(scene, monkeypatch):
             monkeypatch.setattr(camera, "FRAME_REUSE", flag)
             ep.camera["captures"] = 5
             camera.capture(env, ep)
-            frame = (ep.frames.rgb.copy(), ep.frames.thermal.copy(), camera.view(ep).objects.copy())
+            frame = (_colour(ep.frames.rgb).copy(), ep.frames.thermal.copy(), camera.view(ep).objects.copy())
             if flag:
                 asked = frame
             else:
@@ -313,14 +318,14 @@ def test_at_night_night_mode_off_is_dark_and_sees_nothing(scene):
     _ask(env, ep, tilt=-90.0, night_mode="off")
     camera.capture(env, ep)
     assert not camera.view(ep).sees
-    dark = ep.frames.rgb.copy()
+    dark = _colour(ep.frames.rgb).copy()
     _ask(env, ep, tilt=-90.0, night_mode="on")
     camera.capture(env, ep)
     assert camera.view(ep).sees
     if camera.LOW_LIGHT:
-        assert float(ep.frames.rgb.mean()) > 2.0 * float(dark.mean())
+        assert float(_colour(ep.frames.rgb).mean()) > 2.0 * float(dark.mean())
     else:
-        assert np.array_equal(ep.frames.rgb, dark)
+        assert np.array_equal(_colour(ep.frames.rgb), dark)
 
 
 def test_auto_night_mode_turns_on_in_the_dark_only(scene):
@@ -328,11 +333,11 @@ def test_auto_night_mode_turns_on_in_the_dark_only(scene):
     env, ep = scene
     _ask(env, ep, tilt=-90.0, night_mode="off")
     camera.capture(env, ep)
-    day = ep.frames.rgb.copy()
+    day = _colour(ep.frames.rgb).copy()
     for mode in ("on", "auto"):
         _ask(env, ep, tilt=-90.0, night_mode=mode)
         camera.capture(env, ep)
-        assert np.array_equal(ep.frames.rgb, day) and camera.view(ep).sees
+        assert np.array_equal(_colour(ep.frames.rgb), day) and camera.view(ep).sees
     _moonlit(env)
     frames = []
     for mode in ("on", "auto"):
@@ -340,7 +345,7 @@ def test_auto_night_mode_turns_on_in_the_dark_only(scene):
         _ask(env, ep, tilt=-90.0, night_mode=mode)
         camera.capture(env, ep)
         assert camera.view(ep).sees
-        frames.append(ep.frames.rgb.copy())
+        frames.append(_colour(ep.frames.rgb).copy())
     assert np.array_equal(frames[0], frames[1])
 
 
@@ -395,26 +400,25 @@ def test_night_mode_frames_carry_grain_that_moves(scene):
     _moon(env, 1.0)
     _ask(env, ep, tilt=-90.0, night_mode="on")
     camera.capture(env, ep)
-    first = ep.frames.rgb.copy()
+    first = _colour(ep.frames.rgb).copy()
     camera.capture(env, ep)
-    assert not np.array_equal(first, ep.frames.rgb)
-    assert float(first.mean()) == pytest.approx(float(ep.frames.rgb.mean()), abs=0.01)
+    assert not np.array_equal(first, _colour(ep.frames.rgb))
+    assert float(first.mean()) == pytest.approx(float(_colour(ep.frames.rgb).mean()), abs=0.01)
     ground = (slice(0, 60), slice(0, 60))
     _moon(env, 0.0, 15.0)
     camera.capture(env, ep)
-    crescent = ep.frames.rgb
+    crescent = _colour(ep.frames.rgb)
     assert float(crescent.mean()) < float(first.mean())
     assert float(crescent[ground].std() / crescent[ground].mean()) > 2.0 * float(first[ground].std() / first[ground].mean())
 
 
-@pytest.mark.skipif(not _M4TD_SHIPPED, reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
+@pytest.mark.skipif(not _M4TD_SHIPPED, reason=f"the installed swarm-description has no {airframe.URDF} yet")
 def test_the_aircraft_blocks_the_view_above_seventy_degrees():
     """The body is out of view up to +60 degrees, covers about a third of the frame at +70 and all of it at +90."""
     cli = p.connect(p.DIRECT)
     try:
-        robots = swarm_worlds.robots_dir()
-        drone = p.loadURDF(os.path.join(robots, airframe.URDF), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
-        moving = p.loadURDF(os.path.join(robots, airframe.MOVING_URDF), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
+        drone = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
+        moving = p.loadURDF(swarm_description.get_urdf(airframe.DRONE, "moving"), [0.0, 0.0, _HEIGHT_M], physicsClientId=cli)
         joints = {p.getJointInfo(moving, j, physicsClientId=cli)[1].decode(): j
                   for j in range(p.getNumJoints(moving, physicsClientId=cli))}
         env = _Env(cli, drone)

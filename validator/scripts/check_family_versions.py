@@ -36,6 +36,28 @@ def version_tuple(value: str) -> tuple[int, int, int]:
     return tuple(map(int, value.split('.')))
 
 
+def release_tuple(value: str) -> tuple[int, int, int, int]:
+    """Parse a three- or four-part release version, padded to four parts."""
+    if not isinstance(value, str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?', value) is None:
+        raise ValueError(f'invalid release version: {value!r}')
+    parts = [int(part) for part in value.split('.')]
+    return tuple(parts + [0] * (4 - len(parts)))
+
+
+def declared_reset(family: str, entry: dict) -> tuple[str, str] | None:
+    """Return a family's declared renumbering as (old label, new label), refusing a malformed one."""
+    reset = entry.get('benchmark_version_reset')
+    if reset is None:
+        return None
+    if not isinstance(reset, dict) or set(reset) != {'from', 'to'}:
+        raise ValueError(f'{family}: benchmark_version_reset must hold exactly "from" and "to"')
+    if version_tuple(reset['to']) >= version_tuple(reset['from']):
+        raise ValueError(f'{family}: a reset must lower the label')
+    if version_tuple(reset['to']) > version_tuple(entry.get('benchmark_version')):
+        raise ValueError(f'{family}: reset label is above the family version')
+    return reset['from'], reset['to']
+
+
 def code_version(source: str) -> str:
     """Read the literal deployment version without importing application dependencies."""
     for node in ast.parse(source).body:
@@ -45,36 +67,31 @@ def code_version(source: str) -> str:
 
 
 def validate_release(registry: dict, release: str, base_registry: dict, base_release: str) -> None:
-    """Reject invalid snapshots and family changes that do not declare a matching release."""
-    prefix = version_tuple('.'.join(release.split('.')[:3]))
-    base_prefix = version_tuple('.'.join(base_release.split('.')[:3]))
+    """Reject invalid snapshots, undeclared decreases and family changes shipped without a release bump."""
+    current, base = release_tuple(release), release_tuple(base_release)
+    if current < base:
+        raise ValueError('release version decreased')
     families = registry['challenge_families']
     if set(families) != set(registry['entity_types']['challenge_family']['ids']):
         raise ValueError('challenge family IDs differ from the registry enum')
-    values = {family: version_tuple(entry.get('benchmark_version')) for family, entry in families.items()}
-    if not values or max(values.values()) != prefix:
-        raise ValueError('maximum family version must equal the global benchmark prefix')
-    if prefix < base_prefix:
-        raise ValueError('global benchmark version decreased')
     changed = []
-    for family, value in values.items():
+    for family, entry in families.items():
+        value = version_tuple(entry.get('benchmark_version'))
+        reset = declared_reset(family, entry)
         previous = base_registry['challenge_families'].get(family)
         if previous is None:
-            # A family new to the registry has no scores to restart; it declares the bump only when it lands on it.
-            if value == prefix and prefix != base_prefix:
-                changed.append(family)
+            # A family new to the registry has no scores to restart.
             continue
-        old = version_tuple(previous.get('benchmark_version', '.'.join(map(str, base_prefix))))
-        if value < old:
-            raise ValueError(f'{family}: benchmark version decreased')
-        if value != old:
+        old_label = previous.get('benchmark_version', '.'.join(base_release.split('.')[:3]))
+        floor = version_tuple(old_label)
+        if reset is not None and reset[0] == old_label:
+            floor = version_tuple(reset[1])
+        if value < floor:
+            raise ValueError(f'{family}: benchmark version decreased without a declared reset')
+        if entry['benchmark_version'] != old_label:
             changed.append(family)
-            if prefix == base_prefix:
-                raise ValueError(f'{family}: family version changed without a global benchmark bump')
-            if value != prefix:
-                raise ValueError(f'{family}: changed family version must equal the new global prefix')
-    if prefix != base_prefix and not changed:
-        raise ValueError('global benchmark bump must change at least one family')
+    if changed and current[:3] == base[:3]:
+        raise ValueError(f'{", ".join(changed)}: family version changed without a three-part release bump')
 
 
 def main(argv: list[str] | None = None) -> int:

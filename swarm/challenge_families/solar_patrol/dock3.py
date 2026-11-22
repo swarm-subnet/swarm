@@ -17,7 +17,7 @@
 
 """DJI Dock 3 (task 3): the dock body with its two lids, and DJI's own landing pad, as bodies in the world.
 
-Two static bodies from swarm-worlds: dock3.urdf (body and lids, a solid the aircraft can hit) and dock3_pad.urdf
+Two static bodies from swarm-description: dock3.urdf (body and lids, a solid the aircraft can hit) and dock3_pad.urdf
 (the pad, the only part where a landing counts). The lids swing about hinges fitted to DJI's closed and open sizes.
 The dock stands on the concrete base DJI's installation manual asks for (700 x 700 mm, at least 100 mm), poured
 level at the high side of the ground under it and sunk into the low side, so it sits upright on any slope.
@@ -28,22 +28,23 @@ The dock's surfaces keep the engine's passive temperatures, which follow the air
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 from typing import Any, Tuple
 
 import numpy as np
 import pybullet as p
-import swarm_worlds
+import swarm_description
 
-DOCK_URDF = "dock3.urdf"
-PAD_URDF = "dock3_pad.urdf"
-CLOSED_SIZE_M = (0.640, 0.745, 0.770)    # DJI: outer sizes with the RTK module, the wind gauge and the base
-OPEN_SIZE_M = (1.760, 0.745, 0.485)
-LID_TRAVEL_S = 4.0                       # DJI's footage: the lids move for about four seconds
-REST_HEIGHT_M = 0.417                    # the aircraft's body origin above the ground when it rests on the pad (DJI CAD)
+DESCRIPTION = "dock3"
+PARAMS = swarm_description.get_params(DESCRIPTION)
+DOCK_URDF = PARAMS["files"]["body"]
+PAD_URDF = PARAMS["files"]["pad"]
+CLOSED_SIZE_M = tuple(PARAMS["size"]["closed_m"])
+OPEN_SIZE_M = tuple(PARAMS["size"]["open_m"])
+LID_TRAVEL_S = PARAMS["lids"]["travel_s"]
+REST_HEIGHT_M = PARAMS["aircraft"]["rest_height_m"]
 LID_JOINTS = (0, 1)                      # left and right hinges
-BASE_SIZE_M = 0.70                       # DJI: concrete base at least 700 x 700 mm
+BASE_SIZE_M = PARAMS["size"]["base_m"]
 BASE_ABOVE_M = 0.10                      # its top stands this far above the highest ground under it
 BASE_BURIED_M = 0.10                     # and it reaches this far below the lowest
 BASE_RGBA = (0.71, 0.70, 0.67, 1.0)
@@ -73,9 +74,9 @@ def spawn(env: Any, x: float, y: float, yaw: float = 0.0) -> Dock:
     look = p.createVisualShape(p.GEOM_BOX, halfExtents=half, rgbaColor=list(BASE_RGBA), physicsClientId=cli)
     base = int(p.createMultiBody(0, shape, look, [float(x), float(y), top - half[2]], orn, physicsClientId=cli))
     origin = [float(x), float(y), float(top)]
-    robots = swarm_worlds.robots_dir()
-    uid = int(p.loadURDF(os.path.join(robots, DOCK_URDF), origin, orn, useFixedBase=True, physicsClientId=cli))
-    pad = int(p.loadURDF(os.path.join(robots, PAD_URDF), origin, orn, useFixedBase=True, physicsClientId=cli))
+    body_urdf, pad_urdf = swarm_description.get_urdf(DESCRIPTION), swarm_description.get_urdf(DESCRIPTION, "pad")
+    uid = int(p.loadURDF(body_urdf, origin, orn, useFixedBase=True, physicsClientId=cli))
+    pad = int(p.loadURDF(pad_urdf, origin, orn, useFixedBase=True, physicsClientId=cli))
     dock = Dock(uid=uid, pad_uid=pad, base_uid=base, origin=np.array(origin), yaw=float(yaw))
     set_opening(env, dock, 0.0)
     return dock

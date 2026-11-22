@@ -75,7 +75,7 @@ class _Flight:
     def __init__(self, seed):
         """Build the patrol, take off, and wait until the dock hands the aircraft over."""
         if not _M4TD_SHIPPED:
-            pytest.skip("the installed swarm-worlds has no M4TD yet")
+            pytest.skip("the installed swarm-description has no M4TD yet")
         task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
         with contextlib.redirect_stdout(io.StringIO()):
             self.env, self.obs = make_env_with_initial_obs(task)
@@ -151,7 +151,7 @@ def test_a_zoom_frame_smooths_every_edge(monkeypatch):
     zoom._draw(env, ep, _view(), 7)
     camera.colour_frame(env, _view())
     close, wide = sent
-    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE | camera.NO_DEPTH
+    assert close == env._render_flags | camera.CLOSE_PICTURE_FLAGS | camera.FRAME_REUSE | camera.NO_DEPTH | camera.VEIL_MAP
     assert close & p.ER_SWARM_CREASE_FILL and close & p.ER_EDGE_ANTIALIAS and not close & p.ER_SWARM_EDGE_OUTLINE
     assert wide & p.ER_SWARM_EDGE_OUTLINE and wide & p.ER_EDGE_ANTIALIAS and not wide & p.ER_SWARM_CREASE_FILL
 
@@ -204,7 +204,8 @@ def test_night_vision_is_black_and_white_and_lit_only_inside_its_beam():
             """A 7x night vision frame looking straight down from this height."""
             shot = camera.View(feed="colour", eye=(0.0, 0.0, height_m), forward=(0.0, 0.0, -1.0), up=(0.0, 1.0, 0.0),
                                width=640, height=480, vertical_fov_deg=vertical, sees=True, step=0)
-            return zoom._draw(env, ep, shot, 7)[0]
+            image = zoom._draw(env, ep, shot, 7)[0]
+            return image[:, :, :3].astype(np.float32) / np.float32(255.0) if image.dtype == np.uint8 else image
 
         near = frame(40.0)
         assert np.array_equal(near[..., 0], near[..., 1]) and np.array_equal(near[..., 1], near[..., 2])

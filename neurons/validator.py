@@ -285,6 +285,7 @@ if __name__ == "__main__":
                 if hasattr(validator, 'thread') and not validator.thread.is_alive():
                     bt.logging.error("Validator worker thread died! Exiting.")
                     break
+                validator.check_liveness()
                 time.sleep(5)
         except KeyboardInterrupt:
             validator.stand_down()

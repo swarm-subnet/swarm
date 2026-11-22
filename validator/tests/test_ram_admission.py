@@ -32,10 +32,16 @@ from swarm.benchmark import engine as bench_full_eval
 from swarm.benchmark.engine_parts import dispatch, workers
 from swarm.validator.docker import docker_evaluator as de
 
-MEASURED_PATROL_PEAK_MB = 3344.0
+MEASURED_PATROL_PEAK_MB = 2814.0
 SIXTEEN_GIB_MB = 16384.0
 EIGHT_GIB_MB = 8192.0
 PATROLS = 7
+
+
+@pytest.fixture(autouse=True)
+def _engine_with_byte_look(monkeypatch):
+    """Book patrols as the pinned engine does, whatever engine runs the tests."""
+    monkeypatch.setattr(dispatch.p, "swarmStreamLookBytes", object(), raising=False)
 
 
 def _fixed_reading(mem_available_mb: float, mem_total_mb: float):
@@ -72,17 +78,17 @@ def _admit_until_refused(scheduler, group_name: str) -> list[str]:
 
 
 def test_sentinel_prior_covers_the_measured_patrol():
-    """The memory booked for a patrol is at least the peak measured over 100 real patrols."""
+    """The memory booked for a patrol is at least the peak measured over 100 real patrols on the pinned engine."""
     assert dispatch._ram_estimate_for_group("type8_solar") >= MEASURED_PATROL_PEAK_MB
 
 
 def test_sixteen_gib_box_admits_only_the_patrols_that_fit():
-    """A 16 GiB box with seven slots starts three patrols, and three measured peaks fit beside the host reserve."""
+    """A 16 GiB box with seven slots starts four patrols, and four measured peaks fit beside the host reserve."""
     scheduler = _scheduler(SIXTEEN_GIB_MB, 15000.0)
 
     admitted = _admit_until_refused(scheduler, "type8_solar")
 
-    assert len(admitted) == 3
+    assert len(admitted) == 4
     assert len(admitted) * MEASURED_PATROL_PEAK_MB + scheduler.ram_reserve_mb <= SIXTEEN_GIB_MB
 
 
@@ -129,8 +135,8 @@ def test_a_patrol_that_fits_starts_without_a_warning():
 @pytest.mark.parametrize(
     ("total_mb", "at_once"),
     [
-        pytest.param(SIXTEEN_GIB_MB, 3, id="16-GiB"),
-        pytest.param(32768.0, 7, id="32-GiB"),
+        pytest.param(SIXTEEN_GIB_MB, 4, id="16-GiB"),
+        pytest.param(32768.0, 8, id="32-GiB"),
         pytest.param(4096.0, 1, id="4-GiB"),
     ],
 )
@@ -140,20 +146,20 @@ def test_startup_banner_says_how_many_patrols_run_at_once(total_mb, at_once):
 
     lines = scheduler.describe_configuration_lines()
 
-    assert f"Scheduler RAM prior: group=type8_solar ram={dispatch._ram_estimate_for_group('type8_solar'):.0f}MiB at_once={at_once}" in lines
+    assert f"Scheduler RAM prior: group=type8_solar ram=3100MiB at_once={at_once}" in lines
 
 
 @pytest.mark.parametrize(
     ("flying", "room"),
     [
-        pytest.param(0, 7, id="none-flying"),
-        pytest.param(6, 1, id="one-patrol-left"),
-        pytest.param(7, 0, id="budget-full"),
+        pytest.param(0, 9, id="none-flying"),
+        pytest.param(6, 3, id="three-patrols-left"),
+        pytest.param(9, 0, id="budget-full"),
     ],
 )
 def test_a_validator_claims_only_the_patrols_its_memory_can_fly(flying, room):
-    """Sixteen slots on 32 GiB fly seven patrols, so the pool is asked for no more than the patrols still to fit."""
-    scheduler = _scheduler(32768.0, 30000.0, workers_requested=16)
+    """Sixteen slots on 32 GiB fly nine patrols, so the pool is asked for no more than the patrols still to fit."""
+    scheduler = _scheduler(32768.0, 32000.0, workers_requested=16)
 
     assert scheduler.claim_room(["type8_solar"], ["type8_solar"] * flying) == room
 
@@ -402,17 +408,19 @@ def _run_validator_pool_from_feeder(monkeypatch, tmp_path, probe):
     return results, feeder
 
 
+@pytest.mark.timeout(10)
 def test_validator_claims_from_the_pool_only_the_patrols_its_memory_flies(monkeypatch, tmp_path, fake_host):
-    """Seven slots on 16 GiB fly three patrols, so no claim asks past three in the air, and every patrol still flies."""
+    """Seven slots on 16 GiB fly four patrols, so no claim asks past four in the air, and every patrol still flies."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     results, feeder = _run_validator_pool_from_feeder(monkeypatch, tmp_path, host.probe)
 
     assert all(result is not None and result.success for result in results)
-    assert host.probe.peak == 3
-    assert all(asked >= 1 and asked + flying <= 3 for asked, flying in feeder.asks)
+    assert host.probe.peak == 4
+    assert all(asked >= 1 and asked + flying <= 4 for asked, flying in feeder.asks)
 
 
+@pytest.mark.timeout(10)
 def test_validator_short_of_memory_claims_one_patrol_at_a_time(monkeypatch, tmp_path, fake_host):
     """An 8 GiB validator with 5 GiB free claims one patrol per ask and still flies all seven."""
     host = fake_host(EIGHT_GIB_MB, 5000.0)
@@ -453,27 +461,27 @@ def _run_benchmark_pool(monkeypatch, tmp_path):
     return launched, recorded
 
 
-def test_validator_runs_at_most_three_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
-    """The validator's worker pool, asked for seven workers on 16 GiB, never holds more than three patrols and charges each start."""
+def test_validator_runs_at_most_four_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
+    """The validator's worker pool, asked for seven workers on 16 GiB, never holds more than four patrols and charges each start."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     results, warnings = _run_validator_pool(monkeypatch, tmp_path)
 
     assert all(result is not None and result.success for result in results)
-    assert host.probe.peak == 3
+    assert host.probe.peak == 4
     assert host.started == ["type8_solar"] * PATROLS
     assert not any("Low memory" in line for line in warnings)
 
 
-def test_benchmark_runs_at_most_three_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
-    """The benchmark's worker pool, asked for seven workers on 16 GiB, never holds more than three patrols and charges each start."""
+def test_benchmark_runs_at_most_four_patrols_at_once_on_sixteen_gib(monkeypatch, tmp_path, fake_host):
+    """The benchmark's worker pool, asked for seven workers on 16 GiB, never holds more than four patrols and charges each start."""
     host = fake_host(SIXTEEN_GIB_MB, 15000.0)
 
     launched, recorded = _run_benchmark_pool(monkeypatch, tmp_path)
 
     assert launched == PATROLS
     assert len(recorded) == PATROLS
-    assert host.probe.peak == 3
+    assert host.probe.peak == 4
     assert host.started == ["type8_solar"] * PATROLS
 
 
@@ -500,11 +508,21 @@ def test_benchmark_short_of_memory_flies_every_patrol_one_at_a_time(monkeypatch,
     assert capsys.readouterr().out.count("Low memory for type8_solar") == 1
 
 
+@pytest.mark.parametrize("byte_look", [True, False])
+def test_sentinel_prior_matches_the_engine_capability(monkeypatch, byte_look):
+    """Engines without the byte look retain the old patrol memory budget."""
+    if byte_look:
+        monkeypatch.setattr(dispatch.p, "swarmStreamLookBytes", object(), raising=False)
+    else:
+        monkeypatch.delattr(dispatch.p, "swarmStreamLookBytes", raising=False)
+    assert dispatch._ram_estimate_for_group("type8_solar") == (3100.0 if byte_look else 3700.0)
+
+
 def test_a_running_seed_check_holds_memory_a_patrol_would_have_taken():
     """Each reference flight that runs is booked beside the patrols: on 16 GiB two running checks leave room for two
-    patrols where three would fit, and the room comes back when the checks end."""
+    patrols where four would fit, and the room comes back when the checks end."""
     scheduler = _scheduler(SIXTEEN_GIB_MB, 15000.0, workers_requested=7)
-    assert len(_admit_until_refused(scheduler, "type8_solar")) == 3
+    assert len(_admit_until_refused(scheduler, "type8_solar")) == 4
 
     scheduler = _scheduler(SIXTEEN_GIB_MB, 15000.0, workers_requested=7)
     scheduler.note_seed_check_started()

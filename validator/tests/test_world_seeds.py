@@ -38,8 +38,8 @@ EPOCH = 22
 SENTINEL = "cf_solar_patrol"
 TEST_FIELD = "cf_test_field"
 PUBLIC_FAMILY = "cf_autopilot"
-# Below this validator's own version, so the manager treats itself as on the shared scheme.
-LIVE_FROM = "5.0.0"
+# Not above any family's version, so the manager treats itself as on the shared scheme.
+LIVE_FROM = "1.0.0"
 
 # Every validator must build the same worlds from one key, so the encoding is pinned like the list's own.
 KNOWN_WORLD_SEEDS = {

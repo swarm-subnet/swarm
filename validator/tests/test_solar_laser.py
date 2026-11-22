@@ -28,7 +28,7 @@ import os
 import numpy as np
 import pybullet as p
 import pytest
-import swarm_worlds
+import swarm_description
 
 from swarm.challenge_families import build_benchmark_tasks
 from swarm.challenge_families.solar_patrol import airframe, drone_state, laser, park, wind
@@ -48,9 +48,8 @@ from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests.test_solar_patrol_family import blank_camera  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("blank_camera")
-ROBOTS = swarm_worlds.robots_dir()
-needs_m4td = pytest.mark.skipif(not os.path.isfile(os.path.join(ROBOTS, airframe.URDF)),
-                                reason=f"the installed swarm-worlds has no {airframe.URDF} yet")
+needs_m4td = pytest.mark.skipif(not os.path.isfile(swarm_description.get_urdf(airframe.DRONE)),
+                                reason=f"the installed swarm-description has no {airframe.URDF} yet")
 HEIGHT_M = 20.0
 
 
@@ -258,8 +257,8 @@ def test_the_range_error_is_djis(distance):
 def test_the_beam_clears_the_aircraft_when_tilted_up(world, tilt):
     """Tilted up, where the aircraft's body fills much of the wide camera's view, the laser window still sees past
     it: the beam reads the open sky, not the drone's own body."""
-    drone = p.loadURDF(os.path.join(ROBOTS, airframe.URDF), [0.0, 0.0, HEIGHT_M], physicsClientId=world)
-    moving = p.loadURDF(os.path.join(ROBOTS, airframe.MOVING_URDF), [0.0, 0.0, HEIGHT_M], physicsClientId=world)
+    drone = p.loadURDF(swarm_description.get_urdf(airframe.DRONE), [0.0, 0.0, HEIGHT_M], physicsClientId=world)
+    moving = p.loadURDF(swarm_description.get_urdf(airframe.DRONE, "moving"), [0.0, 0.0, HEIGHT_M], physicsClientId=world)
     joints = {p.getJointInfo(moving, j, physicsClientId=world)[1].decode(): j
               for j in range(p.getNumJoints(moving, physicsClientId=world))}
     p.resetJointState(moving, joints["gimbal_tilt"], math.radians(tilt), physicsClientId=world)

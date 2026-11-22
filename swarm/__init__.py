@@ -24,7 +24,7 @@ from pathlib import Path
 # Render threads sleep between pictures instead of spinning on cores the other workers share; pictures never depend on it.
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
-__version__ = "6.0.1.1"
+__version__ = "6.1.0"
 version_split = __version__.split(".")
 version_url = "https://raw.githubusercontent.com/swarm-subnet/swarm/refs/heads/main/swarm/__init__.py"
 
@@ -46,4 +46,6 @@ except ImportError:
     _pkg_resources.resource_filename = (
         lambda package, resource: str(_pkg_files(package).joinpath(resource))
     )
+    # pytest's syspath_prepend calls this whenever pkg_resources is importable.
+    _pkg_resources.fixup_namespace_packages = lambda path_item, parent=None: None
     sys.modules["pkg_resources"] = _pkg_resources

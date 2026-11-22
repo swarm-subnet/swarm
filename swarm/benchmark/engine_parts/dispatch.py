@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 import time
 
+import pybullet as p
+
 try:
     import psutil
 except Exception:  # pragma: no cover - optional dependency in tests.
@@ -63,11 +65,13 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type3_mountain": 2300.0,
     "type6_forest": 2400.0,
     "type7_office": 1900.0,
-    # A patrol peaked at 3,344 MB over 100 runs; about 10% on top.
-    "type8_solar": 3700.0,
+    # On swarm-bullet3 2.0.0.6 a patrol peaked at 2,814 MiB over 100 seeds; about 10% on top.
+    "type8_solar": 3100.0,
     # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top.
     "type9_testsite": 3250.0,
 }
+# On an engine without the byte stream look a patrol peaked at 3,344 MB over 100 runs; about 10% on top.
+_SOLAR_RAM_ON_OLDER_ENGINE_MB = 3700.0
 # A seed not judged yet is first flown by the reference pilot in a process of its own; the flights peaked near
 # 2,750 MiB. It is held only while that flight runs, so a host whose seeds are judged books nothing for it.
 _SEED_CHECK_RAM_MB = 3000.0
@@ -173,6 +177,8 @@ def _default_ram_reserve_mb(total_ram_mb: float) -> float:
 
 def _ram_estimate_for_group(group_name: str) -> float:
     """Memory one seed of that map type is assumed to take, defaulting to the heaviest prior for an unknown name."""
+    if str(group_name) == "type8_solar" and not hasattr(p, "swarmStreamLookBytes"):
+        return _SOLAR_RAM_ON_OLDER_ENGINE_MB
     return float(
         _GROUP_RAM_ESTIMATES_MB.get(
             str(group_name),

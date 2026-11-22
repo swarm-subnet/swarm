@@ -132,7 +132,7 @@ def test_ram_estimates_are_defined_per_group():
         "type3_mountain": 2300.0,
         "type6_forest": 2400.0,
         "type7_office": 1900.0,
-        "type8_solar": 3700.0,
+        "type8_solar": 3100.0,
     }
 
 

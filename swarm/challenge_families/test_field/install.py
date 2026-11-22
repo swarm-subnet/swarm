@@ -18,7 +18,8 @@
 """What a machine needs installed to fly Swarm Test Field as the rest of the fleet does.
 
 The engine flags and CPU features are Sentinel's (solar's install module), since the field is drawn by the same
-cameras. The assets are the field's own map, Sentinel's bodies and moves for its people, and the aircraft and dock.
+cameras. The assets are the field's own map and Sentinel's bodies and moves for its people, from swarm-worlds, and
+the aircraft and dock, from swarm-description.
 """
 
 from __future__ import annotations
@@ -27,23 +28,22 @@ import os
 from typing import List
 
 import pybullet as p
+import swarm_description
 import swarm_worlds
 
 from ..base import IncompleteInstall
-from ..solar_patrol import airframe, dock3, intruders, theft_moves
+from ..solar_patrol import airframe, intruders, theft_moves
 from ..solar_patrol import install as sentinel_install
 from . import site
 
 
 def asset_files() -> List[str]:
-    """Every file a patrol of the field loads: the field's manifest, the people's bodies and moves, the aircraft and
-    the dock."""
-    maps, robots = swarm_worlds.maps_dir(), swarm_worlds.robots_dir()
+    """Every swarm-worlds file a patrol of the field loads: the field's manifest and the people's bodies and moves."""
+    maps = swarm_worlds.maps_dir()
     return [
         os.path.join(site.asset_dir(), "manifest.json"),
         os.path.join(maps, intruders.ASSET_DIR, "intruders.json"),
         os.path.join(maps, theft_moves.ASSET_DIR, "motions.json"),
-        *(os.path.join(robots, name) for name in (airframe.URDF, airframe.MOVING_URDF, dock3.DOCK_URDF, dock3.PAD_URDF)),
     ]
 
 
@@ -53,6 +53,10 @@ def problems() -> List[str]:
     missing = [path for path in asset_files() if not os.path.isfile(path)]
     if missing:
         found.append(f"swarm-worlds {sentinel_install._installed('swarm-worlds')} is missing {', '.join(missing)}")
+    drones = os.path.dirname(swarm_description.drone_dir(airframe.DRONE))
+    missing = [os.path.relpath(path, drones) for path in sentinel_install.description_files() if not os.path.isfile(path)]
+    if missing:
+        found.append(f"swarm-description {sentinel_install._installed('swarm-description')} is missing {', '.join(missing)}")
     flags = [name for name in sentinel_install.ENGINE_FLAGS if not hasattr(p, name)]
     if flags:
         found.append(f"swarm-bullet3 {sentinel_install._installed('swarm-bullet3')} has no {', '.join(flags)}")

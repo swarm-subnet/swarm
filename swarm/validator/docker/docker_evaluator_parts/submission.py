@@ -25,6 +25,7 @@ import bittensor as bt
 import numpy as np
 
 from swarm.constants import DOCKER_PIP_WHITELIST
+from swarm.core.observation.frozen import is_frozen
 
 
 def _normalize_package_name(name: str) -> str:
@@ -97,11 +98,16 @@ def _all_zero_bits(arr):
     return not arr.any() and not np.signbit(arr).any()
 
 
-def _serialize_observation_shm(agent_capnp, obs, shm_buf):
+def _serialize_observation_shm(agent_capnp, obs, shm_buf, cache=None):
     """Like _serialize_observation, but tensor payloads go into the shared-memory
     buffer the container mounts read-only; the message carries only shapes plus a
     __shm__ manifest of (key, offset, nbytes). All-zero tensors stay compact.
     Raises BufferError when the observation does not fit."""
+    # Entries written into another buffer say nothing about this one.
+    previous = [entry for entry in cache if entry[4] is shm_buf] if cache is not None else []
+    if cache is not None:
+        cache.clear()
+    pending = []
     items = list(obs.items()) if isinstance(obs, dict) else [("__value__", obs)]
     message = agent_capnp.Observation.new_message()
     entries = message.init("entries", len(items) + 1)
@@ -113,14 +119,22 @@ def _serialize_observation_shm(agent_capnp, obs, shm_buf):
         entries[i].tensor.data = b""
         entries[i].tensor.shape = list(arr.shape)
         entries[i].tensor.dtype = str(arr.dtype)
-        if arr.nbytes and not _all_zero_bits(arr):
+        trusted = is_frozen(arr) and not arr.flags.writeable and arr.flags.c_contiguous
+        held = next((entry for entry in previous if entry[0] is arr and entry[2] == arr.nbytes), None) if trusted else None
+        zero = held[3] if held is not None else _all_zero_bits(arr)
+        if trusted:
+            pending.append((arr, offset, arr.nbytes, zero, shm_buf))
+        if arr.nbytes and not zero:
             nbytes = arr.nbytes
             end = offset + nbytes
             if end > len(shm_buf):
                 raise BufferError("observation exceeds shm buffer")
-            dst = np.frombuffer(shm_buf, dtype=np.uint8, count=nbytes, offset=offset)
-            src = arr if arr.flags["C_CONTIGUOUS"] else np.ascontiguousarray(arr)
-            dst[:] = src.reshape(-1).view(np.uint8)
+            if held is None or held[1:3] != (offset, nbytes):
+                dst = np.frombuffer(shm_buf, dtype=np.uint8, count=nbytes, offset=offset)
+                src = arr if arr.flags["C_CONTIGUOUS"] else np.ascontiguousarray(arr)
+                dst[:] = src.reshape(-1).view(np.uint8)
+                previous = [entry for entry in previous if entry[3] or
+                            entry[1] >= end or entry[1] + entry[2] <= offset]
             manifest.append([key, offset, nbytes])
             offset = (end + 63) & ~63
     tail = entries[len(items)]
@@ -128,6 +142,8 @@ def _serialize_observation_shm(agent_capnp, obs, shm_buf):
     tail.tensor.data = json.dumps(manifest).encode()
     tail.tensor.shape = []
     tail.tensor.dtype = "manifest"
+    if cache is not None:
+        cache.extend(pending)
     return message
 
 @staticmethod

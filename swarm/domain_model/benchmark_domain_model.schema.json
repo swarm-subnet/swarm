@@ -327,7 +327,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_search_and_rescue": {
       "family_id": "cf_search_and_rescue",
@@ -377,7 +381,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_swarm_autopilot": {
       "family_id": "cf_swarm_autopilot",
@@ -425,7 +433,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_swarm_sar": {
       "family_id": "cf_swarm_sar",
@@ -474,7 +486,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_interceptor": {
       "family_id": "cf_interceptor",
@@ -518,7 +534,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.3,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_interceptor_office": {
       "family_id": "cf_interceptor_office",
@@ -562,7 +582,11 @@
         "improvement_plateau_end": 0.5
       },
       "emission_allocation": 0.0,
-      "benchmark_version": "5.1.6"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "5.1.6",
+        "to": "1.0.0"
+      }
     },
     "cf_solar_patrol": {
       "family_id": "cf_solar_patrol",
@@ -610,7 +634,11 @@
       "benchmark_seed_count": 2000,
       "king_window": 10,
       "emission_allocation": 0.95,
-      "benchmark_version": "6.0.0"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "6.0.0",
+        "to": "1.0.0"
+      }
     },
     "cf_test_field": {
       "family_id": "cf_test_field",
@@ -663,7 +691,11 @@
       "benchmark_seed_count": 1000,
       "king_window": 3,
       "emission_allocation": 0.05,
-      "benchmark_version": "6.0.1"
+      "benchmark_version": "1.0.0",
+      "benchmark_version_reset": {
+        "from": "6.0.1",
+        "to": "1.0.0"
+      }
     }
   },
   "policy_interfaces": {

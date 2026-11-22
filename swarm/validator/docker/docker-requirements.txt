@@ -17,3 +17,5 @@ h5py
 msgpack
 setuptools
 typing-extensions
+# swarm.constants reads the drones' numbers from it at import; the same tag as requirements.txt.
+swarm-description @ git+https://github.com/swarm-subnet/swarm-description.git@v1.0.0

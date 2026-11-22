@@ -27,16 +27,17 @@ import pytest
 
 from swarm.domain_model import get_family_benchmark_version, load_challenge_family_registry, validate_family_task_version
 from swarm.validator.utils_parts import evaluation, heartbeat, run_task, state
-from validator.scripts.check_family_versions import validate_release, version_tuple
+from validator.scripts.check_family_versions import declared_reset, release_tuple, validate_release, version_tuple
 from validator.scripts.sync_family_registry import _validate_registry
 
 
 @pytest.fixture
 def registry():
-    """Return an isolated bootstrap registry, every family at 5.1.6, for release edits."""
+    """Return an isolated bootstrap registry, every family at 5.1.6 with no reset declared, for release edits."""
     snapshot = copy.deepcopy(load_challenge_family_registry())
     for entry in snapshot['challenge_families'].values():
         entry['benchmark_version'] = '5.1.6'
+        entry.pop('benchmark_version_reset', None)
     return snapshot
 
 
@@ -73,6 +74,64 @@ def test_new_family_at_the_new_prefix_declares_the_bump(registry):
     validate_release(changed, '6.0.0', base, '5.1.6.6')
 
 
+@pytest.fixture
+def live(registry):
+    """Return the registry as production runs it before the reset: Sentinel 6.0.0, Test Field 6.0.1, the rest 5.1.6."""
+    registry['challenge_families']['cf_solar_patrol']['benchmark_version'] = '6.0.0'
+    registry['challenge_families']['cf_test_field']['benchmark_version'] = '6.0.1'
+    return registry
+
+
+def _reset(live, **overrides):
+    """Return the live registry with every family restarted at 1.0.0 from its live label."""
+    reset = copy.deepcopy(live)
+    for family, entry in reset['challenge_families'].items():
+        old = entry['benchmark_version']
+        entry['benchmark_version'] = overrides.get(family, '1.0.0')
+        entry['benchmark_version_reset'] = {'from': old, 'to': '1.0.0'}
+    return reset
+
+
+def test_bundled_registry_is_the_reset(live):
+    """The shipped registry restarts all eight families at 1.0.0 from their live labels."""
+    validate_release(load_challenge_family_registry(), '6.1.0', live, '6.0.1.1')
+    _validate_registry(load_challenge_family_registry())
+
+
+def test_declared_reset_lowers_labels_in_a_release(live):
+    """A three-part release may restart every family, and may raise one past 1.0.0 in the same step."""
+    validate_release(_reset(live), '6.1.0', live, '6.0.0')
+    validate_release(_reset(live, cf_solar_patrol='1.1.0'), '7.0.0', live, '6.0.0')
+
+
+@pytest.mark.parametrize('release,mutate,message', [
+    ('6.1.0', lambda r: r['challenge_families']['cf_solar_patrol'].pop('benchmark_version_reset'), 'without a declared reset'),
+    ('6.1.0', lambda r: r['challenge_families']['cf_solar_patrol']['benchmark_version_reset'].update({'from': '5.1.6'}), 'without a declared reset'),
+    ('6.0.0.1', lambda r: None, 'without a three-part release bump'),
+    ('6.1.0', lambda r: r['challenge_families']['cf_swarm_sar'].update({'benchmark_version': '0.9.0'}), 'reset label is above'),
+    ('6.1.0', lambda r: r['challenge_families']['cf_swarm_sar']['benchmark_version_reset'].update({'extra': 1}), 'exactly'),
+    ('6.1.0', lambda r: r['challenge_families']['cf_swarm_sar'].update({'benchmark_version': '6.0.0', 'benchmark_version_reset': {'from': '5.1.6', 'to': '6.0.0'}}), 'must lower'),
+    ('6.1.0', lambda r: r['challenge_families']['cf_swarm_sar'].update({'benchmark_version': '5.1.6', 'benchmark_version_reset': {'from': '5.1.6', 'to': '5.1.6'}}), 'must lower'),
+])
+def test_bad_resets_are_refused(live, release, mutate, message):
+    """An undeclared or mismatched reset, a reset in a hotfix, a malformed declaration and a reset that does not lower the label all fail."""
+    reset = _reset(live)
+    mutate(reset)
+    with pytest.raises(ValueError, match=message):
+        validate_release(reset, release, live, '6.0.0')
+
+
+def test_family_labels_move_on_their_own_after_the_reset(live):
+    """After the reset a family rises without matching the release number, and releases need no family change."""
+    after = _reset(live)
+    scoring = _reset(live, cf_solar_patrol='1.1.0')
+    validate_release(scoring, '6.2.0', after, '6.1.0')
+    validate_release(after, '6.1.1', after, '6.1.0')
+    validate_release(after, '6.1.0.1', after, '6.1.0')
+    with pytest.raises(ValueError, match='without a declared reset'):
+        validate_release(after, '6.3.0', scoring, '6.2.0')
+
+
 @pytest.mark.parametrize('value', [None, 516, '5.1', '5.1.6.1', 'v5.1.6', '5.a.6', '-1.2.3', '5.1.6\n'])
 def test_malformed_versions_fail(value):
     """Only three numeric components form a family version."""
@@ -81,15 +140,13 @@ def test_malformed_versions_fail(value):
 
 
 @pytest.mark.parametrize('release,updates', [
-    ('6.0.0', {}),
     ('5.1.6.7', {'cf_search_and_rescue': '5.1.5'}),
     ('5.1.6.7', {'cf_solar_patrol': '6.0.0'}),
-    ('6.0.0', {'cf_solar_patrol': '6.0.0', 'cf_swarm_sar': '5.1.7'}),
     ('6.0.0', {'cf_solar_patrol': '6.0.0', 'cf_swarm_sar': '5.1.5'}),
     ('5.1.5', {}),
 ])
 def test_invalid_release_declarations_fail(registry, release, updates):
-    """Global bumps, hotfixes and family edits must obey the same release declaration."""
+    """Decreases, hotfix family edits and a lower release are refused."""
     changed = copy.deepcopy(registry)
     for family, value in updates.items():
         changed['challenge_families'][family]['benchmark_version'] = value
@@ -101,7 +158,7 @@ def test_hotfix_cannot_advance_a_nonmaximum_family(registry):
     """Keeping the maximum unchanged cannot hide another family's hotfix edit."""
     base = copy.deepcopy(registry)
     base['challenge_families']['cf_swarm_sar']['benchmark_version'] = '5.1.5'
-    with pytest.raises(ValueError, match='without a global'):
+    with pytest.raises(ValueError, match='without a three-part release bump'):
         validate_release(registry, '5.1.6.7', base, '5.1.6.6')
 
 
@@ -131,7 +188,7 @@ def test_task_mismatch_refused_before_fetch(monkeypatch, version):
 
 def test_family_version_agreement():
     """The accepted version is always the bundled family declaration."""
-    assert validate_family_task_version('cf_swarm_sar', '5.1.6') == '5.1.6'
+    assert validate_family_task_version('cf_swarm_sar', '1.0.0') == '1.0.0'
 
 
 def test_cache_survives_another_familys_bump(monkeypatch):
@@ -193,3 +250,23 @@ async def test_evaluation_heartbeat_uses_local_family_version(monkeypatch, tmp_p
     assert active['family_id'] == 'cf_swarm_sar'
     assert active['benchmark_version'] == '5.1.5'
     hb.finish.assert_called_once()
+
+
+@pytest.mark.parametrize('value,expected', [('6.1.0', (6, 1, 0, 0)), ('5.1.6.6', (5, 1, 6, 6))])
+def test_release_tuple_pads_three_part_releases(value, expected):
+    """Three- and four-part releases compare on four parts."""
+    assert release_tuple(value) == expected
+
+
+@pytest.mark.parametrize('value', [None, '6.1', '6.1.0.0.1', 'v6.1.0'])
+def test_release_tuple_refuses_malformed_releases(value):
+    """Only numeric three- or four-part releases are ordered."""
+    with pytest.raises(ValueError):
+        release_tuple(value)
+
+
+def test_declared_reset_reads_the_pair():
+    """A family without a declaration has no reset; one with it yields its old and new labels."""
+    assert declared_reset('cf_solar_patrol', {'benchmark_version': '1.0.0'}) is None
+    entry = {'benchmark_version': '1.0.0', 'benchmark_version_reset': {'from': '6.0.0', 'to': '1.0.0'}}
+    assert declared_reset('cf_solar_patrol', entry) == ('6.0.0', '1.0.0')

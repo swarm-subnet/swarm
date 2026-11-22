@@ -29,9 +29,9 @@ from typing import List, Optional
 
 # The encoding these functions implement. The backend pins the same string.
 SEED_SCHEME_VERSION = "v1"
-# The first benchmark version scored on the shared list; below it, seeds stay per-validator.
+# The lowest family label scored on the shared list; labels restart at 1.0.0, so every live one is on it.
 # The backend reports the live value on /sync, so this is only the floor before the first sync.
-DEFAULT_SEED_SCHEME_MIN_VERSION = "5.1.6"
+DEFAULT_SEED_SCHEME_MIN_VERSION = "1.0.0"
 _SEED_SET_ID_CHARS = 16
 # Bytes of the keyed hash a world seed keeps: wide enough that no table of worlds can be built ahead.
 WORLD_SEED_BYTES = 16

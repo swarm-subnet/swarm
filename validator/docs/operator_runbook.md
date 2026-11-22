@@ -119,9 +119,9 @@ Validators send their full `swarm.__version__`. The backend dependency `require_
 
 ### Benchmark version: `X-Benchmark-Version`
 
-Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `6.0.0`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
+Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `6.1.0`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
 
-When the official version changes, the version-transition job (checked every 5 minutes) expires all pending models to `VERSION_EXPIRED` and queues every champion for re-evaluation. This means **merging a version bump to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy.
+When a release raises a family's `benchmark_version`, the version-transition job (checked every 5 minutes) restarts only that family: its pending models start over and its champions are queued for re-evaluation. A release that raises no family label re-evaluates nothing. This means **merging the release to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy. See [Family benchmark releases](#family-benchmark-releases).
 
 ---
 
@@ -232,29 +232,62 @@ Advanced tuning (all optional, `swarm/config/runtime.py`): `SWARM_MAX_DOCKER_WOR
 | Change a family's state or emission share live | `POST /admin/families/{family_id}` |
 | Allow validators to evaluate | Set `TRUSTED_VALIDATOR_COLDKEYS` (fail-closed; empty means nothing scores) |
 | Cut off old validator code | Bump `MIN_VALIDATOR_CODE_VERSION` / `PRIVATE_MIN_VALIDATOR_CODE_VERSION`, restart backend |
-| Trigger a benchmark-version cutover | Merge the `swarm/__init__.py` version bump to the `SWARM_VERSION_REF` branch: backend follows within up to about 20 minutes |
+| Trigger a family benchmark cutover | Merge a release that raises the family's `benchmark_version` to the `SWARM_VERSION_REF` branch: backend follows within up to about 20 minutes |
 | Turn screening on/off | Flip `SCREENING_ENABLED` in `benchmark_logic.py`, deploy, restart: startup fixups migrate the queue |
 
 ## Family benchmark releases
 
-The four-part `swarm.__version__` triggers deployment. Each registry entry's
-`benchmark_version` records the three-part release prefix that last changed that
-family. For a benchmark release, bump the global prefix and set each affected
-family to that prefix. Keep every unaffected family's declaration unchanged.
-For a fourth-part hotfix, keep every family declaration unchanged. Review shared
-runner, dependency and scoring changes for their impact on all families.
+Two numbers, two jobs:
+
+- `swarm.__version__` (`MAJOR.MINOR.PATCH.HOTFIX`) is the release. Changing it makes
+  validators update. On its own it re-evaluates nothing.
+- Each registry entry's `benchmark_version` (`MAJOR.MINOR.PATCH`) is that family's
+  benchmark label, independent of the release number:
+  - MAJOR: a new task spec generation (Solar Patrol V2 is `2.0.0`).
+  - MINOR: a scoring change within the spec. Raising it re-evaluates that family's
+    champions mid-epoch, so it moves only when that family's scores would change,
+    never because code was merged.
+  - PATCH: stays `0`.
+
+A family label change ships in a three-part release, never in a fourth-part hotfix,
+and leaves every other family's label unchanged. Review shared runner, dependency
+and scoring changes for their impact on all families.
 
 Validate with `python3 validator/scripts/check_family_versions.py --base <base-ref>`.
 CI compares the merge result against the PR or merge queue base commit. Family
-versions must be numeric three-part labels, never decrease, and reach the global
-prefix as their maximum. Sync the registry mirrors using the existing registry
-sync script before deploying a selective release.
+labels must be numeric three-part labels and never decrease except through a
+declared reset, and any label change needs a three-part release bump. Sync the
+registry mirrors using the existing registry sync script before deploying.
 
-Bootstrap all seven families at `5.1.6` and deploy `5.1.6.6`. Activate the backend's
-family version handling before shipping a selective `6.0.0` release. Validators
-send bundled runtime capabilities on signed requests and refuse tasks whose family
-version differs. The legacy global benchmark header remains available for older
-backends during bootstrap.
+Validators send their bundled family labels on signed requests and refuse tasks
+whose label differs. The backend routes each family's work only to validators
+reporting its live label.
+
+### Resets
+
+A family's label is lowered only by declaring a reset next to it:
+
+```json
+"benchmark_version": "1.0.0",
+"benchmark_version_reset": {"from": "6.0.0", "to": "1.0.0"}
+```
+
+`from` is the live label and `to` is the label that means the same benchmark. The
+backend applies it once, in the epoch it activates: work from earlier epochs keeps
+the old label, work from that epoch on carries the new one, and the reset is
+recorded in `family_version_reset` and listed on `/version`. A reset alone
+re-evaluates nobody. A `benchmark_version` above `to` is also a scoring change and
+re-evaluates that family as usual. The declaration may stay in the registry
+afterwards: once it no longer names the live label, it is ignored.
+
+The `1.0.0` reset restarts all eight families from their release-derived labels
+(`cf_solar_patrol` from `6.0.0`, `cf_test_field` from `6.0.1`, the others from `5.1.6`). Deploy the backend that
+understands resets before the release carrying them reaches `main`: an older
+backend refuses that release and keeps the old labels while updated validators
+report `1.0.0`, so no family gets work. Merge the reset release at the start of an
+epoch, so the epoch it lands in holds the least live work. The Swarm Sentinel
+and Swarm Test Field seed-check caches are filed per label, so each validator
+re-checks the seeds of both once after the reset; the verdicts are unchanged.
 
 Seed integers remain keyed by epoch and family. A benchmark bump does not rotate
 stored seeds. New files carry the local family's version; existing files retain

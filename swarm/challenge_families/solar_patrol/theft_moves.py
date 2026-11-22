@@ -26,8 +26,8 @@ can take over at the next seam without anything already played changing.
 
 A loop walked to a mark has its strides lengthened or shortened by the same small share, so the body stops on the
 mark instead of up to a stride off; spread over every cycle still to walk, the share stays under a fifth of a stride.
-Each thief also plays the library at a pace of its own, which changes how fast he moves but never how far a block
-carries him.
+Each thief also plays the library at a pace of its own, which changes how fast he moves and turns but never how far
+a block carries him or the line he walks.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ import swarm_worlds
 from .fixed_order import dot, norm
 
 ASSET_DIR = os.path.join("custom", "solar", "motions")
-STEER_RAD_S = math.radians(120.0)       # the sharpest turn a walking or running body makes
+STEER_RAD_S = math.radians(120.0)       # the sharpest turn a walking or running body makes at the library's pace
 MOVING_M_S = 0.2                        # a loop slower than this is worked on the spot and is never steered
 UPRIGHT = 0.6                           # below this share of the hips' forward axis in the ground plane they face up or down
 STRETCH_RANGE = (0.8, 1.25)             # how far a stride walked to a mark may be shortened or lengthened
@@ -209,8 +209,8 @@ class Step:
     kind names the block to play next, resolved against where the body is now; "loop" repeats the loop the body is in.
     A loop plays cycles times, or with cycles None until steer's distance left is used up but for the reach of then,
     the kind that follows, its strides stretched so the stop lands on the mark. hold keeps the last frame for that many
-    seconds; gone takes the body out of the scene. steer is a fixed heading, a Route or a Lane, and stage labels what the
-    thief is doing.
+    seconds; away keeps the body out of the scene for hold seconds, after which the script goes on; gone takes it out of
+    the scene for good. steer is a fixed heading, a Route or a Lane, and stage labels what the thief is doing.
     """
 
     kind: str
@@ -261,6 +261,8 @@ class Actor:
         """Start standing still where the script begins."""
         self.pos = np.asarray(self.xy, dtype=float)
         self.last = (GONE, "")
+        self.left = False
+        self.steer: Any = None              # what the block last played was steered by, the path a reaction keeps to
         self._queue: List[Step] = []
 
     @property
@@ -270,8 +272,8 @@ class Actor:
 
     @property
     def gone(self) -> bool:
-        """True once the body has been taken out of the scene."""
-        return bool(self.frames) and self.frames[-1].index == GONE
+        """True once the body has been taken out of the scene for good."""
+        return self.left
 
     def at(self, t: float) -> Frame:
         """The frame shown at patrol time t, writing the track that far first."""
@@ -340,10 +342,10 @@ class Actor:
         if step.kind == "gone":
             self.last = (GONE, step.stage)
             self.frames.append(Frame(GONE, self.mirrored, float(self.pos[0]), float(self.pos[1]), self.yaw, step.stage))
-            self.script, self._queue = None, []
+            self.script, self._queue, self.left = None, [], True
             return
-        if step.kind == "hold":
-            self.last = (self.last[0], step.stage or self.last[1])
+        if step.kind in ("hold", "away"):
+            self.last = (GONE if step.kind == "away" else self.last[0], step.stage or self.last[1])
             now = min(step.hold, 1.0)
             self._emit_hold(max(1, int(round(now * self.lib.fps))))
             if step.hold - now > 1e-9:
@@ -351,8 +353,9 @@ class Actor:
             return
         name = self._resolve(step.kind)
         block = self.lib.blocks[name]
+        self.steer = step.steer
         if not block["loop"]:
-            self._cycle(name, step, 1.0)
+            self._cycle(name, step, self._room(name, step))
             self.context = block["next"]
             return
         if step.cycles is not None:
@@ -374,6 +377,14 @@ class Actor:
             self._queue.insert(0, replace(step, budget=step.budget - 1))
         self.context = block["next"]
 
+    def _room(self, name: str, step: Step) -> float:
+        """The share of a block's travel that still fits before the end of the route it is steered along, so a stop
+        never carries the body past the mark or turns it round to come back to it; all of it off a route."""
+        reach = self.lib.reach(name) * self.scale
+        if not hasattr(step.steer, "left") or reach <= 1e-9:
+            return 1.0
+        return float(np.clip(step.steer.left(self.pos) / reach, 0.0, 1.0))
+
     def _peek_then(self, name: str, step: Step) -> str:
         """The block a paced loop stops for, so its reach can be kept in hand."""
         takes = self.lib.kinds({"loop": name}).get(step.then or "")
@@ -383,7 +394,7 @@ class Actor:
 
     def _cycle(self, name: str, step: Step, stretch: float) -> None:
         """One play of a block at the actor's pace, its travel stretched by a share: each frame shown, the body carried
-        by the root travel between frames, and turned towards the steer at most STEER_RAD_S."""
+        by the root travel between frames, and turned towards the steer at most STEER_RAD_S at his pace."""
         block = self.lib.blocks[name]
         first, count = block["first"], block["frames"]
         rot = self.lib.rotations[int(self.mirrored)][first:first + count]
@@ -397,7 +408,7 @@ class Actor:
         out = max(1, int(round(count / self.pace)))
         spots = np.arange(out + 1) * (count / out)
         track = np.stack([np.interp(spots, np.arange(count + 1), path[:, k]) for k in (0, 1)], 1)
-        steer_step = STEER_RAD_S / self.lib.fps
+        steer_step = STEER_RAD_S * self.pace / self.lib.fps
         loop_facing = None
         if block["loop"] and math.hypot(tx, tz) / (count / self.lib.fps) > MOVING_M_S:
             loop_facing = math.atan2(tx, tz)

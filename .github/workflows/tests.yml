@@ -17,12 +17,13 @@ permissions:
   packages: read
 
 env:
-  # the image you pushed to GHCR — change tag/digest here only
-  TEST_IMAGE: ghcr.io/swarm-subnet/swarm:base
-  # The validator tests run inside the validator image itself. A pull request uses the
-  # CI-only tag :ci; main builds the image of its own commit as :sha-<commit>, and that
+  # Named after the repository, so every copy of it builds and tests on its own images.
+  # CI tests on :base-<inputs>; :base itself is main's image, which local validator builds start from.
+  TEST_IMAGE: ghcr.io/${{ github.repository }}:base
+  # The validator tests run inside the validator image itself. A pull request uses a CI-only
+  # ci-<inputs> tag; main builds the image of its own commit as :sha-<commit>, and that
   # one image is what the publish workflow gives its version tag once the tests passed.
-  VALIDATOR_IMAGE: ghcr.io/swarm-subnet/swarm-validator
+  VALIDATOR_IMAGE: ghcr.io/${{ github.repository }}-validator
 
 jobs:
   family-versions:
@@ -48,48 +49,41 @@ jobs:
           esac
           python3 validator/scripts/check_family_versions.py --base "$base"
 
-  # Rebuilds the test image when the Dockerfile or requirements changed, so the jobs
-  # below run on the image this commit describes rather than whichever one was pushed last.
+  # Each test image is named after the files it is built from, so every branch tests on
+  # the image its own commit describes, never on whichever one another branch pushed last.
   push-docker-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.check.outputs.image }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Check whether the image inputs changed
-        id: check
-        run: |
-          case "$GITHUB_EVENT_NAME" in
-            pull_request) base="$GITHUB_SHA^1" ;;
-            push)         base="${{ github.event.before }}" ;;
-            merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
-            *)            base="" ;;
-          esac
-          # An unknown base (first push, force push) also lands here: rebuilding
-          # when unsure costs minutes, skipping when unsure costs a stale image.
-          # requirements.txt is baked into the image, so a dependency added there
-          # is absent from the run unless the image is rebuilt with it.
-          if [ -n "$base" ] && git diff --quiet "$base" "$GITHUB_SHA" -- .docker/Dockerfile requirements.txt; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Image inputs unchanged, keeping the image on GHCR"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Image inputs changed, rebuilding"
-          fi
-
       - name: Log in to GHCR
-        if: steps.check.outputs.changed == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether this image already exists
+        id: check
+        run: |
+          # requirements.txt is baked into the image, so it is part of the name.
+          image="$TEST_IMAGE-$(bash .docker/image_key.sh base)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "$image exists, keeping it"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$image does not exist, building it"
+          fi
 
       - name: Set up buildx
         if: steps.check.outputs.changed == 'true'
@@ -104,12 +98,18 @@ jobs:
           context: .
           file: .docker/Dockerfile
           push: true
-          tags: ${{ env.TEST_IMAGE }}
-          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm:buildcache
-          cache-to: type=registry,ref=ghcr.io/swarm-subnet/swarm:buildcache,mode=max
+          tags: ${{ steps.check.outputs.image }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
 
-  # The validator image sits on the base image, so it follows it: rebuilt when its own
-  # inputs changed, when the base was rebuilt, or when the CI tag does not exist yet.
+      # Operators' local validator builds start from :base, so only main moves it.
+      - name: Point the base tag at main's image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.check.outputs.image }}
+        run: docker buildx imagetools create -t "$TEST_IMAGE" "$IMAGE"
+
+  # The validator image sits on the test image, so its name covers that image and its own inputs.
   push-validator-image:
     needs: push-docker-image
     runs-on: ubuntu-latest
@@ -122,7 +122,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Log in to GHCR
@@ -132,8 +131,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check whether the image inputs changed
+      - name: Check whether this image already exists
         id: check
+        env:
+          BASE: ${{ needs.push-docker-image.outputs.image }}
         run: |
           version="$(grep -Eo '^__version__[[:space:]]*=[[:space:]]*"[^"]+"' swarm/__init__.py \
                      | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -142,29 +143,21 @@ jobs:
           # and the publish workflow then tags that same image, so it is never built twice.
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "tag=sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "image=$VALIDATOR_IMAGE:sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "Building the image of commit $GITHUB_SHA"
             exit 0
           fi
-          echo "tag=ci" >> "$GITHUB_OUTPUT"
-          case "$GITHUB_EVENT_NAME" in
-            pull_request) base="$GITHUB_SHA^1" ;;
-            merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
-            *)            base="" ;;
-          esac
-          if [ -n "$base" ] \
-             && docker manifest inspect "$VALIDATOR_IMAGE:ci" >/dev/null 2>&1 \
-             && git diff --quiet "$base" "$GITHUB_SHA" -- \
-                  .docker/Dockerfile requirements.txt \
-                  .docker/validator.Dockerfile \
-                  .docker/validator.Dockerfile.dockerignore \
-                  .docker/validator-entrypoint.sh \
-                  validator/requirements.txt; then
+          tag="ci-$(bash .docker/image_key.sh validator "$BASE")"
+          image="$VALIDATOR_IMAGE:$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Image inputs unchanged, keeping the image on GHCR"
+            echo "$image exists, keeping it"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Image inputs changed, rebuilding"
+            echo "$image does not exist, building it"
           fi
 
       - name: Set up buildx
@@ -182,9 +175,10 @@ jobs:
           push: true
           build-args: |
             SWARM_VERSION=${{ steps.check.outputs.version }}
-          tags: ${{ env.VALIDATOR_IMAGE }}:${{ steps.check.outputs.tag }}
-          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache
-          cache-to: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache,mode=max
+            BASE_IMAGE=${{ needs.push-docker-image.outputs.image }}
+          tags: ${{ steps.check.outputs.image }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-validator:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}-validator:buildcache,mode=max
 
   # Both sides run on every pull request, whichever side it changed. Deciding a
   # change is confined to one of them is a claim the run would then not be
@@ -206,19 +200,21 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull test image
-        run: docker pull "$TEST_IMAGE"
+        run: docker pull "${{ needs.push-docker-image.outputs.image }}"
 
       - name: Run the miner tests
         run: |
+          # Four CPUs, or all the runner has: a private repository's runner has two.
+          cpus=$(( $(nproc) < 4 ? $(nproc) : 4 ))
           docker run --rm \
-            --cpus=4 \
+            --cpus="$cpus" \
             -v "$PWD":/app \
             -w /app \
             -e PYTHONDONTWRITEBYTECODE=1 \
             -e PYTHONPATH=/app \
             -e HOME=/tmp \
             --user "$(id -u):$(id -g)" \
-            "$TEST_IMAGE" \
+            "${{ needs.push-docker-image.outputs.image }}" \
             pytest -v miner/tests -n 0 -p no:cacheprovider
         # -n 0 overrides the -n auto in addopts. The wheel these tests inspect is built
         # once per worker that asks for it, so spreading 35 tests over twelve is slower
@@ -318,6 +314,14 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # A private repository's runner has about 14 GB free, too little for both images this job holds.
+      - name: Free disk space
+        if: steps.image_check.outputs.run == 'true'
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache
+          df -h /
+
       - name: Log in to GHCR
         if: steps.image_check.outputs.run == 'true'
         uses: docker/login-action@v4
@@ -333,6 +337,7 @@ jobs:
       - name: Check a real model through the validator image
         if: steps.image_check.outputs.run == 'true'
         env:
+          SWARM_VALIDATOR_IMAGE: ${{ env.VALIDATOR_IMAGE }}
           SWARM_VALIDATOR_TAG: ${{ needs.push-validator-image.outputs.tag }}
         run: bash .docker/image_model_check.sh
 
@@ -341,5 +346,6 @@ jobs:
       - name: Lock a container down through the validator image
         if: steps.image_check.outputs.run == 'true'
         env:
+          SWARM_VALIDATOR_IMAGE: ${{ env.VALIDATOR_IMAGE }}
           SWARM_VALIDATOR_TAG: ${{ needs.push-validator-image.outputs.tag }}
         run: bash .docker/image_lockdown_check.sh

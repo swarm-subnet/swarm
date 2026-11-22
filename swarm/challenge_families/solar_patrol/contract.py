@@ -29,6 +29,7 @@ from typing import Optional
 import numpy as np
 
 from swarm.constants import SIM_DT
+from swarm.core.observation.frozen import freeze
 
 FAMILY_ID = "cf_solar_patrol"
 CHALLENGE_TYPE = 8
@@ -314,9 +315,7 @@ SCORE_TERMS = ("detection_term", "coverage_term", "flight_term", "final_score")
 
 def _blank_frame(shape: tuple) -> np.ndarray:
     """A shared blank frame that no observation consumer can modify."""
-    frame = np.zeros(shape, dtype=np.float32)
-    frame.flags.writeable = False
-    return frame
+    return freeze(np.zeros(shape, dtype=np.float32))
 
 
 BLANK_RGB = _blank_frame(RGB_SHAPE)

@@ -147,11 +147,13 @@ def _run_multi_seed_rpc_sync(
         except OSError:
             shm_buf = None
 
+    shm_cache = []
+
     def _build_observation(obs):
         """Serialize obs through the mmapped /dev/shm buffer, falling back to an in-message copy."""
         if shm_buf is not None:
             try:
-                return _serialize_observation_shm(agent_capnp, obs, shm_buf)
+                return _serialize_observation_shm(agent_capnp, obs, shm_buf, shm_cache)
             except BufferError:
                 pass
         return self._serialize_observation(agent_capnp, obs)
@@ -560,6 +562,7 @@ def _run_multi_seed_rpc_sync(
                     f"map_seed={getattr(task, 'map_seed', 'n/a')} "
                     f"type={_task_type_label(task)}"
                 )
+                shm_cache.clear()
                 seed_wall_start = time.time()
                 phases = seed_clock["phases"] = {
                     "env_build_sec": 0.0,
