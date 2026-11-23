@@ -30,6 +30,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import List, Optional, Set
 
 import pybullet as p
+import swarm_description
 import swarm_worlds
 
 from swarm.core.maps.solar import builder
@@ -53,16 +54,21 @@ CPUINFO = "/proc/cpuinfo"
 
 def asset_files() -> List[str]:
     """Every swarm-worlds file a patrol loads or falls back without: the park's manifest and the road its farmers
-    drive, the thieves, their moves, the dogs, the aircraft and the dock."""
-    maps, robots = swarm_worlds.maps_dir(), swarm_worlds.robots_dir()
+    drive, the thieves, their moves and the dogs."""
+    maps = swarm_worlds.maps_dir()
     files = [
         os.path.join(builder.SOLAR_ASSET_DIR, "manifest.json"),
         os.path.join(maps, intruders.ASSET_DIR, "intruders.json"),
         os.path.join(maps, theft_moves.ASSET_DIR, "motions.json"),
         os.path.join(decoys.DOGS_DIR, "dogs.json"),
-        *(os.path.join(robots, name) for name in (airframe.URDF, airframe.MOVING_URDF, dock3.DOCK_URDF, dock3.PAD_URDF)),
     ]
     return files + _road_files()
+
+
+def description_files() -> List[str]:
+    """The swarm-description URDFs a patrol loads: the aircraft's body and moving parts, the dock and its pad."""
+    return [os.path.join(swarm_description.drone_dir(name), file) for name, params in
+            ((airframe.DRONE, airframe.PARAMS), (dock3.DESCRIPTION, dock3.PARAMS)) for file in params["files"].values()]
 
 
 def _road_files() -> List[str]:
@@ -103,6 +109,10 @@ def problems() -> List[str]:
     missing = [os.path.relpath(path, root) for path in asset_files() if not os.path.isfile(path)]
     if missing:
         found.append(f"swarm-worlds {_installed('swarm-worlds')} is missing {', '.join(missing)}")
+    drones = os.path.dirname(swarm_description.drone_dir(airframe.DRONE))
+    missing = [os.path.relpath(path, drones) for path in description_files() if not os.path.isfile(path)]
+    if missing:
+        found.append(f"swarm-description {_installed('swarm-description')} is missing {', '.join(missing)}")
     flags = [name for name in ENGINE_FLAGS if not hasattr(p, name)]
     if flags:
         found.append(f"swarm-bullet3 {_installed('swarm-bullet3')} has no {', '.join(flags)}")

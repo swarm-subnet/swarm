@@ -26,6 +26,7 @@ import os
 import random
 
 import pybullet as p
+import swarm_description
 
 from ..constants import (
     EMBEDDED_FACTORY_SEED_OFFSET,
@@ -138,8 +139,7 @@ PACKOUT_BOX_SCALE_Z_MULT = 1.00
 # ---------------------------------------------------------------------------
 # Swarm drone URDF
 # ---------------------------------------------------------------------------
-_SWARM_DRONE_DIR = os.path.join(OTHER_SOURCES_DIR, "swarm_drone")
-SWARM_DRONE_URDF_CANDIDATES = (os.path.join(_SWARM_DRONE_DIR, "swarm_drone.urdf"),)
+SWARM_DRONE_URDF_CANDIDATES = (swarm_description.get_urdf("swarm_drone"),)
 SWARM_DRONE_GLOBAL_SCALE = 3.5
 SWARM_DRONE_SCALE_MULT = 1.38
 

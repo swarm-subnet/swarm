@@ -19,8 +19,9 @@
 
 Every seed is flown once by the reference pilot (reference_pilot.py) before it is scored. The seed passes when every
 thief who stepped inside the fence was seen well enough at least once (check 1) and the pilot landed back in the
-dock before the patrol's time ran out (check 2). A seed that fails is replaced by the next candidate drawn from it,
-the same on every machine, so the epoch's shared list stays one list.
+dock before the patrol's time ran out (check 2). After its search the pilot flies over any thief it has not seen yet,
+a crew that stepped in behind the search included, while it still has the time to come home. A seed that fails is
+replaced by the next candidate drawn from it, the same on every machine, so the epoch's shared list stays one list.
 
 A verdict costs a whole flight, so each is worked out once per benchmark version and kept on disk. The flights run in
 processes of their own: the environment they fly imports the family registry, which imports this module.
@@ -52,8 +53,13 @@ from .task import solar_patrol_task
 # 20 m wind down to the ground; 7 drops those flown and judged at heights over the dock instead of over the ground; 8
 # drops those flown under the camera trigger version 4 brought in, which a picture of a thief from any range set off,
 # and brings back the pilot's sound within each thief's hearing distance as what sets him off; 9 drops those judged
-# when one seed in five had a theft, so a seed that gained one at two in five is never kept as judged empty.
-CHECK_VERSION = 9
+# when one seed in five had a theft, so a seed that gained one at two in five is never kept as judged empty; 10 drops
+# those flown when every crew was at the fence from the start, by a pilot that never went back for a thief it missed;
+# 11 drops those flown when every crew came through together and kept close; 12 drops those flown when every thief
+# heard the drone from 22 to 32 m whatever the wind; 13 drops those flown when no crew was more than three men; 14
+# drops those flown when no runner fled before the camera had seen him; 15 drops those flown when every thief walked
+# at much the same pace; 16 drops those flown when a man who froze or dropped flat on his way walked straight on.
+CHECK_VERSION = 16
 CHECK_TRIES = 16                       # candidates tried per seed; at any real drop rate the last is never reached
 REPLACEMENT_TAG = "solar-seed-check"
 CACHE_ENV = "SWARM_SEED_CHECK_DIR"

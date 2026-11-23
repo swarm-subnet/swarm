@@ -47,9 +47,9 @@ from .contract import MAX_ZOOMS, STATE_SLICES, ZOOM_SHAPE, Box, Command, ZoomReq
 from .episode import SolarEpisode
 from .fixed_order import dot, norm
 
-LENS_DIAGONAL_FOV_DEG = {3: 35.0, 7: 15.0}  # DJI: M4TD medium tele and tele cameras
-NIGHT_VISION_BEAM_DEG = 5.7                 # DJI: M4TD infrared auxiliary light
-NIGHT_VISION_RANGE_M = 100.0
+LENS_DIAGONAL_FOV_DEG = {int(zoom): fov for zoom, fov in airframe.PARAMS["cameras"]["zoom_diagonal_fov_deg"].items()}
+NIGHT_VISION_BEAM_DEG = airframe.PARAMS["cameras"]["night_vision_beam_deg"]
+NIGHT_VISION_RANGE_M = airframe.PARAMS["cameras"]["night_vision_range_m"]
 # DJI publishes no power for the light, so a target at the end of its reach is lit as a full moon lights the ground.
 NIGHT_VISION_INTENSITY_LUX_M2 = camera.FULL_MOON_ZENITH_LUX * NIGHT_VISION_RANGE_M ** 2
 LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
@@ -177,7 +177,7 @@ def _draw(env: Any, ep: SolarEpisode, shot: camera.View, lens: int) -> tuple[np.
     at_night = camera.night_camera(env, lens, shot, _night_scene(ep, dark), ep.seed, GRAIN_OFFSET + ep.outcome.zooms_used,
                                    beam=beam)
     # A zoom frame is a close look at a few objects, at most MAX_ZOOMS a patrol, so every edge is smoothed.
-    frame, objects = camera.colour_frame(env, shot, at_night, outline=False)
+    frame, objects = camera.colour_frame(env, shot, at_night, outline=False, byte_frame=not beam or bool(camera.LOW_LIGHT))
     # An engine without the near infrared still gives night vision in black and white.
     if beam and not camera.LOW_LIGHT:
         # Weighted in float32 one channel at a time, not by a BLAS product whose rounding follows the CPU.

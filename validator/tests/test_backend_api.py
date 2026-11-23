@@ -560,10 +560,10 @@ def test_uploads_use_the_family_version_and_refuse_relabelling(monkeypatch, tmp_
     monkeypatch.setattr(client, '_post_signed', post)
     monkeypatch.setattr(backend_api, 'BENCHMARK_VERSION', '6.0.0')
     try:
-        _run(client.post_seed_scores_batch(1, 10, [], family_id='cf_swarm_sar', benchmark_version='5.1.6'))
+        _run(client.post_seed_scores_batch(1, 10, [], family_id='cf_swarm_sar', benchmark_version='1.0.0'))
         _run(client.submit_task_result(1, score=0.5, per_type_scores={}, seeds_evaluated=1, early_failed=False,
-                                       epoch_number=10, family_id='cf_swarm_sar', benchmark_version='5.1.6'))
-        assert [data['benchmark_version'] for _, data in captured] == ['5.1.6', '5.1.6']
+                                       epoch_number=10, family_id='cf_swarm_sar', benchmark_version='1.0.0'))
+        assert [data['benchmark_version'] for _, data in captured] == ['1.0.0', '1.0.0']
         for version in (None, '6.0.0'):
             try:
                 _run(client.post_seed_scores_batch(1, 10, [], family_id='cf_swarm_sar', benchmark_version=version))

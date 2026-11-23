@@ -29,12 +29,14 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import swarm_description
 import swarm_worlds
 
 from swarm.challenge_families import build_benchmark_tasks, get_challenge_family, list_registered_challenge_families
 from swarm.challenge_families.solar_patrol import airframe, camera, intruders
 from swarm.challenge_families.solar_patrol import contract as sentinel
-from swarm.challenge_families.test_field import flight_limit, people, site
+from swarm.challenge_families.solar_patrol import install as sentinel_install
+from swarm.challenge_families.test_field import flight_limit, install, people, site
 from swarm.challenge_families.test_field.contract import (
     ACTION_DIM,
     ACTION_FIELDS,
@@ -61,8 +63,8 @@ from swarm.policy_interface import build_artifact_policy_contract, build_smoke_t
 from swarm.utils.env_factory import make_env_with_initial_obs
 from validator.tests import field_stand_in
 
-# A patrol flies the M4TD and puts Sentinel's bodies on the field, which ship in swarm-worlds.
-_SHIPPED = os.path.isfile(os.path.join(swarm_worlds.robots_dir(), airframe.URDF)) and os.path.isfile(
+# A patrol flies the M4TD, which ships in swarm-description, and puts Sentinel's bodies on the field, from swarm-worlds.
+_SHIPPED = os.path.isfile(swarm_description.get_urdf(airframe.DRONE)) and os.path.isfile(
     os.path.join(swarm_worlds.maps_dir(), intruders.ASSET_DIR, "intruders.json"))
 
 
@@ -93,7 +95,7 @@ def _action(**values):
 def _patrol(seed, pilot):
     """Fly one patrol on the stand-in with a pilot that maps (decision, observation, episode) to an action."""
     if not _SHIPPED:
-        pytest.skip("the installed swarm-worlds has no M4TD or no intruder bodies")
+        pytest.skip("the installed swarm-description has no M4TD or swarm-worlds no intruder bodies")
     task = build_benchmark_tasks(sim_dt=SIM_DT, seeds=[seed], family_id=FAMILY_ID)[0]
     with contextlib.redirect_stdout(io.StringIO()):
         env, obs = make_env_with_initial_obs(task)
@@ -120,7 +122,8 @@ def test_family_is_registered_open_at_five_percent_on_its_own_map_type():
     assert FAMILY_ID in list_registered_challenge_families()
     definition = get_challenge_family_definition(FAMILY_ID)
     assert definition["family_state"] == "active" and definition["emissions_state"] == "active"
-    assert definition["emission_allocation"] == 0.05 and definition["benchmark_version"] == "6.0.1"
+    assert definition["emission_allocation"] == 0.05 and definition["benchmark_version"] == "1.0.0"
+    assert definition["benchmark_version_reset"] == {"from": "6.0.1", "to": "1.0.0"}
     assert definition["display"] == {"label": "Swarm Test Field", "short_label": "Test Field", "slug": "swarm-test-field"}
     assert get_family_benchmark_seed_count(FAMILY_ID) == 1000
     assert get_family_seeds_zeroed_per_mistake(FAMILY_ID) == 5
@@ -293,3 +296,14 @@ def test_an_abandoned_patrol_counts_everyone_as_missed():
     empty = family.evaluate_rollout(task=None, success=False, t=0.0, horizon=HORIZON_S, min_clearance=None,
                                     collision=False, failure_reason="TIMEOUT", info={})
     assert empty.score == 0.0 and empty.metrics["environment_type"] == "testsite"
+
+
+def test_the_field_is_refused_without_the_aircraft_in_swarm_description(monkeypatch):
+    """An install whose swarm-description lacks an M4TD or dock file cannot fly the field, and the file is named."""
+    gone = os.path.join(swarm_description.drone_dir(airframe.DRONE), "missing.urdf")
+    monkeypatch.setattr(install, "asset_files", lambda: [])
+    monkeypatch.setattr(sentinel_install, "description_files", lambda: [gone])
+    monkeypatch.setattr(sentinel_install, "ENGINE_FLAGS", ())
+    monkeypatch.setattr(sentinel_install, "cpu_features", lambda: set(sentinel_install.CPU_FEATURES))
+    assert install.problems() == [
+        f"swarm-description {sentinel_install._installed('swarm-description')} is missing {airframe.DRONE}/missing.urdf"]

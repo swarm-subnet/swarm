@@ -28,21 +28,18 @@ from __future__ import annotations
 
 import inspect
 import math
-import os
 import random
-from importlib.resources import files as _pkg_files
 from typing import Any, Optional
 
 import numpy as np
 import pybullet as p
-import swarm_worlds
+import swarm_description
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from swarm.constants import (
     INTERCEPTOR_ALT_MAX_M,
     INTERCEPTOR_ALT_MIN_M,
-    INTERCEPTOR_DRONE_URDF,
     INTERCEPTOR_JINK_FREQ_MAX,
     INTERCEPTOR_JINK_FREQ_MIN,
     INTERCEPTOR_JINK_GAIN,
@@ -83,13 +80,14 @@ from swarm.validator.reward import (
 
 from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile, banded_pool
 
-# SWARM_DRONE PID gains, sized for the 36 cm drone.
-_GAINS_P_FOR = np.array([2.3, 2.3, 7.1])
-_GAINS_I_FOR = np.array([0.3, 0.3, 0.3])
-_GAINS_D_FOR = np.array([1.1, 1.1, 2.9])
-_GAINS_P_TOR = np.array([2.3e6, 2.3e6, 2.0e6])
-_GAINS_I_TOR = np.array([0.0, 0.0, 16500.0])
-_GAINS_D_TOR = np.array([6.6e5, 6.6e5, 4.0e5])
+DRONE = "interceptor"
+_GAINS = swarm_description.get_params(DRONE)["controller"]
+_GAINS_P_FOR = np.array(_GAINS["p_force"])
+_GAINS_I_FOR = np.array(_GAINS["i_force"])
+_GAINS_D_FOR = np.array(_GAINS["d_force"])
+_GAINS_P_TOR = np.array(_GAINS["p_torque"])
+_GAINS_I_TOR = np.array(_GAINS["i_torque"])
+_GAINS_D_TOR = np.array(_GAINS["d_torque"])
 
 _PATROL_RADIUS_M = 55.0  # keep the target near its spawn so the chase stays bounded
 
@@ -111,22 +109,16 @@ def _supports_keyword_arg(callable_obj: Any, keyword: str) -> bool:
 
 
 def interceptor_urdf_path() -> str:
-    """Absolute path to the 36 cm URDF in the swarm-worlds package."""
-    return os.path.join(swarm_worlds.robots_dir(), INTERCEPTOR_DRONE_URDF)
+    """Absolute path to the 36 cm URDF in the swarm-description package."""
+    return swarm_description.get_urdf(DRONE)
 
 
 def ensure_interceptor_urdf_staged() -> str:
-    """Stage the 36 cm URDF in the writable dir gym_assets routes BaseAviary's hardcoded
-    loader through (site-packages may be read-only), along with the stock cf2.dae its
-    visual mesh references relative to the URDF. Content-verified and atomic so every
-    validator parses byte-identical physical constants. Returns the URDF basename for
-    self.URDF."""
-    dst_dir = gym_assets.stage_dir()
-    src_dae = str(_pkg_files("gym_pybullet_drones").joinpath("assets", "cf2.dae"))
-    gym_assets.copy_verified(src_dae, os.path.join(dst_dir, "cf2.dae"))
-    dst = os.path.join(dst_dir, INTERCEPTOR_DRONE_URDF)
-    gym_assets.copy_verified(interceptor_urdf_path(), dst)
-    return gym_assets.register(INTERCEPTOR_DRONE_URDF, dst)
+    """Stage the 36 cm URDF and its scaled cf2 mesh in the writable dir gym_assets routes
+    BaseAviary's hardcoded loader through (site-packages may be read-only). Content-verified
+    and atomic so every validator parses byte-identical physical constants. Returns the URDF
+    basename for self.URDF."""
+    return gym_assets.stage_drone(DRONE)
 
 
 def make_interceptor_control(env: Any) -> DSLPIDControl:

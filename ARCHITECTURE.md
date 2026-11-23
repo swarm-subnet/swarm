@@ -148,7 +148,8 @@ Avoid the reverse flow. In particular:
 ## State, Assets, and Generated Files
 
 - [swarm/assets/](swarm/assets): README media only
-- [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds): maps, robot descriptions and textures, installed as a package and reached through `swarm_worlds.maps_dir()`, `robots_dir()` and `textures_dir()`
+- [swarm-worlds](https://github.com/swarm-subnet/swarm-worlds): maps, textures and skies, installed as a package and reached through `swarm_worlds.maps_dir()`, `textures_dir()` and `skies_dir()`
+- [swarm-description](https://github.com/swarm-subnet/swarm-description): every URDF the simulator spawns (drones, the dock, the conveyor drone), installed as a package and reached through `swarm_description.get_urdf()` and `get_params()`
 - [swarm/state/](swarm/state): local generated validator telemetry and state
 - `/tmp/bench_full_eval_<uid>_<pid>.log`: per-run local benchmark logs unless `--log-out` selects another path
 - `Submission/submission.zip`: default local packaging output

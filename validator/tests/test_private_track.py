@@ -193,7 +193,7 @@ def _run(monkeypatch, tmp_path, *, is_private: bool) -> Path:
 
     monkeypatch.setattr(run_task_mod, "_ensure_models_from_backend", ensure)
     monkeypatch.setattr(run_task_mod, "_run_phase", phase)
-    task = {"uid": 7, "phase": "BENCHMARK", "benchmark_version": "5.1.6", "task_id": 1, "model_hash": digest, "is_private": is_private}
+    task = {"uid": 7, "phase": "BENCHMARK", "benchmark_version": "1.0.0", "task_id": 1, "model_hash": digest, "is_private": is_private}
     asyncio.run(run_task_mod.run_task(
         SimpleNamespace(), task, cancel_flag=asyncio.Event(), wake_flag=asyncio.Event(),
     ))
@@ -225,7 +225,7 @@ def test_private_bytes_are_dropped_when_the_fetch_itself_is_cancelled(monkeypatc
         raise asyncio.CancelledError
 
     monkeypatch.setattr(run_task_mod, "_ensure_models_from_backend", ensure)
-    task = {"uid": 7, "phase": "BENCHMARK", "benchmark_version": "5.1.6", "task_id": 1, "model_hash": "d" * 64, "is_private": True}
+    task = {"uid": 7, "phase": "BENCHMARK", "benchmark_version": "1.0.0", "task_id": 1, "model_hash": "d" * 64, "is_private": True}
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(run_task_mod.run_task(
             SimpleNamespace(), task, cancel_flag=asyncio.Event(), wake_flag=asyncio.Event(),

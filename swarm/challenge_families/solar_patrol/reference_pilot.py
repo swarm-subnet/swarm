@@ -19,11 +19,13 @@
 
 It flies through the patrol's own environment: the real park, the seed's own dock spot, wind and thieves, with no
 pictures drawn. It takes off, searches the whole park lane by lane at the patrol height over the ground under it,
-inside the dock's height limit, presses return home and lands. Its lanes lie as far apart as the ground the
-wide camera sees, which searches by night too with night mode on. Twice a second, as the camera would, it looks at
-every thief inside the fence the way a pilot who knows where he stands would, turning and tilting towards him, and
-counts his pixels in the object map of that exact view, so panels, trees and the ground hide him as they would: in
-the colour camera by day, in the thermal camera by night.
+inside the dock's height limit, presses return home and lands. A crew may step in behind the search, so after its
+last lane, while it still has the time to come home, it flies over each thief it has not yet seen well enough,
+nearest first, and over the way in for a man still to step in; when the search saw every thief, it flies home as on
+an empty seed. Its lanes lie as far apart as the ground the wide camera sees, which searches by night too with night
+mode on. Twice a second, as the camera would, it looks at every thief inside the fence the way a pilot who knows
+where he stands would, turning and tilting towards him, and counts his pixels in the object map of that exact view,
+so panels, trees and the ground hide him as they would: in the colour camera by day, in the thermal camera by night.
 
 The seed passes when every thief who stepped inside the fence showed at least PIXELS_ACROSS pixels across his narrow
 side, from the patrol height or lower above the ground and at least MIN_DISTANCE_M away (check 1), and the pilot landed
@@ -41,7 +43,7 @@ import math
 import sys
 import time
 from functools import lru_cache
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pybullet as p
@@ -97,6 +99,8 @@ TURNING_MPS = 1.0                      # the pilot faces where it flies only onc
 RETURN_CLEAR_M = 1.0                   # return home is pressed once the straight flight home stays this far inside
 RAY_REACH_M = 1000.0
 GROUND_RAYS = 16                       # a ray looking for the ground passes at most this many bodies standing on it
+HOME_SPEED_MPS = 4.0                   # the flight home as the reference models time it
+HOME_MARGIN_S = 35.0                   # time kept for the climb, the flight home and the landing, over the distance
 
 _FRAME_DECISIONS = camera.FRAME_STEPS // DECISION_STEPS
 _SEG_FLAGS = getattr(p, "ER_SWARM_RAYCAST", 0) | getattr(p, "ER_ALPHA_CUTOUT", 0)
@@ -112,8 +116,8 @@ def check(seed: int) -> Verdict:
     try:
         ep = env._solar
         night = camera.night(env)
-        pilot = _Pilot(env, ep, lane_spacing())
         sightings = _Sightings(env, ep, night)
+        pilot = _Pilot(env, ep, lane_spacing(), sightings)
         decision = 0
         while True:
             _obs, _reward, terminated, truncated, _info = env.step(pilot.action(decision)[None, :])
@@ -379,12 +383,13 @@ def _corner_speeds(points: np.ndarray) -> np.ndarray:
 
 
 class _Pilot:
-    """The reference pilot: presses take-off, flies the route at its heights and speeds facing where it goes, and
-    presses return home once the search is done and the straight flight home stays inside the fence."""
+    """The reference pilot: presses take-off, flies the route at its heights and speeds facing where it goes, then
+    flies over each thief its sightings have not yet seen well enough while it has the time, and presses return home
+    once that is done and the straight flight home stays inside the fence."""
 
-    def __init__(self, env: Any, ep: SolarEpisode, spacing: float):
-        """Lay the route for this seed's dock and read the ground under it."""
-        self.env, self.ep = env, ep
+    def __init__(self, env: Any, ep: SolarEpisode, spacing: float, sightings: Optional[_Sightings] = None):
+        """Lay the route for this seed's dock and read the ground under it; without sightings it only searches."""
+        self.env, self.ep, self.sightings = env, ep, sightings
         path, search_m = route(ep.fence, ep.dock_position[:2], spacing)
         self.points = _resample(path, SAMPLE_M)
         self.length_m = path_length(path)
@@ -394,7 +399,11 @@ class _Pilot:
         self.heights = np.minimum(ground + PATROL_HEIGHT_M, dock_z + HEIGHT_LIMIT_M) - CEILING_MARGIN_M
         self.speeds = _corner_speeds(self.points)
         self.home_area = Polygon(ep.fence).buffer(-RETURN_CLEAR_M)
+        self.connect_area = Polygon(ep.fence).buffer(-CONNECT_INSET_M)
+        self.lane_area = Polygon(ep.fence).buffer(-FENCE_INSET_M)
         self.index = 0
+        self.visiting: Optional[int] = None
+        self.visited = False
 
     def action(self, decision: int) -> np.ndarray:
         """This decision's action vector."""
@@ -409,18 +418,62 @@ class _Pilot:
         window = self.points[self.index:self.index + int(SEARCH_M / SAMPLE_M) + 1]
         self.index += int(np.argmin(np.hypot(*(window - pos[:2]).T)))
         last = len(self.points) - 1
-        if self.index >= self.search_end and (
-                self.index == last or self.home_area.covers(LineString([pos[:2], self.ep.dock_position[:2]]))):
-            a[ACTION_INDEX["return_home"]] = 1.0
-            return a
+        if self.index >= self.search_end:
+            goal = self._visit(pos)
+            if goal is not None or self.visited:
+                return self._after_search(a, pos, goal)
+            if self.index == last or self.home_area.covers(LineString([pos[:2], self.ep.dock_position[:2]])):
+                a[ACTION_INDEX["return_home"]] = 1.0
+                return a
         carrot = self.points[min(last, self.index + int(CARROT_M / SAMPLE_M))]
-        heading = carrot - pos[:2]
-        distance = float(np.hypot(*heading))
-        speed = min(float(self.speeds[self.index]), distance)
-        vx, vy = (heading / distance * speed) if distance > 1e-6 else (0.0, 0.0)
         # Aimed as far ahead as the height lags behind at this speed, so the drone holds its height over a slope.
         lead = min(last, self.index + int(round(float(np.hypot(*self.env.vel[0][:2])) / HEIGHT_GAIN_PER_S / SAMPLE_M)))
-        vz = float(np.clip(HEIGHT_GAIN_PER_S * (self.heights[lead] - pos[2]), -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
+        return self._steer(a, pos, carrot, float(self.speeds[self.index]), self.heights[lead])
+
+    def _visit(self, pos: np.ndarray) -> Optional[np.ndarray]:
+        """Where to fly over next: the thief being visited while he is still unseen, else the nearest one, or None once
+        all are seen or the flight home needs the time that is left."""
+        if self.sightings is None:
+            return None
+        wanted = still_to_see(self.ep, self.sightings.best)
+        if not wanted or self.ep.time_s + self._home_s(pos) >= float(self.env.EP_LEN_SEC):
+            return None
+        self.visiting = nearest_visit(pos[:2], wanted, self.visiting)
+        self.visited = True
+        goal = Point(wanted[self.visiting])
+        if not self.lane_area.covers(goal):
+            goal = self.lane_area.exterior.interpolate(self.lane_area.exterior.project(goal))
+        return np.asarray(goal.coords[0], dtype=float)[:2]
+
+    def _home_s(self, pos: np.ndarray) -> float:
+        """Seconds the flight home and the landing need from here, by way of the fence's inside when the straight
+        line leaves it."""
+        return path_length(np.asarray(_along_edge(self.home_area, pos[:2], self.ep.dock_position[:2]))) / \
+            HOME_SPEED_MPS + HOME_MARGIN_S
+
+    def _after_search(self, a: np.ndarray, pos: np.ndarray, goal: Optional[np.ndarray]) -> np.ndarray:
+        """Once a visit has begun: fly over the goal inside the fence, or with none left head home, pressing return
+        home once the straight flight home stays inside the fence."""
+        dock_xy = self.ep.dock_position[:2]
+        if goal is None and self.home_area.covers(LineString([pos[:2], dock_xy])):
+            a[ACTION_INDEX["return_home"]] = 1.0
+            return a
+        path = _along_edge(self.connect_area, pos[:2], dock_xy if goal is None else goal)
+        points = _resample(np.asarray(path, dtype=float), SAMPLE_M)
+        carrot = points[min(len(points) - 1, int(CARROT_M / SAMPLE_M))]
+        dock_z = float(self.ep.dock_position[2])
+        ground = _ground_z(self.env.CLIENT, carrot[0], carrot[1], self.ep.terrain_uids, dock_z)
+        height = min(ground + PATROL_HEIGHT_M, dock_z + HEIGHT_LIMIT_M) - CEILING_MARGIN_M
+        speed = min(MAX_HORIZONTAL_MPS, math.sqrt(2.0 * BRAKE_MPS2 * path_length(np.asarray(path, dtype=float))))
+        return self._steer(a, pos, carrot, speed, height)
+
+    def _steer(self, a: np.ndarray, pos: np.ndarray, carrot: np.ndarray, speed: float, height: float) -> np.ndarray:
+        """Fly at the carrot at up to speed, holding a height, facing where it flies once it flies fast enough."""
+        heading = carrot - pos[:2]
+        distance = float(np.hypot(*heading))
+        speed = min(speed, distance)
+        vx, vy = (heading / distance * speed) if distance > 1e-6 else (0.0, 0.0)
+        vz = float(np.clip(HEIGHT_GAIN_PER_S * (height - pos[2]), -MAX_DESCENT_MPS, MAX_CLIMB_MPS))
         yaw = float(self.env.rpy[0, 2])
         c, s = math.cos(yaw), math.sin(yaw)
         a[ACTION_INDEX["move_forward"]] = (vx * c + vy * s) / MAX_HORIZONTAL_MPS
@@ -432,6 +485,28 @@ class _Pilot:
             # The turn stick is clockwise positive on the compass, the simulator's yaw counter-clockwise.
             a[ACTION_INDEX["turn"]] = -rate / MAX_YAW_RATE_DEG_S
         return a
+
+
+def still_to_see(ep: SolarEpisode, best: Dict[int, float]) -> Dict[int, np.ndarray]:
+    """Where to look for each thief not yet seen well enough: where he stands inside the fence, or the way in for a
+    man of the crew still to step in."""
+    wanted: Dict[int, np.ndarray] = {}
+    index = theft.bodies(ep)
+    for person in theft.people(ep):
+        n = index.get(int(person["bodies"][0]), -1) if person["bodies"] else -1
+        if person["threat"] and n >= 0 and best.get(n, 0.0) < PIXELS_ACROSS:
+            wanted[n] = np.asarray(person["xy"], dtype=float)
+    for n, man in enumerate(getattr(ep.theft, "men", [])):
+        if not man.entered and n not in wanted:
+            wanted[n] = np.asarray(ep.theft.story.hole, dtype=float)
+    return wanted
+
+
+def nearest_visit(xy: np.ndarray, wanted: Dict[int, np.ndarray], current: Optional[int]) -> int:
+    """The thief to fly over: the one being visited while he is still wanted, else the nearest."""
+    if current in wanted:
+        return current
+    return min(wanted, key=lambda n: (float(np.hypot(*(wanted[n] - xy))), n))
 
 
 # ---------------------------------------------------------------------------------------------- the thieves

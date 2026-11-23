@@ -194,6 +194,52 @@ def test_the_report_height_counts_from_the_ground_under_the_camera(park):
 
 
 @pytest.fixture
+def armed(park, monkeypatch):
+    """The park's frame with a third thief, a man whose bolt cutters stick out a metre to his side, and a fourth who
+    shows nothing but his cutters; the cutters are held bodies, the rest of each man is not."""
+    cli = park.env.CLIENT
+    man_uid, man = _block(cli, (-3.0, -6.0), _PERSON, (0.6, 0.2, 0.2))
+    cutters_uid, cutters = _block(cli, (-2.15, -6.0), (0.5, 0.05, 0.05), (0.3, 0.3, 0.3))
+    lone_uid, lone = _block(cli, (3.0, -6.0), (0.5, 0.05, 0.05), (0.3, 0.3, 0.3))
+    park.shown["feed"] = _draw(cli, park.view)
+    park.view = park.shown["feed"]
+    monkeypatch.setattr(theft, "bodies", lambda ep: {man_uid: 2, cutters_uid: 2, lone_uid: 3})
+    monkeypatch.setattr(theft, "held_bodies", lambda ep: {cutters_uid, lone_uid})
+    monkeypatch.setattr(theft, "inside", lambda ep, thief, step: True)
+    return SimpleNamespace(man=man, whole=(man[0], np.maximum(man[1], cutters[1])), cutters=cutters, lone=lone)
+
+
+def test_a_box_on_the_man_alone_is_valid_though_he_holds_a_tool(park, armed):
+    """The box a report is judged against is the man himself: a box on his body passes with the cutters in his hand."""
+    assert _report(park, armed.man) == "valid"
+
+
+def test_a_box_stretched_over_the_tool_he_holds_sits_on_no_object(park, armed):
+    """A box around the man and the cutters he holds out overlaps his own box by well under a half, so it fails."""
+    assert _report(park, armed.whole) == "no_object"
+
+
+def test_a_frame_that_shows_only_a_tool_gives_the_thief_no_box(park, armed):
+    """A thief whose only visible pixels are the tool he holds has no box in that frame, so a report on it fails."""
+    assert _report(park, armed.lone) == "no_object"
+    owners = {uid: ("thief", n) for uid, n in theft.person_bodies(park.ep).items()}
+    boxes = reports.object_boxes(park.view, owners)
+    assert ("thief", 2) in boxes and ("thief", 3) not in boxes
+
+
+def test_the_men_themselves_are_the_person_bodies(monkeypatch):
+    """Of a crew's drawn bodies, what the men hold is left out of the person bodies and kept in the bodies."""
+    men = [SimpleNamespace(body=SimpleNamespace(bodies=[1, 2, 3], held=[3])), SimpleNamespace(body=None),
+           SimpleNamespace(body=SimpleNamespace(bodies=[4, 5], held=[]))]
+    ep = SimpleNamespace(theft=SimpleNamespace(men=men))
+    assert theft.held_bodies(ep) == {3}
+    assert theft.person_bodies(ep) == {1: 0, 2: 0, 4: 2, 5: 2}
+    assert theft.bodies(ep) == {1: 0, 2: 0, 3: 0, 4: 2, 5: 2}
+    empty = SimpleNamespace(theft=None)
+    assert theft.held_bodies(empty) == set() and theft.person_bodies(empty) == {}
+
+
+@pytest.fixture
 def reads(park, monkeypatch):
     """The views whose object map the report check read, one entry per read."""
     read, seen = reports.object_boxes, []
@@ -318,3 +364,43 @@ def test_a_thief_who_moved_after_the_frame_still_counts_where_the_frame_showed_h
         assert ep.outcome.valid_reports == 1 and ep.outcome.false_alarms == 0
     finally:
         env.close()
+
+
+def _boxes_of(objects):
+    """The tight boxes object_boxes reads from an object map that holds body 7, owned by thief 0."""
+    view = camera.View(feed="colour", eye=(0.0, 0.0, 20.0), forward=(0.0, 0.0, -1.0), up=(0.0, 1.0, 0.0),
+                       width=objects.shape[1], height=objects.shape[0], vertical_fov_deg=50.0, sees=True, step=0,
+                       objects=objects)
+    return reports.object_boxes(view, {7: ("thief", 0)})[("thief", 0)]
+
+
+def test_pixels_seen_through_a_panel_gap_stay_out_of_the_box():
+    """A few loose pixels of a thief seen through the gaps of a solar table leave his box around his body."""
+    objects = np.full((120, 160), -1, dtype=np.int32)
+    objects[40:80, 60:80] = 7
+    objects[[20, 22, 100], [30, 31, 40]] = 7
+    assert _boxes_of(objects) == (60.0, 40.0, 80.0, 80.0)
+
+
+def test_a_thief_cut_by_thin_wire_keeps_his_whole_box():
+    """Strips of a thief seen between wires two pixels thick are one body."""
+    objects = np.full((120, 160), -1, dtype=np.int32)
+    objects[40:80, 60:80] = 7
+    objects[48:50, :] = -1
+    objects[60:62, :] = -1
+    assert _boxes_of(objects) == (60.0, 40.0, 80.0, 80.0)
+
+
+def test_a_thief_split_by_a_post_keeps_both_halves():
+    """Two large halves of a thief either side of a post six pixels wide both count."""
+    objects = np.full((120, 160), -1, dtype=np.int32)
+    objects[40:80, 60:70] = 7
+    objects[40:80, 76:86] = 7
+    assert _boxes_of(objects) == (60.0, 40.0, 86.0, 80.0)
+
+
+def test_a_thief_seen_only_in_small_pieces_keeps_them_all():
+    """When every piece is a fair share of the thief, none is a speck."""
+    objects = np.full((120, 160), -1, dtype=np.int32)
+    objects[[10, 50, 90], [10, 70, 130]] = 7
+    assert _boxes_of(objects) == (10.0, 10.0, 131.0, 91.0)

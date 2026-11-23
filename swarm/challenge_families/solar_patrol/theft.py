@@ -17,24 +17,33 @@
 
 """Theft scenarios (task 19): the thieves one seed writes, what they do minute by minute, and who is a threat when.
 
-Two seeds in five have a theft: one to three men on foot, already at the fence when the patrol starts. They come in one
-of three ways, each where it happens on the real site: a hole cut on the side of the public road, the gate on that
-road forced, or a hole cut where the woods reach the fence. The hole is really cut in the scene: a fence panel gives
-way to the chain link either side of two slits, and the flap between them is pushed into the park and stays open; a
-forced gate swings one leaf in. Everyone is inside before the drone's take-off is over.
+Two seeds in five have a theft: one to five men on foot. About a third of crews are already at the fence when the
+patrol starts; the others walk up to it from outside the scene at a time the seed draws, any time in the first 200 s.
+They come in one of three ways, each where it happens on the real site: a hole cut on the side of the public road, the
+gate on that road forced, or a hole cut where the woods reach the fence. The hole is really cut in the scene: a fence
+panel gives way to the chain link either side of two slits, and the flap between them is pushed into the park and
+stays open; a forced gate swings one leaf in. Everyone is inside within ENTRY_S of his group reaching the fence.
+
+A crew of two or more keeps together, spreads out, or comes in two groups. A tight crew follows its first man through
+a few seconds apart and mostly works near his table. A loose crew comes through further apart, stops well to the side
+of each other and works anywhere in the park. A split crew sends its first half, the first man among them, at its
+arrival and the rest half a minute to two minutes later, through the way in the first group opened.
 
 Inside, the crew works for the whole patrol. A worker walks to a table anywhere in the park, deep rows as likely as
 the edge, stoops under its edge and cuts the string cable, pulls it out along the row, and moves on along the rows;
-late in the patrol he may shoulder the coil and carry it out the way he came. A lookout stays near the hole, and the
-last man in sometimes turns back to widen the hole before he goes to work. Nobody leaves before the drone's camera
-has seen him inside, and a man inside the fence is a threat from the moment he steps in until he is out again.
+late in the patrol he may shoulder the coil and carry it out the way he came, which he does only once the drone's
+camera has seen him inside. A lookout stays near the hole, further in for a loose crew, and the last man in sometimes
+turns back to widen the hole before he goes to work. A man inside the fence is a threat from the moment he steps in
+until he is out again.
 
 Each thief notices the drone when he hears it, once it flies within his own distance of him, and reacts his own way
 after his own delay, at the next moment his move allows, while it is still about: he works on, freezes and goes back
 to what he was doing (again and again if it hovers), throws himself flat and lies still until it has been gone a
-while, or runs for the hole at once. A picture alone never sets him off: a zoom from further than he can hear finds
-him at work. A runner the camera has not seen yet freezes, drops flat and runs only once it has seen him, or gets up
-and goes back to work once the drone has gone.
+while, or runs for the hole at once. How far he hears depends on his own ears and on the seed's weather: wind drowns
+the drone out and a still or a quiet night lets it carry, and a man downwind of it hears it from further. A picture
+alone never sets him off: a zoom from further than he can hear finds him at work. Half of the runners run on hearing
+it, seen or not. The others, while the camera has not seen them yet, freeze, drop flat and run only once it has seen
+them, or get up and go back to work once the drone has gone.
 
 Every draw comes from the seed's own stream, the park as the seed shifts it and, once the patrol runs, where the
 drone flies, so every validator sees the same theft for the same flight. Thieves are posed only for a picture that
@@ -56,7 +65,7 @@ import pybullet as p
 from swarm.constants import SIM_DT
 from swarm.core.maps.solar import builder
 
-from . import intruders
+from . import intruders, wind
 from .episode import SolarEpisode
 from .fixed_order import dot, norm
 from .theft_moves import GONE, Actor, Lane, Route, Step, heading_to, library
@@ -64,7 +73,7 @@ from .theft_site import Opening, Site, Table, yaw_of
 
 THEFT_SEED_STREAM = 0x7E1F7             # the theft's own stream, so no other draw of the seed moves it
 THEFT_SHARE = 0.4                       # decided: two seeds in five have intruders
-CREW = {1: 0.45, 2: 0.35, 3: 0.20}      # how many come; one alone is the most common on a real site
+CREW = {1: 0.45, 2: 0.35, 3: 0.13, 4: 0.05, 5: 0.02}   # how many come; one alone is the most common on a real site
 WAYS = {"road": 0.45, "gate": 0.25, "forest": 0.30}
 LOOKOUT_SHARE = 0.4                     # of crews of two or more, one man keeps watch by the hole
 HOLE_WORK_SHARE = 0.35                  # the last man in turns back to widen the hole before he goes to work
@@ -82,26 +91,42 @@ LEAD_M = 6.0                            # a man leaving comes at the gap straigh
                                         # turn a right angle, and would cross the fence beside the gap
 TURN_BACK_M = 6.5                       # how far in a man walks before he turns back to the hole
 OUTSIDE_M = 14.0                        # how far out a man who leaves goes before he is out of the scene
-ENTRY_S = 36.0                          # everyone steps in before the drone's 40 s take-off is over
+ENTRY_S = 36.0                          # everyone steps in this soon after the crew reaches the fence
+ARRIVE_EARLY_SHARE = 0.35               # of crews, already at the fence when the patrol starts
+ARRIVE_S = (20.0, 200.0)                # when the others reach it: the last man is in by 236 s, well inside the patrol
+ARRIVE_STREAM = 0xA221                  # the arrival's own draw, apart from each man's [THEFT_SEED_STREAM, seed, n]
+SETTLE_S = 1.0                          # a man walking up stops this long before the crew's arrival, whatever his take
 MATE_GAP_S = (1.5, 4.0)
+CREW_STYLES = {"tight": 0.4, "loose": 0.4, "split": 0.2}   # crews of two or more: together, spread out, two groups
+STYLE_STREAM = 0x57E1                   # the style's own draws, apart from each man's stream and the arrival's
+LOOSE_GAP_S = (3.0, 8.0)                # a loose crew's men follow each other through further apart
+LOOSE_SIDE_M = (2.0, 5.0)               # how much further to the side each man of a loose crew stops than the last
+LOOSE_LOOKOUT_M = (12.0, 25.0)          # a loose crew's lookout watches from further in than LOOKOUT_M
+SPLIT_LATER_S = (30.0, 120.0)           # how long after the crew the second group of a split crew reaches the fence
 SPACING_M = 0.9                         # two men getting in never come nearer than this, hips to hips
 SPACING_WAIT_S = 1.0                    # how much longer a follower waits each time he would come too near
 PLAN_TRIES = 16                         # tries at settling a crew apart before the plan is taken as it is
 PATROL_S = 390.0                        # the patrol's length, over which the crew is planned apart
 WALKING = ("getting in", "arrival", "moving on", "lookout")   # stages in which a man walks somewhere
+WAIT_STEP_M = 1.0                       # a man who would wait too near another waits a step further back
 STOP_SIDE_M = 1.0                       # each follower stops this much further to one side than the man before him
 SPOT_GAP_M = 0.7                        # a worker's hips from the table's edge
 SPOT_EDGE_M = 1.5                       # no spot this near a table's end
 NEXT_SPOT_M = (7.0, 16.0)               # how far a worker moves on to the next stretch of cable
 NEAR_ROWS = 2                           # a crew mate who stays near works within this many rows of the first man
 NEAR_SHARE = 0.6
+LOOKOUT_M = (9.0, 13.0)                 # how far inside the hole a lookout stands, a few metres to one side
 CUT_CABLE_S = (20.0, 60.0)
 PULL_M = (5.0, 14.0)
 CARRY_AFTER_S = (300.0, 560.0)          # when a worker shoulders the coil; past the patrol means he never does
-PACE = (0.9, 1.1)
+PACE = (0.75, 1.25)                     # each man's own speed through every move: he walks at 1.0 to 1.8 m/s
 GAITS = {"walk": 0.5, "walk_wary": 0.3, "sneak": 0.2}
-HEAR_M = (22.0, 32.0)                   # how near the drone is, through the air, when a thief hears it and reacts:
-                                        # 12 to 26 m across the ground under a drone at the 20 m patrol height
+HEAR_M = (20.0, 40.0)                   # a man's own base distance to the drone, through the air, when he hears it and
+                                        # reacts, before the weather: ears and habit differ a lot from man to man
+HEAR_WIND_SCALE = {"none": 1.25, "light": 1.0, "strong": 0.65}   # wind masks the sound: still air lets it carry
+HEAR_NIGHT_SCALE = 1.2                  # the night's background is quieter than the day's
+HEAR_DOWNWIND_GAIN = 0.25               # sound carries further downwind: x1.25 straight downwind, x0.75 straight upwind
+HEAR_CAP_M = 60.0                       # nobody hears a drone from further, however still the night
 EAR_M = 1.6                             # a standing man's ears above the ground
 REACT_DELAY_S = (0.3, 2.0)              # from hearing the drone to his reaction
 SEEN_PX = 6.0                           # pixels across his narrow side for a picture to show him: the seed checks' bar
@@ -109,6 +134,8 @@ QUIET_M = 10.0                          # the drone counts as gone once it is th
 QUIET_S = (8.0, 30.0)                   # a hidden man waits this long after the drone has gone before he gets up
 REFREEZE_SHARE = 0.7                    # a frozen man who still hears it freezes again
 REACTIONS = {"work_on": 0.2, "freeze": 0.4, "hide": 0.25, "run": 0.15}
+UNSEEN_RUN_SHARE = 0.5                  # of the runners, those who flee on hearing the drone before any picture of them
+BOLT_STREAM = 0xB017                    # sub-stream tag for who bolts unseen, apart from every per-man stream
 GROUNDED = ("docked", "landed")        # flight phases in which the drone sits in its dock and nobody reacts to it
 BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits
 VIEW_MARGIN_M = 1.6                     # a body this near the edge of a picture is posed for it
@@ -133,6 +160,9 @@ _BACK_TO = {
     "look_around": ("look_around_in",),
     "crouch_watch": ("stand_to_crouch", "crouch_watch_in"),
 }
+# The loops a man walks forward along a path in: his freeze or drop from one keeps to that path, its turns and its end,
+# instead of carrying him straight on through whatever stands ahead.
+ON_A_PATH = ("walk", "walk_wary", "sneak", "carry")
 
 
 @dataclass
@@ -161,7 +191,10 @@ class Thief:
     react_delay_s: float
     reaction: str
     quiet_s: float
+    bolts_unseen: bool = False          # a runner who flees on hearing the drone even if no picture has shown him
     wait_s: float = 0.0                 # how long he waits outside before following the man ahead through
+    late_s: float = 0.0                 # how long after the crew's arrival he reaches his place outside the fence
+    side_m: float = 0.0                 # how far to one side of the hole he stops once through
     spots: List[Spot] = field(default_factory=list)
     cut_s: List[float] = field(default_factory=list)
     carry_after_s: float = 1e9
@@ -182,6 +215,9 @@ class Story:
     open_deg: float
     thieves: List[Thief]
     cycles: int = 3                     # the first man's cutting cycles at the fence
+    arrive_s: float = 0.0               # when the crew is at the fence and the first man starts cutting
+    style: str = "tight"                # "tight", "loose" or "split": how the crew keeps together
+    second_s: float = 0.0               # when a split crew's second group reaches the fence
 
     @property
     def hole(self) -> np.ndarray:
@@ -192,6 +228,20 @@ class Story:
     def inward(self) -> np.ndarray:
         """The unit ground direction into the park through the opening."""
         return np.array(self.opening.inward)
+
+    @property
+    def first_group(self) -> int:
+        """How many men come at the crew's arrival: all of them, or the first half of a split crew."""
+        return _first_group(self.style, len(self.thieves))
+
+    def walks_up(self, n: int) -> bool:
+        """Whether man n walks up to the fence from out of the scene: every man of a crew that comes later, and the
+        second group of a split crew."""
+        return self.arrive_s > 0.0 or n >= self.first_group
+
+    def due_s(self, n: int) -> float:
+        """When man n's group reaches the fence."""
+        return self.second_s if n >= self.first_group else self.arrive_s
 
 
 def has_theft(seed: int) -> bool:
@@ -206,6 +256,38 @@ def _pick(rng: np.random.Generator, weights: Dict[Any, float]) -> Any:
     return keys[int(rng.choice(len(keys), p=share / share.sum()))]
 
 
+def arrival(seed: int) -> float:
+    """When a seed's crew reaches the fence: at the start for ARRIVE_EARLY_SHARE of crews, else any time in ARRIVE_S."""
+    rng = np.random.default_rng([THEFT_SEED_STREAM, int(seed), ARRIVE_STREAM])
+    return 0.0 if rng.random() < ARRIVE_EARLY_SHARE else float(rng.uniform(*ARRIVE_S))
+
+
+def crew_style(seed: int, crew: int) -> Tuple[str, float]:
+    """How a seed's crew keeps together, and when a split crew's second group reaches the fence: no later than the end
+    of ARRIVE_S, and a crew left less than SPLIT_LATER_S[0] between its two groups by that comes in loose instead."""
+    if crew < 2:
+        return "tight", 0.0
+    rng = np.random.default_rng([THEFT_SEED_STREAM, int(seed), STYLE_STREAM])
+    style = _pick(rng, CREW_STYLES)
+    arrive_s = arrival(seed)
+    second_s = min(arrive_s + float(rng.uniform(*SPLIT_LATER_S)), ARRIVE_S[1])
+    if style != "split":
+        return style, 0.0
+    if second_s - arrive_s < SPLIT_LATER_S[0]:
+        return "loose", 0.0
+    return "split", second_s
+
+
+def _first_group(style: str, crew: int) -> int:
+    """How many of a crew come at its arrival: all of them, or the first half, rounded up, of a split crew."""
+    return (crew + 1) // 2 if style == "split" else crew
+
+
+def _bolts(seed: int, n: int) -> bool:
+    """Whether man n of a seed's crew, if a runner, flees on hearing the drone before any picture shows him."""
+    return bool(np.random.default_rng([THEFT_SEED_STREAM, int(seed), BOLT_STREAM, n]).random() < UNSEEN_RUN_SHARE)
+
+
 def write(seed: int, site: Site) -> Optional[Story]:
     """The theft a seed writes on its park, or None for the three seeds in five without one."""
     rng = np.random.default_rng([THEFT_SEED_STREAM, int(seed)])
@@ -218,8 +300,11 @@ def write(seed: int, site: Site) -> Optional[Story]:
     if opening.kind == "gate":
         # The crew walks through the middle of the leaf that swings in.
         along = hinge * opening.half_width / 2.0
+    style, second_s = crew_style(seed, crew)
     story = Story(way, opening, along, width, hinge,
-                  float(rng.uniform(*(FLAP_OPEN_DEG if opening.kind == "panel" else GATE_OPEN_DEG))), [])
+                  float(rng.uniform(*(FLAP_OPEN_DEG if opening.kind == "panel" else GATE_OPEN_DEG))), [],
+                  arrive_s=arrival(seed), style=style, second_s=second_s)
+    first = _first_group(style, crew)
     hole, inward = story.hole, story.inward
     reachable = site.distances(hole + inward * INSIDE_M)[0]
     tables = [k for k in range(len(site.tables)) if _spots_of(site, k, reachable)]
@@ -237,28 +322,48 @@ def write(seed: int, site: Site) -> Optional[Story]:
         start = at_fence - inward * FENCE_GAP_M
         if n:
             start = start - inward * rng.uniform(2.0, 4.0) + np.array(opening.along) * side * rng.uniform(0.8, 1.8)
+            # Men waiting outside never crouch within SPACING_M of the walk of one who is to go through before them.
+            while any(_segment_gap(start, mate.start, hole - inward * 2.5) < SPACING_M for mate in story.thieves):
+                start = start - inward * WAIT_STEP_M
         thief = Thief(role=role, dress=dress, scale=float(cat.root_scale[cat.builds.index(dress["build"])]),
                       mirrored=bool(rng.random() < 0.5), pace=float(rng.uniform(*PACE)),
                       start=(float(start[0]), float(start[1])), yaw=heading_to(inward),
                       gait="sneak" if way == "forest" and rng.random() < 0.5 else _pick(rng, GAITS),
                       hear_m=float(rng.uniform(*HEAR_M)), react_delay_s=float(rng.uniform(*REACT_DELAY_S)),
                       reaction=_pick(rng, REACTIONS), quiet_s=float(rng.uniform(*QUIET_S)))
+        if n:
+            thief.side_m = STOP_SIDE_M * n
+            if style == "loose":
+                drawn = np.random.default_rng([THEFT_SEED_STREAM, int(seed), STYLE_STREAM, n]).uniform(*LOOSE_SIDE_M)
+                thief.side_m = _clear_side(site, story, n, story.thieves[-1].side_m + float(drawn), thief.side_m)
         if role == "lookout":
-            thief.lookout = _lookout_spot(rng, site, hole, inward, reachable)
+            thief.lookout = _lookout_spot(rng, site, hole, inward, reachable,
+                                          LOOSE_LOOKOUT_M if style == "loose" else LOOKOUT_M)
             thief.watch = "look_around" if rng.random() < 0.5 else "crouch_watch"
         else:
             table = first_table
             if n > 0:
-                table = _near_table(rng, site, tables, first_table) if rng.random() < NEAR_SHARE else int(rng.choice(tables))
+                # A loose crew's men, and a split crew's second group, work anywhere in the park.
+                near = NEAR_SHARE if style != "loose" and n < first else 0.0
+                table = _near_table(rng, site, tables, first_table) if rng.random() < near else int(rng.choice(tables))
             thief.spots = _spots(rng, site, table, tables, reachable, hole + inward * INSIDE_M)
             thief.cut_s = [float(rng.uniform(*CUT_CABLE_S)) for _ in thief.spots]
-            thief.carry_after_s = float(rng.uniform(*CARRY_AFTER_S))
+            thief.carry_after_s = float(rng.uniform(*CARRY_AFTER_S)) + story.arrive_s
             # Only the last man in: anyone still to come through would find him in the hole.
             if n == crew - 1 and rng.random() < HOLE_WORK_SHARE and _turn_back_clear(site, story):
                 thief.hole_work_s = float(rng.uniform(*HOLE_WORK_S))
+        thief.bolts_unseen = _bolts(seed, n)
         story.thieves.append(thief)
     _schedule(rng, story)
     return story
+
+
+def _segment_gap(point: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float:
+    """How far a point is from the straight walk between two others."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    run = b - a
+    along = min(1.0, max(0.0, dot(np.asarray(point, dtype=float) - a, run) / max(dot(run, run), 1e-9)))
+    return norm(np.asarray(point, dtype=float) - (a + run * along))
 
 
 def _way_in(rng: np.random.Generator, site: Site, way: str) -> Tuple[Opening, float, float]:
@@ -363,11 +468,11 @@ def _near_table(rng: np.random.Generator, site: Site, tables: List[int], first: 
 
 
 def _lookout_spot(rng: np.random.Generator, site: Site, hole: np.ndarray, inward: np.ndarray,
-                  reachable: np.ndarray) -> Tuple[float, float]:
-    """Where a lookout stands: a few metres inside the hole, a little to one side, on free ground."""
+                  reachable: np.ndarray, depth: Tuple[float, float]) -> Tuple[float, float]:
+    """Where a lookout stands: depth metres inside the hole, a little to one side, on free ground."""
     along = np.array([-inward[1], inward[0]])
     for _ in range(40):
-        xy = hole + inward * rng.uniform(9.0, 13.0) + along * rng.uniform(-3.0, 3.0)
+        xy = hole + inward * rng.uniform(*depth) + along * rng.uniform(-3.0, 3.0)
         i, j = site.cell(xy)
         if site.free(xy) and np.isfinite(reachable[i * site.shape[1] + j]):
             return float(xy[0]), float(xy[1])
@@ -375,23 +480,69 @@ def _lookout_spot(rng: np.random.Generator, site: Site, hole: np.ndarray, inward
     return float(xy[0]), float(xy[1])
 
 
+def _clear_side(site: Site, story: Story, slot: int, side_m: float, least: float) -> float:
+    """How far to the side a follower stops: side_m, or half a metre less at a time down to least until the stop is
+    free ground he can walk to straight from just inside the hole."""
+    while side_m > least:
+        stop = _stop(story, slot, side_m)
+        if site.free(stop) and site.clear_line(story.hole + story.inward * 2.0, stop):
+            break
+        side_m -= 0.5
+    return max(side_m, least)
+
+
+def _stop(story: Story, slot: int, side_m: float) -> np.ndarray:
+    """Where a follower stops once through: a step further in than the man before, side_m to the side away from the
+    flap or the open leaf."""
+    away = -np.array(story.opening.along) * story.hinge
+    return story.hole + story.inward * (INSIDE_M + 1.0 * (slot - 1)) + away * side_m
+
+
+def _stop_spot(site: Site, story: Story, slot: int) -> np.ndarray:
+    """Where follower number slot stops inside the hole: his own stop, side_m to the side, or the nearest free ground
+    to it if it falls on a table or a tree."""
+    stop = _stop(story, slot, story.thieves[slot].side_m)
+    if site.free(stop):
+        return stop
+    nearest = site.nearest_free(stop)
+    return stop if nearest is None else nearest
+
+
 def _schedule(rng: np.random.Generator, story: Story) -> None:
     """How many cycles the first man cuts, and how long each man after him waits outside, so they step through one
-    after another and all are in by ENTRY_S."""
+    after another and all are in within ENTRY_S of their group's arrival. A split crew's second group finds the way in
+    open: each of them reaches his place at its arrival and they go through one after another."""
     lib = library()
-    cycle = lib.blocks["cut_fence.0"]["frames"] / lib.fps
+    lead = story.thieves[0]
+    cycle = lib.blocks["cut_fence.0"]["frames"] / lib.fps / lead.pace
     stand = {"hub": "stand"}
-    lead_in = lib.seconds(lib.kinds(stand)["cut_fence_in"][0])
-    budget = ENTRY_S - lead_in - 4.0 - (len(story.thieves) - 1) * MATE_GAP_S[1]
+    lead_in = lib.seconds(lib.kinds(stand)["cut_fence_in"][0]) / lead.pace
+    first = story.first_group
+    gaps = LOOSE_GAP_S if story.style == "loose" else MATE_GAP_S
+    budget = ENTRY_S - lead_in - 4.0 - (first - 1) * gaps[1]
     story.cycles = int(min(rng.integers(3, 9), max(2, int(budget / cycle))))
-    through = lead_in + story.cycles * cycle + 2.0
+    # A crew too big for its gaps even at the fewest cycles follows at the widest gaps that still fit.
+    widest = (ENTRY_S - lead_in - 4.0 - story.cycles * cycle) / max(1, first - 1)
+    through = lead_in + story.cycles * cycle + 2.0 / lead.pace
+    for n, thief in enumerate(story.thieves[1:], 1):
+        to_hole = _to_hole_s(thief, story)
+        if n >= first:
+            thief.late_s = story.second_s - story.arrive_s
+            if n == first:
+                through = thief.late_s + to_hole
+        through += min(float(rng.uniform(*gaps)), widest)
+        thief.wait_s = max(0.5, through - to_hole)
+
+
+def _to_hole_s(thief: Thief, story: Story) -> float:
+    """How long a follower takes, once his wait is over, to get up and walk to the hole at his own pace."""
+    lib = library()
+    stand = {"hub": "stand"}
     getting_up = (lib.seconds(lib.kinds(stand)["stand_to_crouch"][0]) +
                   lib.seconds(lib.kinds({"hub": "crouch"})["crouch_to_stand"][0]) +
                   lib.seconds(lib.kinds(stand)["stand_to_walk"][0]))
-    for thief in story.thieves[1:]:
-        through += float(rng.uniform(*MATE_GAP_S))
-        walk = max(0.0, norm(np.array(thief.start) - story.hole) - 1.8) / 1.38
-        thief.wait_s = max(0.5, through - getting_up - walk)
+    walk = max(0.0, norm(np.array(thief.start) - story.hole) - 1.8) / 1.38
+    return (getting_up + walk) / thief.pace
 
 
 # ---------------------------------------------------------------------------------------------------- the scripts
@@ -435,22 +586,49 @@ def _leave(actor: Actor, story: Story, site: Site, first: str, stage: str) -> It
     yield Step("gone", stage="gone")
 
 
-def _enter(actor: Actor, thief: Thief, story: Story, slot: int) -> Iterator[Step]:
+def _approach_from(thief: Thief, story: Story) -> np.ndarray:
+    """Where a man who comes later walks up from: straight out from his place, OUTSIDE_M further from the fence,
+    where a man who leaves is out of the scene."""
+    return np.array(thief.start) - story.inward * OUTSIDE_M
+
+
+def _approach(actor: Actor, thief: Thief, story: Story) -> Iterator[Step]:
+    """Walk up to his place outside the fence: out of the scene until he sets off, then straight in at a plain walk,
+    standing there by the crew's arrival, or late_s after it. At the slowest pace the walk takes about 15 s, so even a
+    crew due at the start of ARRIVE_S sets off from out of the scene."""
+    due = story.arrive_s + thief.late_s
+    # The walk timed on a copy of him, so he sets off in time to stop at his place SETTLE_S before he is due.
+    dry = Actor(actor.lib, tuple(actor.pos), actor.yaw, scale=actor.scale, mirrored=actor.mirrored, pace=actor.pace)
+    dry.context = {"hub": "stand"}
+    dry.script = itertools.chain(_walk_route(dry, Route([dry.pos, thief.start]), "walk", "approach"), [Step("gone")])
+    while not dry.gone:
+        dry.run_to(len(dry.frames) + 30)
+    walk_s = next(k for k, f in enumerate(dry.frames) if f.index == GONE) / dry.lib.fps
+    if due - walk_s - SETTLE_S > 0.0:
+        yield Step("away", hold=due - walk_s - SETTLE_S, stage="away")
+    yield from _walk_route(actor, Route([actor.pos, thief.start]), "walk", "approach")
+    if due - actor.time_s > 0.0:
+        yield Step("hold", hold=due - actor.time_s, stage="approach")
+
+
+def _enter(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> Iterator[Step]:
     """Get in: the first man cuts the hole or the gate's lock and steps through; the others wait crouched, follow him
-    through and stop a little to one side of each other."""
+    through and stop to one side of each other. A crew that comes later, or a split crew's second group, walks up to the
+    fence first."""
     hole, inward = story.hole, story.inward
+    if story.walks_up(slot):
+        yield from _approach(actor, thief, story)
     if slot == 0:
         yield Step("cut_fence_in", steer=heading_to(inward), stage="at the fence")
         yield Step("loop", cycles=story.cycles, stage="cutting the fence")
         yield Step("cut_fence_to_walk", steer=Lane(hole - inward * 2.0, hole + inward * INSIDE_M), stage="getting in")
         return
     yield Step("stand_to_crouch", stage="at the fence")
-    yield Step("hold", hold=thief.wait_s, stage="at the fence")
+    # One who reached his place late waits that much less, so he still follows when he was due to.
+    yield Step("hold", hold=max(0.5, thief.wait_s - thief.late_s), stage="at the fence")
     # Straight through and two metres on before turning, then a stop on the side away from the flap or the open leaf,
     # each follower a step further in and further over than the one before.
-    away = -np.array(story.opening.along) * story.hinge
-    stop = hole + inward * (INSIDE_M + 1.0 * (slot - 1)) + away * STOP_SIDE_M * slot
-    route = Route([actor.pos, hole - inward * 2.5, hole + inward * 2.0, stop])
+    route = Route([actor.pos, hole - inward * 2.5, hole + inward * 2.0, _stop_spot(site, story, slot)])
     if story.way == "forest" and thief.gait == "sneak":
         yield Step("crouch_to_sneak", steer=route, stage="getting in")
         yield Step("loop", cycles=None, steer=route, then="sneak_to_crouch", stage="getting in")
@@ -466,7 +644,7 @@ def _enter(actor: Actor, thief: Thief, story: Story, slot: int) -> Iterator[Step
 def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int, seen: Callable[[], bool]) -> Iterator[Step]:
     """A worker's whole patrol: in, perhaps back to widen the hole, then cutting and pulling cable along the rows until
     he shoulders a coil and carries it out, which he does only once the drone's camera has seen him."""
-    yield from _enter(actor, thief, story, slot)
+    yield from _enter(actor, thief, story, site, slot)
     if thief.hole_work_s > 0.0:
         hole, inward = story.hole, story.inward
         turn = hole + inward * TURN_BACK_M + np.array(story.opening.along) * 1.5
@@ -507,7 +685,7 @@ def _worker(actor: Actor, thief: Thief, story: Story, site: Site, slot: int, see
 
 def _lookout(actor: Actor, thief: Thief, story: Story, site: Site, slot: int) -> Iterator[Step]:
     """A lookout's whole patrol: in behind the others, then watching from near the hole, standing or crouched."""
-    yield from _enter(actor, thief, story, slot)
+    yield from _enter(actor, thief, story, site, slot)
     yield from _walk_to(actor, site, thief.lookout, "walk", "lookout")
     if thief.watch == "look_around":
         yield Step("look_around_in", steer=heading_to(-story.inward), stage="lookout")
@@ -548,6 +726,7 @@ class Theft:
     props: List[Any] = field(default_factory=list)
     heights: Dict[Tuple[int, int], float] = field(default_factory=dict)   # ground height per metre, read as needed
     looked: Dict[str, Any] = field(default_factory=dict)                  # the last picture read from each camera
+    weather: Tuple[str, bool] = ("light", False)   # the seed's wind strength and whether it is night
 
 
 def cast(seed: int, story: Story, site: Site) -> List[Man]:
@@ -564,7 +743,8 @@ def cast(seed: int, story: Story, site: Site) -> List[Man]:
 def _actor(story: Story, site: Site, n: int, seen: Callable[[], bool] = lambda: False) -> Actor:
     """A fresh track for man n of a story, nothing written yet; seen says whether the drone's camera has seen him."""
     thief = story.thieves[n]
-    actor = Actor(library(), thief.start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
+    start = tuple(_approach_from(thief, story)) if story.walks_up(n) else thief.start
+    actor = Actor(library(), start, thief.yaw, scale=thief.scale, mirrored=thief.mirrored, pace=thief.pace)
     actor.context = {"hub": "stand"}
     actor.script = (_lookout(actor, thief, story, site, n) if thief.role == "lookout"
                     else _worker(actor, thief, story, site, n, seen))
@@ -573,23 +753,29 @@ def _actor(story: Story, site: Site, n: int, seen: Callable[[], bool] = lambda: 
 
 def _plan_apart(story: Story, site: Site) -> None:
     """Settle the crew's waits and the order of their stretches on dry copies, played over the whole patrol with no
-    drone, until no two men come within SPACING_M of each other: a follower who would reach the hole on another man's
-    heels waits longer outside, and a worker who would walk into another takes his stretches in another order. The
-    real men are built afterwards and never played ahead, so they react to the drone the moment it comes."""
-    for _ in range(PLAN_TRIES):
+    drone, until no two men come within SPACING_M of each other: a man walking up who would catch the man ahead sets off
+    later, a follower who would reach the hole on another man's heels waits longer outside, and a worker who would walk
+    into another takes his stretches in another order. The real men are built afterwards and never played ahead, so
+    they react to the drone the moment it comes."""
+    for attempt in range(PLAN_TRIES):
         clash = _first_clash([_actor(story, site, n) for n in range(len(story.thieves))])
         if clash is None:
             return
         i, j, t, walking = clash
         movable = [k for k in (j, i) if story.thieves[k].role == "worker" and len(story.thieves[k].spots) > 1]
         lead, behind = story.thieves[i], story.thieves[j]
-        if t < ENTRY_S + 12.0 or not movable:
+        if t < story.arrive_s + behind.late_s:
+            behind.late_s += SPACING_WAIT_S
+        elif t < story.due_s(j) + ENTRY_S + 12.0 or not movable:
             behind.wait_s += SPACING_WAIT_S
         elif walking and (behind.gait, behind.pace) != (lead.gait, lead.pace):
             # One would catch up with the other on the way: he falls in behind at the same walk, as a crew does.
+            due = behind.wait_s + _to_hole_s(behind, story)
             behind.gait, behind.pace = lead.gait, lead.pace
+            # His wait takes up the change of pace, so he still steps through when he was due.
+            behind.wait_s = max(0.5, due - _to_hole_s(behind, story))
         else:
-            thief = story.thieves[movable[0]]
+            thief = story.thieves[movable[attempt % len(movable)]]
             thief.spots = thief.spots[1:] + thief.spots[:1]
             thief.cut_s = thief.cut_s[1:] + thief.cut_s[:1]
 
@@ -628,17 +814,34 @@ def reset(env: Any, ep: SolarEpisode) -> None:
     if story is None:
         return
     men = cast(ep.seed, story, site)
-    ep.theft = Theft(story, site, men)
-    # Every man steps in by ENTRY_S, so a patrol that ends sooner still answers for the whole crew.
+    ep.theft = Theft(story, site, men, weather=(wind.strength(ep.seed), wind.is_night(ep.seed)))
+    # Every man steps in within ENTRY_S of his group's arrival, by 236 s at the latest, so a patrol that flies its full
+    # time can answer for all of them; one that ends sooner still answers for the whole crew.
     ep.outcome.threats = len(men)
     for man in men:
         frame = man.actor.at(0.0)
+        if frame.index == GONE:
+            # A man who comes later waits out of the scene until he sets off.
+            man.body = intruders.Intruder(man.thief.dress, _pose_args(lib, frame, AWAY_Z), env.CLIENT)
+            continue
         ground = _ground(env, ep, frame.x, frame.y)
         man.body = intruders.Intruder(man.thief.dress, _pose_args(lib, frame, ground), env.CLIENT)
         man.posed = (frame.x, frame.y, ground + 0.9)
         man.pose_key = (frame.index, frame.mirrored, frame.x, frame.y, frame.yaw)
     # Timed on a copy of the first man: his own track is never played ahead, or a reaction would wait for its end.
     ep.theft.props = [_opening_prop(env, ep, story, _actor(story, site, 0))]
+
+
+def hearing_m(base_m: float, strength: str, night: bool, blowing: np.ndarray, to_man: np.ndarray) -> float:
+    """How far a man with base hearing distance base_m hears the drone in the seed's weather: the base scaled by the
+    wind's strength, by the night, and by the wind's direction (blowing is the unit ground direction it blows toward,
+    to_man the vector from the drone to his ears), never past HEAR_CAP_M."""
+    reach = base_m * HEAR_WIND_SCALE[strength] * (HEAR_NIGHT_SCALE if night else 1.0)
+    flat = (float(to_man[0]), float(to_man[1]))
+    gap, push = norm(flat), norm(blowing)
+    if strength != "none" and gap > 0.0 and push > 0.0:
+        reach *= 1.0 + HEAR_DOWNWIND_GAIN * dot(blowing, flat) / (gap * push)
+    return min(reach, HEAR_CAP_M)
 
 
 def advance(env: Any, ep: SolarEpisode) -> None:
@@ -653,6 +856,7 @@ def advance(env: Any, ep: SolarEpisode) -> None:
     # The park rises 39 m: over its low end a drone flying out of the dock is below the dock's own height, so the
     # dock's phase says whether it flies, not its height.
     airborne = ep.phase not in GROUNDED
+    blowing = wind.blowing_toward(env)
     for n, man in enumerate(theft.men):
         frame = man.actor.at(t)
         if frame.index == GONE:
@@ -665,7 +869,8 @@ def advance(env: Any, ep: SolarEpisode) -> None:
             if spot not in theft.heights:
                 theft.heights[spot] = _ground(env, ep, float(spot[0]), float(spot[1]))
             ears = np.array([frame.x, frame.y, theft.heights[spot] + EAR_M])
-            _notice(man, theft, t, norm(drone - ears), airborne, n in shown)
+            reach = hearing_m(man.thief.hear_m, *theft.weather, blowing, ears - drone)
+            _notice(man, theft, t, norm(drone - ears), reach, airborne, n in shown)
 
 
 def show(env: Any, ep: SolarEpisode, view: Any) -> None:
@@ -726,6 +931,20 @@ def bodies(ep: SolarEpisode) -> Dict[int, int]:
     return {int(uid): n for n, man in enumerate(ep.theft.men) if man.body for uid in man.body.bodies}
 
 
+def held_bodies(ep: SolarEpisode) -> set:
+    """The drawn bodies of what the thieves hold in their hands, the bolt cutters, never part of the man himself."""
+    if ep.theft is None:
+        return set()
+    return {int(uid) for man in ep.theft.men if man.body for uid in man.body.held}
+
+
+def person_bodies(ep: SolarEpisode) -> Dict[int, int]:
+    """Every drawn body of the thieves themselves, mapped to the thief's index in the crew: what he is and wears,
+    his clothes, mask, hat, gloves, shoes and the pack or coil on his back, never what he holds in his hand."""
+    held = held_bodies(ep)
+    return {uid: n for uid, n in bodies(ep).items() if uid not in held}
+
+
 def inside(ep: SolarEpisode, thief: int, step: int) -> bool:
     """Whether a thief stood inside the fence at a control step up to the current one: the test of a threat."""
     if ep.theft is None or not 0 <= thief < len(ep.theft.men):
@@ -770,15 +989,15 @@ def _shown(ep: SolarEpisode, theft: Theft) -> set:
     return shown
 
 
-def _notice(man: Man, theft: Theft, t: float, distance: float, airborne: bool, seen: bool) -> None:
+def _notice(man: Man, theft: Theft, t: float, distance: float, reach: float, airborne: bool, seen: bool) -> None:
     """Note the first picture that shows a man inside, and let him react after his own delay once he hears the drone
-    fly within his own distance; a hidden man counts how long the drone has been gone, which is once it is out of
-    earshot."""
+    fly within his reach, the distance he hears it from in this weather; a hidden man counts how long the drone has
+    been gone, which is once it is out of earshot."""
     thief = man.thief
     if seen and man.seen_at is None:
         man.seen_at = t
-    man.about = airborne and distance <= thief.hear_m + QUIET_M
-    man.hears = airborne and distance <= thief.hear_m
+    man.about = airborne and distance <= reach + QUIET_M
+    man.hears = airborne and distance <= reach
     if man.reacting == "hide":
         if man.about:
             man.quiet_since = None
@@ -807,12 +1026,14 @@ def _react(actor: Actor, man: Man, theft: Theft, not_before: float) -> Optional[
         actor.interrupt(lambda a: _react(a, man, theft, not_before))
         return None
     kind = actor.lib.blocks[actor.context["loop"]]["kind"]
-    # Nobody leaves before the camera has seen him: a runner it has not seen yet lies flat and waits for it.
-    reaction = "hide" if man.thief.reaction == "run" and man.seen_at is None else man.thief.reaction
+    # A runner the camera has not seen yet lies flat and waits for it, unless he is one who flees on hearing alone.
+    unseen = man.seen_at is None and not man.thief.bolts_unseen
+    reaction = "hide" if man.thief.reaction == "run" and unseen else man.thief.reaction
     block = _block(actor, reaction, kind)
     if block is not None:
         man.reacting = reaction
-        return _reaction(actor, man, theft, block, kind, actor.take_rest())
+        path = actor.steer if kind in ON_A_PATH else None
+        return _reaction(actor, man, theft, block, kind, path, actor.take_rest())
     if man.noticed_at is not None:
         # Nothing in this loop for his way of reacting: he carries on and reacts at the next seam that allows it.
         actor.interrupt(lambda a: _react(a, man, theft, not_before))
@@ -825,13 +1046,14 @@ def _block(actor: Actor, reaction: str, kind: str) -> Optional[str]:
     return next((pattern.format(kind) for pattern in _REACT[reaction] if pattern.format(kind) in options), None)
 
 
-def _reaction(actor: Actor, man: Man, theft: Theft, block: str, kind: str, rest: Iterator[Step]) -> Iterator[Step]:
+def _reaction(actor: Actor, man: Man, theft: Theft, block: str, kind: str, path: Any,
+              rest: Iterator[Step]) -> Iterator[Step]:
     """Play one reaction block and what follows from it: back to what he was doing, flat until the drone has been gone a
-    while, or out at a run. A runner lying flat because the camera has not seen him yet freezes first, and runs once
-    it has seen him while he still hears the drone: from where he stands if that is during the freeze, else from
-    lying flat."""
+    while, or out at a run. A runner who bolts runs at once. A runner lying flat because the camera has not seen him
+    yet freezes first, and runs once it has seen him while he still hears the drone: from where he stands if that is
+    during the freeze, else from lying flat. A freeze or a drop from a walk keeps to the path he was on."""
     if man.reacting == "freeze":
-        yield Step(block, stage="reaction: freeze")
+        yield Step(block, steer=path, stage="reaction: freeze")
         man.reacting = ""
         # Still hearing it, he may freeze again at the next seam.
         if man.rng.random() < REFREEZE_SHARE:
@@ -845,13 +1067,13 @@ def _reaction(actor: Actor, man: Man, theft: Theft, block: str, kind: str, rest:
     runner = man.thief.reaction == "run"
     freeze = _block(actor, "freeze", kind) if runner else None
     if freeze is not None:
-        yield Step(freeze, stage="reaction: freeze")
+        yield Step(freeze, steer=path, stage="reaction: freeze")
         sprint = _block(actor, "run", kind)
         if sprint is not None and man.seen_at is not None and man.hears:
             man.reacting = "run"
             yield from _leave(actor, theft.story, theft.site, sprint, "reaction: run")
             return
-    yield Step(block, stage="reaction: hide")
+    yield Step(block, steer=path, stage="reaction: hide")
     man.quiet_since = None
     # With no way up but a sprint, a hidden man stays flat: he is still inside, and still a threat.
     can_stand = "prone_to_stand" in prone and kind in _BACK_TO
@@ -911,7 +1133,7 @@ def _in_view(view: Any, point: Sequence[float]) -> bool:
 def _opening_prop(env: Any, ep: SolarEpisode, story: Story, cutter: Actor) -> Any:
     """The cut fence panel or the forced gate, timed to the first man's cutting."""
     fps = cutter.lib.fps
-    frames = [cutter.at(k / fps) for k in range(int(ENTRY_S * fps))]
+    frames = [cutter.at(k / fps) for k in range(int((story.arrive_s + ENTRY_S) * fps))]
     cut_from = next((k for k, f in enumerate(frames) if f.stage == "cutting the fence"), 0) / fps
     through = next((k for k, f in enumerate(frames) if f.stage == "getting in"), len(frames)) / fps
     if story.opening.kind == "gate":

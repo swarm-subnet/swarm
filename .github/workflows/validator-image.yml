@@ -19,7 +19,8 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/swarm-validator
+  # Named after the repository, so a copy of it can never publish over the operators' image.
+  IMAGE: ghcr.io/${{ github.repository }}-validator
 
 jobs:
   publish:
@@ -60,6 +61,11 @@ jobs:
           [[ -n "$version" ]] || { echo "could not read __version__"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Version: $version"
+
+      # The test image this commit's own Tests run built, not whatever :base points at now.
+      - name: Name the base image
+        id: base
+        run: echo "image=ghcr.io/${{ github.repository }}:base-$(bash .docker/image_key.sh base)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -125,8 +131,9 @@ jobs:
           load: true
           build-args: |
             SWARM_VERSION=${{ steps.version.outputs.version }}
+            BASE_IMAGE=${{ steps.base.outputs.image }}
           tags: swarm-validator:candidate
-          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
 
       # The validator tests run inside the image itself, as a plain uid with no wallet, so
       # what gets published is what passed and not merely what built. The checkout is
@@ -155,5 +162,6 @@ jobs:
           push: true
           build-args: |
             SWARM_VERSION=${{ steps.version.outputs.version }}
+            BASE_IMAGE=${{ steps.base.outputs.image }}
           tags: ${{ steps.plan.outputs.tags }}
-          cache-from: type=registry,ref=ghcr.io/swarm-subnet/swarm-validator:buildcache
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache

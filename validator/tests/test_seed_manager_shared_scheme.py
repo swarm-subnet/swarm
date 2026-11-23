@@ -33,7 +33,7 @@ SENTINEL = "cf_solar_patrol"
 SENTINEL_SEED_COUNT = 2000
 OTHER_FAMILY = "cf_search_and_rescue"
 # Below this validator's own version, so the manager treats itself as on the shared scheme.
-LIVE_FROM = "5.0.0"
+LIVE_FROM = "1.0.0"
 
 
 @pytest.fixture

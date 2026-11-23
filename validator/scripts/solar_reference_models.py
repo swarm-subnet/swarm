@@ -190,9 +190,9 @@ class Eyes:
 
     def objects(self, view: camera.View, inside_only: bool) -> Dict[tuple, np.ndarray]:
         """Each thief (inside the fence at the frame's step when inside_only) and, when not, each decoy the frame
-        shows, with the mask of its pixels."""
+        shows, with the mask of its pixels; a thief's pixels are the man himself, never what he holds."""
         ids = np.where(view.objects >= 0, view.objects & BODY_BITS, -1)
-        owners: Dict[int, tuple] = {uid: ("thief", n) for uid, n in theft.bodies(self.ep).items()}
+        owners: Dict[int, tuple] = {uid: ("thief", n) for uid, n in theft.person_bodies(self.ep).items()}
         if not inside_only:
             owners.update({uid: ("decoy", uid) for uid in decoys.bodies(self.ep)})
         shown: Dict[tuple, np.ndarray] = {}

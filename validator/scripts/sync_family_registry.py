@@ -46,6 +46,16 @@ def _validate_registry(payload: dict) -> None:
         value = family.get("benchmark_version")
         if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
             raise SystemExit(f"{family_id}: invalid benchmark_version {value!r}")
+        reset = family.get("benchmark_version_reset")
+        if reset is not None and (
+            not isinstance(reset, dict)
+            or set(reset) != {"from", "to"}
+            or not all(
+                isinstance(label, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", label)
+                for label in reset.values()
+            )
+        ):
+            raise SystemExit(f"{family_id}: invalid benchmark_version_reset {reset!r}")
         for field, allowed in checks:
             value = family.get(field)
             if value not in allowed:

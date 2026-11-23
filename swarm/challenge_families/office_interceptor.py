@@ -41,13 +41,12 @@ invisible to camera and ToF, so the detector is the only sighting channel.
 from __future__ import annotations
 
 import math
-import os
 import random
 from typing import Any
 
 import numpy as np
 import pybullet as p
-import swarm_worlds
+import swarm_description
 from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
@@ -157,8 +156,9 @@ from swarm.validator.reward import (
 
 from .base import ChallengeFamilyRuntime, ChallengeFamilyRuntimeProfile
 
-TELLO_URDF = "tello.urdf"
-TELLO_MESH_DIR = "tello"
+DRONE = "tello"
+_TELLO = swarm_description.get_params(DRONE)
+TELLO_URDF = _TELLO["files"]["body"]
 
 # Interior margin that keeps generated points clear of walls.
 _WALL_MARGIN_M = 0.9
@@ -167,8 +167,6 @@ _TEMPLATE_SLOT = {
     "challenge_type": OFFICE_CHALLENGE_TYPE,
     "distance_range": (OFFICE_MIN_START_DISTANCE_M, OFFICE_MAX_START_DISTANCE_M),
 }
-
-_tello_assets_ready = False
 
 # Inspection switch for the local visualizer. Evaluation never touches it, so the
 # benchmark always renders the per-seed skin.
@@ -199,8 +197,8 @@ _WP_FLEE_TRIES = 64
 _WP_ANY_TRIES = 32
 
 # Physical target dimensions: box sizes fall out of these and the camera focal.
-_DET_TARGET_W_M = 0.18   # Tello body width seen by the camera
-_DET_TARGET_H_M = 0.08   # body + guards height
+_DET_TARGET_W_M = _TELLO["body"]["visible_width_m"]
+_DET_TARGET_H_M = _TELLO["body"]["visible_height_m"]
 # Detection block layout: [n_boxes, age, (cx, cy, w, h, conf) x MAX_BOXES], normalized.
 _DET_DIM = 2 + 5 * OFFICE_DET_MAX_BOXES
 # Placeholder bin shapes (visibility, distance, edge) until the calibration
@@ -256,10 +254,11 @@ def _det_fp_box(rng, anchors, focal: float) -> tuple:
 # the raw specific force: hover reads -g on the down axis, like the real IMU.
 # Snapshots hold the raw yaw (index 2) that delivery expands into sin/cos.
 _TELEM_DIM = 15
-_ATT_Q = math.radians(1.0)  # the SDK reports attitude in whole degrees
-_VEL_Q = 0.1                # the SDK reports velocity in dm/s
-_ACC_Q = 0.01               # accelerometer granularity (~0.001 g)
-_ALT_Q = 0.01               # the SDK reports heights in cm
+_RESOLUTION = _TELLO["telemetry"]["resolution"]
+_ATT_Q = math.radians(_RESOLUTION["attitude_deg"])
+_VEL_Q = _RESOLUTION["velocity_mps"]
+_ACC_Q = _RESOLUTION["accel_mps2"]
+_ALT_Q = _RESOLUTION["height_m"]
 _ATT_STD = math.radians(OFFICE_TELEM_ATTITUDE_NOISE_DEG)
 _SNAP_NOISE_STD = np.array(
     [_ATT_STD] * 3
@@ -271,30 +270,16 @@ _SNAP_QUANT = np.array([_ATT_Q] * 3 + [_VEL_Q] * 3 + [_ACC_Q] * 3 + [_ALT_Q] * 3
 
 
 def tello_urdf_path() -> str:
-    """Absolute path to the Tello URDF in the swarm-worlds package."""
-    return os.path.join(swarm_worlds.robots_dir(), TELLO_URDF)
+    """Absolute path to the Tello URDF in the swarm-description package."""
+    return swarm_description.get_urdf(DRONE)
 
 
 def ensure_tello_assets_staged() -> str:
-    """Stage the Tello URDF + its mesh folder in the writable dir gym_assets routes
-    BaseAviary's hardcoded loader through (site-packages may be read-only). The meshes
-    sit next to the URDF so its relative ./tello/ references resolve. Content-verified
-    and atomic so every validator parses byte-identical physical constants; the check
-    runs once per process. Returns the URDF basename for self.URDF."""
-    global _tello_assets_ready
-    if _tello_assets_ready:
-        return TELLO_URDF
-    dst_dir = gym_assets.stage_dir()
-    src_mesh_dir = os.path.join(swarm_worlds.robots_dir(), TELLO_MESH_DIR)
-    dst_mesh_dir = os.path.join(dst_dir, TELLO_MESH_DIR)
-    os.makedirs(dst_mesh_dir, exist_ok=True)
-    for name in sorted(os.listdir(src_mesh_dir)):
-        gym_assets.copy_verified(os.path.join(src_mesh_dir, name), os.path.join(dst_mesh_dir, name))
-    dst = os.path.join(dst_dir, TELLO_URDF)
-    gym_assets.copy_verified(tello_urdf_path(), dst)
-    gym_assets.register(TELLO_URDF, dst)
-    _tello_assets_ready = True
-    return TELLO_URDF
+    """Stage the Tello URDF and its meshes in the writable dir gym_assets routes
+    BaseAviary's hardcoded loader through (site-packages may be read-only). Content-verified
+    and atomic so every validator parses byte-identical physical constants. Returns the URDF
+    basename for self.URDF."""
+    return gym_assets.stage_drone(DRONE)
 
 
 def make_office_control(env: Any) -> DSLPIDControl:

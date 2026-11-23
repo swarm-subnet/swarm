@@ -62,6 +62,7 @@ CUTTERS_SHARE = 0.5
 BACK = {"backpack": 0.35, "cable_coil": 0.30, "": 0.35}
 # The pack and the coil come in three fits, by how far the top stands off the body.
 FIT = {"tshirt": "_thin", "puffer": "_puffer"}
+HAND_TOOL_SLOT = "hand_tool"            # the manifest slot of what a man holds in his hand, apart from the man himself
 
 
 def _to_zup(v: np.ndarray) -> np.ndarray:
@@ -267,6 +268,7 @@ class Intruder:
         rest, joints, weights, parts = [], [], [], []
         for name in dress["garments"]:
             hides = cat.manifest["garments"][name]["hides"]
+            held = cat.manifest["garments"][name]["slot"] == HAND_TOOL_SLOT
             if hides:
                 covered |= np.isin(cat.dominant, hides)[cat.faces].all(1)
             for piece in cat.pieces[name]:
@@ -282,7 +284,7 @@ class Intruder:
                 rest.append(_to_yup(fitted))
                 joints.append(piece["weight_joints"].astype(np.int64))
                 weights.append(piece["weights"].astype(np.float64))
-                parts.append((piece["faces"], dress["colours"][piece["file"]], piece["temperature_c"]))
+                parts.append((piece["faces"], dress["colours"][piece["file"]], piece["temperature_c"], held))
         # A covered face stays drawn at the edge of the clothes, where the skin under a hem can still be seen.
         edge = np.zeros(len(body_yup), bool)
         edge[cat.faces[~covered].ravel()] = True
@@ -320,11 +322,11 @@ class Intruder:
         self.rest = rest_all[order]
         self.inv_bind = _inverse(bind)
         # One visual body per colour: (vertex range in the stacked arrays, faces local to that range).
-        meshes = [(0, faces, colour, celsius) for faces, colour, celsius in skin_parts]
-        meshes += [(k + 1, faces, colour, celsius) for k, (faces, colour, celsius) in enumerate(parts)]
-        self.meshes = []
+        meshes = [(0, faces, colour, celsius, False) for faces, colour, celsius in skin_parts]
+        meshes += [(k + 1, faces, colour, celsius, held) for k, (faces, colour, celsius, held) in enumerate(parts)]
+        self.meshes, self.held = [], []
         start = self.vertices(*first)
-        for group, faces, colour, celsius in meshes:
+        for group, faces, colour, celsius, held in meshes:
             lo, hi = offsets[group], offsets[group + 1]
             local_used = np.unique(faces)
             local = np.full(hi - lo, -1)
@@ -337,12 +339,19 @@ class Intruder:
             if THERMAL and celsius is not None:
                 p.changeVisualShape(uid, -1, temperature=float(celsius), emissivity=EMISSIVITY, physicsClientId=client)
             self.meshes.append((uid, rows))
+            if held:
+                self.held.append(uid)
         self.moving: Optional[bool] = None
 
     @property
     def bodies(self) -> List[int]:
         """The visual body ids of this thief."""
         return [uid for uid, _ in self.meshes]
+
+    @property
+    def person(self) -> List[int]:
+        """The visual body ids of the man himself, with what he wears and carries on his back, never what he holds."""
+        return [uid for uid, _ in self.meshes if uid not in self.held]
 
     @property
     def vertex_count(self) -> int:
@@ -382,4 +391,4 @@ class Intruder:
         """Take the thief out of the scene."""
         for uid, _ in self.meshes:
             p.removeBody(uid, physicsClientId=self.client)
-        self.meshes = []
+        self.meshes, self.held = [], []

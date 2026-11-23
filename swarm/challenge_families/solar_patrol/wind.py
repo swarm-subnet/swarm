@@ -158,6 +158,13 @@ def observe(env: Any, ep: SolarEpisode, state: np.ndarray) -> None:
     put(state, STATE_SLICES, "dock_wind_mps", ep.wind["dock_mps"])
 
 
+def blowing_toward(env: Any) -> np.ndarray:
+    """The unit ground direction (east, north) the seed's steady wind blows toward, zero in still air."""
+    steady = _steady(env)
+    speed = _speed(steady)
+    return steady / speed if speed > 0.0 else np.zeros(2)
+
+
 def _current(env: Any) -> np.ndarray:
     """The horizontal wind (east, north) the last control step blew, zero in still air."""
     model = getattr(env, "_wind", None)

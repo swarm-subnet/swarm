@@ -26,11 +26,19 @@ import os
 import threading
 import time
 from traceback import print_exception
-from typing import List, Union
+from typing import Callable, List, Union
 
 import bittensor as bt
 import numpy as np
 
+from swarm.base.liveness import (
+    STALL_EXIT_CODE,
+    LoopLiveness,
+    report_stall,
+    stall_limit_sec,
+    thread_stacks,
+    write_stderr,
+)
 from swarm.base.neuron import BaseNeuron
 from swarm.base.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
@@ -99,9 +107,41 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
+        self._liveness = LoopLiveness(self.loop)
+        self._stall_limit_sec = stall_limit_sec()
 
         # Instantiate runners
         self.lock = asyncio.Lock()
+
+    def check_liveness(self, *, exit_process: Callable[[int], None] = os._exit) -> bool:
+        """Ping the worker's event loop; True while it answers within the stall limit.
+
+        When it has not answered for the limit, log every thread's stack and exit, so the supervisor
+        restarts a validator that would otherwise sit alive without working or setting weights."""
+        if self._stall_limit_sec <= 0:
+            return True
+        self._liveness.ping()
+        stalled = self._liveness.stalled_for()
+        if stalled < self._stall_limit_sec:
+            return True
+        limit = self._stall_limit_sec
+
+        def build_report() -> str:
+            """The stall line and every thread's stack, or why the stacks could not be read."""
+            try:
+                stacks = thread_stacks()
+            except Exception as exc:
+                stacks = f"unavailable: {exc!r}"
+            return (
+                f"Validator worker has not turned for {stalled:.0f}s (limit {limit:.0f}s); "
+                f"exiting so it restarts. Thread stacks:\n{stacks}"
+            )
+
+        try:
+            report_stall(build_report, (bt.logging.error, write_stderr))
+        finally:
+            exit_process(STALL_EXIT_CODE)
+        return False
 
     def serve_axon(self):
         """Serve axon to enable external connections."""

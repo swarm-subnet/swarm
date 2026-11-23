@@ -46,6 +46,7 @@ import pybullet as p
 
 from swarm.constants import MOON_DIFFUSE_RANGE, SIM_DT
 from swarm.core.daylight import sun_render_kwargs
+from swarm.core.observation.frozen import freeze
 
 from . import airframe, park, theft
 from .contract import BLANK_RGB, BLANK_THERMAL, GIMBAL_TILT_RANGE_DEG, NIGHT_MODES, RGB_SHAPE, STATE_SLICES, THERMAL_SHAPE, Command, put
@@ -68,17 +69,20 @@ RASTER = getattr(p, "ER_SWARM_RASTER", 0) if RAYCAST else 0
 PICTURE_FLAGS |= RASTER
 # Colour and thermal frames read only colour and mask, so the engine skips converting and sending the depth.
 NO_DEPTH = getattr(p, "ER_SWARM_NO_DEPTH", 0)
+# The object map names a thief seen through a far fence or a thin crown, as the picture shows him, not the veil.
+VEIL_MAP = getattr(p, "ER_SWARM_VEIL_MAP", 0) if RAYCAST else 0
 # Wide frames smooth outlines only; a close look smooths every edge, its crown creases filled from the leaves around.
 CLOSE_PICTURE_FLAGS = (PICTURE_FLAGS & ~getattr(p, "ER_SWARM_EDGE_OUTLINE", 0)) | (getattr(p, "ER_SWARM_CREASE_FILL", 0)
                                                                                    if RAYCAST else 0)
 # Ray-cast flags the frames above rest on; a wheel without one would draw another picture, so reset refuses it.
-NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE", "ER_SWARM_RASTER")
+NEEDED_FLAGS = ("ER_SWARM_EDGE_OUTLINE", "ER_SWARM_CREASE_FILL", "ER_SWARM_FRAME_REUSE", "ER_SWARM_RASTER",
+                "ER_SWARM_VEIL_MAP")
 
 FRAME_HZ = 2.0
 FRAME_STEPS = int(round(1.0 / (FRAME_HZ * SIM_DT)))
 FEEDS = ("colour", "thermal")
-WIDE_DIAGONAL_FOV_DEG = 82.0            # DJI: M4TD wide camera
-THERMAL_DIAGONAL_FOV_DEG = 45.0         # DJI: M4TD thermal camera
+WIDE_DIAGONAL_FOV_DEG = airframe.PARAMS["cameras"]["wide_diagonal_fov_deg"]
+THERMAL_DIAGONAL_FOV_DEG = airframe.PARAMS["cameras"]["thermal_diagonal_fov_deg"]
 NEAR_M = 0.004                          # under the airframe's 5 mm, so the aircraft is drawn when it is in view
 FAR_M = 2000.0
 
@@ -97,24 +101,20 @@ class Lens:
     iso_night: float
 
 
-# DJI Matrice 4 series specs: wide 1/1.3 inch f/1.7, medium tele 1/1.3 inch f/2.8, tele 1/1.5 inch f/2.8, each 48 MP;
-# ISO up to 25,600 in normal mode and 409,600 in night mode, 819,200 on the tele. Keyed by zoom, the wide lens as 1.
-LENSES = {1: Lens(1.7, 70.3, 25600.0, 409600.0), 3: Lens(2.8, 70.3, 25600.0, 409600.0),
-          7: Lens(2.8, 48.8, 25600.0, 819200.0)}
+# Keyed by zoom, the wide lens as 1.
+LENSES = {int(zoom): Lens(**lens) for zoom, lens in airframe.PARAMS["cameras"]["lenses"].items()}
 WIDE_LENS = 1
-# The sensor: normal video exposes a frame of the 30 fps stream, and Night Scene slows the stream to 15 fps to expose
-# twice as long (M4T footage over unlit farmland, 1/15 s in its middle setting); a back-lit CMOS through its colour
+# The sensor: a frame of the video stream, slower in Night Scene to expose longer; a back-lit CMOS through its colour
 # filters turns about 4,000 photons of white light per square micrometre and lux second into electrons and saturates at
-# about 4,000 per square micrometre at ISO 100; video reads the 48 MP array binned to 12 MP with 1.5 electrons of read
-# noise at the high conversion gain of night ISOs; the stream's temporal noise reduction averages about four frames.
-EXPOSURE_S = 1.0 / 30.0
-NIGHT_SCENE_EXPOSURE_S = 1.0 / 15.0
+# about 4,000 per square micrometre at ISO 100. Pixel count, read noise and noise reduction are the aircraft's.
+EXPOSURE_S = 1.0 / airframe.PARAMS["cameras"]["video_fps"]
+NIGHT_SCENE_EXPOSURE_S = 1.0 / airframe.PARAMS["cameras"]["night_scene_fps"]
 LENS_TRANSMISSION = 0.9
 ELECTRONS_PER_LUX_S_UM2 = 4000.0
 FULL_WELL_E_PER_UM2 = 4000.0
-BINNED_PIXELS = 12.0e6
-READ_NOISE_E = 1.5
-NOISE_REDUCTION_FRAMES = 4.0
+BINNED_PIXELS = airframe.PARAMS["cameras"]["binned_pixels"]
+READ_NOISE_E = airframe.PARAMS["cameras"]["read_noise_e"]
+NOISE_REDUCTION_FRAMES = airframe.PARAMS["cameras"]["noise_reduction_frames"]
 # Night vision takes the IR-cut filter out, and silicon collects about half as much again past it.
 NEAR_INFRARED_GAIN = 1.5
 # Moonlight on level ground: 0.25 lux from a full moon at the zenith, dimmed by its phase angle as Allen gives it and by
@@ -226,7 +226,7 @@ def capture(env: Any, ep: SolarEpisode) -> None:
         ep.frames.rgb = BLANK_RGB
     else:
         ep.frames.rgb, objects = colour_frame(env, shot, night_camera(env, WIDE_LENS, shot, _night_scene(cam, env), ep.seed,
-                                                                      cam["captures"]))
+                                                                      cam["captures"]), byte_frame=True)
         ep.frames.thermal = BLANK_THERMAL
     cam.update(view=replace(shot, objects=objects), captured_s=ep.time_s, captures=cam["captures"] + 1)
 
@@ -332,10 +332,11 @@ def balanced(frame: np.ndarray, gains: Tuple[float, float, float]) -> np.ndarray
 
 
 def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {}),
-                 outline: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+                 outline: bool = True, byte_frame: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """A colour frame in the seed's light, the way the environment lights its own colour frames, through the flags
     and arguments of `night_camera` when given, and its object map; `outline` False draws a close look with
-    CLOSE_PICTURE_FLAGS, every edge smoothed, not only the outlines."""
+    CLOSE_PICTURE_FLAGS, every edge smoothed, not only the outlines. `byte_frame` keeps the engine's RGBA bytes for
+    a stream look that reads them, on an engine that has one."""
     cli = env.CLIENT
     view_matrix, projection = shot.matrices()
     kwargs = sun_render_kwargs(env._sun) if env._sun is not None else {}
@@ -347,18 +348,20 @@ def colour_frame(env: Any, shot: View, camera_at_night: Tuple[int, dict] = (0, {
     night_flags, night_kwargs = camera_at_night
     kwargs.update(night_kwargs)
     picture = PICTURE_FLAGS if outline else CLOSE_PICTURE_FLAGS
-    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE | NO_DEPTH
+    flags = env._render_flags | env._sky_flags | env._daylight_flags | picture | night_flags | FRAME_REUSE | NO_DEPTH | VEIL_MAP
     airframe.pose(env, getattr(env, "_solar", None))
     _w, _h, rgb, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER,
         shadow=1 if env._daylight_flags or PICTURE_FLAGS else 0, lightDirection=env._light_direction, flags=flags,
         physicsClientId=cli, **kwargs,
     )
-    frame = np.reshape(np.asarray(rgb, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :3].astype(np.float32) / 255.0
+    frame = np.reshape(np.asarray(rgb, dtype=np.uint8), (shot.height, shot.width, 4))
     # A family that sets a white balance has the daylight model's cast taken out by day, as the real camera does.
     table = getattr(getattr(env, "_solar", None), "white_balance", None)
     if table is not None and env._sun is not None and not env._sun.night and env._daylight_flags:
         frame = balanced(frame, white_balance_gains(table, env._sun.elevation_deg))
+    if not byte_frame or not hasattr(p, "swarmStreamLookBytes"):
+        frame = np.true_divide(frame[:, :, :3], np.float32(255.0), dtype=np.float32)
     return frame, _object_map(seg, shot)
 
 
@@ -369,7 +372,7 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
     view_matrix, projection = shot.matrices()
     # The engine heats sunlit surfaces from the light's direction, so a moon is put below the horizon.
     light = [0.0, 0.0, -1.0] if night(env) else env._light_direction
-    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE | RASTER | NO_DEPTH
+    flags = p.ER_SWARM_RAYCAST | p.ER_SWARM_THERMAL | p.ER_ALPHA_CUTOUT | FRAME_REUSE | RASTER | NO_DEPTH | VEIL_MAP
     airframe.pose(env, ep)
     _w, _h, image, _depth, seg = p.getCameraImage(
         shot.width, shot.height, view_matrix, projection, renderer=p.ER_TINY_RENDERER, lightDirection=light,
@@ -377,4 +380,5 @@ def _thermal_frame(env: Any, ep: SolarEpisode, shot: View) -> Tuple[np.ndarray, 
         thermalSeed=(int(ep.seed) * 1000003 + ep.camera["captures"]) & 0x7FFFFFFF, physicsClientId=env.CLIENT,
     )
     white_hot = np.reshape(np.asarray(image, dtype=np.uint8), (shot.height, shot.width, 4))[:, :, :1]
-    return white_hot.astype(np.float32) / 255.0, _object_map(seg, shot)
+    frame = freeze(np.true_divide(white_hot, np.float32(255.0), dtype=np.float32))
+    return frame, _object_map(seg, shot)

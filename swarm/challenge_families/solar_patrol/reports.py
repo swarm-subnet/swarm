@@ -24,10 +24,15 @@ straight under its camera; then four checks, in order: the box sits on a real ob
 is a threat (a thief inside the fence at that frame's step, never a decoy), and it is the first report of that thief.
 
 The box sits on the object it overlaps most, when the overlap with the tight box around that object's visible pixels
-(intersection over union) is at least MIN_OVERLAP. Those tight boxes are read from a frame's object map once, on the
-first report against that frame, and reused for every later report on it. A report that passes adds to
-valid_reports; one that fails, a repeat included, adds to false_alarms. A report never ends the patrol, and a press
-past MAX_REPORTS in one patrol does nothing.
+(intersection over union) is at least MIN_OVERLAP. A thief's pixels are the man himself, his body and what he wears,
+a pack or coil on his back included; what he holds in his hand, the bolt cutters, is no part of him, so a frame that
+shows only his tool gives him no box and a report on it sits on no object. Pixels with a gap of at most twice
+SPECK_REACH_PX between them are one piece of an object, and a piece holding less than SPECK_SHARE of the object's
+pixels is a speck the tight box leaves out, such as a few pixels seen through the gap between two solar panels; the
+largest piece always counts. Those tight boxes are read from a frame's object map once, on the first report against
+that frame, and reused for every later report on it. A report that passes adds to valid_reports; one that fails, a
+repeat included, adds to false_alarms. A report never ends the patrol, and a press past MAX_REPORTS in one patrol does
+nothing.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import numpy as np
+from scipy.ndimage import binary_dilation, label
 
 from . import coverage, decoys, sensor_noise, theft
 from .camera import View
@@ -42,10 +48,12 @@ from .contract import Box, Report
 from .episode import SolarEpisode
 
 MIN_OVERLAP = 0.5
-MAX_REPORTS = 20                        # a patrol; a seed holds at most three thieves
+MAX_REPORTS = 20                        # a patrol; a seed holds at most five thieves
 MAX_REPORT_HEIGHT_M = 24.0              # over the ground under the camera: a frame from higher carries no valid report
 BODY_BITS = (1 << 24) - 1               # an object map code keeps the body id in its low 24 bits, the link above
 THREAT_CLASS = "person"
+SPECK_REACH_PX = 1                      # a piece reaches this far to join another, bridging a gap twice as wide
+SPECK_SHARE = 0.1                       # a piece holding less of an object's pixels than this is a speck
 VERDICTS = ("valid", "no_frame", "too_high", "no_object", "wrong_class", "not_threat", "repeat")
 
 
@@ -76,7 +84,7 @@ def judge(env: Any, ep: SolarEpisode, report: Report) -> str:
     # Written so a frame with no terrain under it, a NaN height, is too high.
     if not coverage.height_above_ground(env, ep, view.eye) <= MAX_REPORT_HEIGHT_M:
         return "too_high"
-    owners: dict[int, tuple] = {uid: ("thief", thief) for uid, thief in theft.bodies(ep).items()}
+    owners: dict[int, tuple] = {uid: ("thief", thief) for uid, thief in theft.person_bodies(ep).items()}
     kinds: dict[tuple, str] = {key: THREAT_CLASS for key in owners.values()}
     for uid, kind in decoys.bodies(ep).items():
         owners[uid] = ("decoy", uid)
@@ -123,9 +131,24 @@ def object_boxes(view: View, owners: dict[int, tuple]) -> dict[tuple, tuple]:
     for key in dict.fromkeys(owners.values()):
         mine = np.isin(uids, [uid for uid, owner in owners.items() if owner == key])
         if mine.any():
-            boxes[key] = (float(xs[mine].min()), float(ys[mine].min()),
-                          float(xs[mine].max()) + 1.0, float(ys[mine].max()) + 1.0)
+            rows, cols = ys[mine], xs[mine]
+            body = _without_specks(rows, cols)
+            rows, cols = rows[body], cols[body]
+            boxes[key] = (float(cols.min()), float(rows.min()), float(cols.max()) + 1.0, float(rows.max()) + 1.0)
     return boxes
+
+
+def _without_specks(ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
+    """Which of an object's pixels count for its box: those of its largest piece and of every piece holding at least
+    SPECK_SHARE of its pixels, pieces reaching SPECK_REACH_PX to join each other."""
+    top, left = ys.min(), xs.min()
+    grid = np.zeros((ys.max() - top + 1, xs.max() - left + 1), dtype=bool)
+    grid[ys - top, xs - left] = True
+    grown = binary_dilation(grid, structure=np.ones((3, 3), dtype=bool), iterations=SPECK_REACH_PX)
+    pieces, _count = label(grown, structure=np.ones((3, 3), dtype=bool))
+    piece = pieces[ys - top, xs - left]
+    sizes = np.bincount(piece)
+    return (sizes[piece] >= SPECK_SHARE * ys.size) | (piece == np.argmax(sizes))
 
 
 def best_match(view: View, box: Box, boxes: dict[tuple, tuple]) -> Optional[tuple]:
