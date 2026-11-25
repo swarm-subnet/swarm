@@ -120,6 +120,11 @@ jobs:
           for name in "${names[@]}"; do tags+=(-t "$name"); done
           docker buildx imagetools create "${tags[@]}" "${{ steps.tested.outputs.source }}"
 
+      # The images carry the real areas, and a GitHub-hosted runner has about 14 GB free; a self-hosted one keeps its folders.
+      - name: Free disk space
+        if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found != 'true' && runner.environment == 'github-hosted'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache
+
       # A manual run, or a commit with no tested image, still builds and tests the image
       # here before anything is published.
       - name: Build for the test run
@@ -142,7 +147,9 @@ jobs:
       - name: Run the validator tests inside the image
         if: steps.plan.outputs.publish == 'true' && steps.tested.outputs.found != 'true'
         run: |
-          cpus="$(nproc)"
+          # A hosted runner has 4 cores; a self-hosted machine has many more, and a worker a core
+          # at about 3 GB each takes all its memory.
+          cpus=$(( $(nproc) < 4 ? $(nproc) : 4 ))
           docker run --rm --cpus="$cpus" \
             -v "$PWD":/app \
             -w /app \

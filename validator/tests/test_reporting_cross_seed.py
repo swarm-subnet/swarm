@@ -108,3 +108,60 @@ def test_a_seed_without_counts_shows_a_dash_and_adds_no_mistake(capsys):
     seed_line = next(line for line in out.splitlines() if line.split()[:2] == ["type8_solar", "2"])
     assert seed_line.split()[-2:] == ["-", "-"]
     assert record["cross_seed_penalty"]["seeds_zeroed"] == 0
+
+
+def test_test_field_run_shows_the_false_alarms_counted_apart(capsys):
+    """A Test Field seed's false alarms on animals, on people outside and repeats get their own columns and lines
+    under the false alarms; the rule still counts every false alarm once."""
+    kinds = {"animal_reports": 1, "outside_reports": 1, "repeat_reports": 0}
+    rows = [(1, 0.9, {"missed_threats": 0, "false_alarms": 0, "edge_trips": 0, **dict.fromkeys(kinds, 0)}),
+            (2, 0.4, {"missed_threats": 1, "false_alarms": 2, "edge_trips": 0, **kinds})]
+    record = _run(rows, "type9_testsite", 9, "cf_test_field")
+    out = capsys.readouterr().out
+    assert "OnAnimal Outside Repeat" in out and "AnimalOK" not in out and "Animals," not in out
+    seed_line = next(line for line in out.splitlines() if line.split()[:2] == ["type9_testsite", "2"])
+    assert seed_line.split()[-6:] == ["1", "2", "0", "1", "1", "0"]
+    assert "      On animals:              1" in out and "      On people outside:       1" in out
+    penalty = record["cross_seed_penalty"]
+    assert penalty["false_alarms"] == 2 and penalty["animal_reports"] == 1 and penalty["repeat_reports"] == 0
+    assert penalty["seeds_zeroed"] == 2
+
+
+def test_field_v2_run_reports_animals_without_a_cross_seed_penalty(capsys):
+    """Test Field v2 reports animal counts and missing counts without adding cross-seed mistakes."""
+    clean = {"missed_threats": 0, "false_alarms": 0, "edge_trips": 0, "animal_reports": 0, "outside_reports": 0,
+             "repeat_reports": 0}
+    animal_counts = {"animals": 3, "valid_animal_reports": 2, "wrong_animal_reports": 1}
+    rows = [(1, 0.9, {**clean, **dict.fromkeys(animal_counts, 0)}),
+            (2, 0.7, {**clean, **animal_counts}),
+            (3, 0.0, {})]
+    group = "type10_testfield"
+    record = _run(rows, group, 10, "cf_test_field_v2")
+    out = capsys.readouterr().out
+    assert "Missed FalseAlarms EdgeTrips OnAnimal Outside Repeat Animals AnimalOK AnimalBad" in out
+    seed_lines = {line.split()[1]: line.split() for line in out.splitlines() if line.split()[:1] == [group]}
+    assert seed_lines["2"][2] == "0.7000"
+    assert seed_lines["2"][-3:] == ["3", "2", "1"]
+    assert seed_lines["3"][-9:] == ["-"] * 9
+    assert "    Animals to report:         3" in out and "    Valid animal reports:      2" in out
+    assert "    Failed animal reports:     1" in out and "      Animals to report" not in out
+    assert "Seeds set to 0:            0/3" in out
+
+    scored, missing = record["group_results"][group][1:]
+    assert (scored["seed"], scored["challenge_type"], scored["score"]) == (2, 10, 0.7)
+    assert {key: scored[key] for key in animal_counts} == animal_counts
+    assert (missing["seed"], missing["challenge_type"], missing["score"]) == (3, 10, 0.0)
+    assert animal_counts.keys().isdisjoint(missing)
+
+    penalty = record["cross_seed_penalty"]
+    assert {key: penalty[key] for key in animal_counts} == animal_counts
+    assert (penalty["missed_threats"], penalty["false_alarms"], penalty["edge_trips"]) == (0, 0, 0)
+    assert penalty["seeds_zeroed"] == 0
+    assert penalty["mean_score"] == penalty["penalised_score"] == pytest.approx((0.9 + 0.7) / 3)
+
+
+def test_a_family_that_counts_no_kinds_gains_no_kind_columns(capsys):
+    """Swarm Sentinel's table keeps its two mistake columns and nothing more."""
+    _run([_patrol(1, 0.9, 0, 1)], "type8_solar", 8, "cf_solar_patrol")
+    out = capsys.readouterr().out
+    assert "FalseAlarms" in out and "Animal" not in out and "On animals" not in out

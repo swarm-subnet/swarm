@@ -157,19 +157,20 @@ def test_family_is_registered_active_on_its_own_map_type():
     assert CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE[8] == "solar"
 
 
-def test_swarm_sentinel_holds_95_percent_and_the_retired_families_pay_nothing():
-    """Swarm Sentinel holds 0.95 and Swarm Test Field 0.05; the five families Sentinel replaced, both rescue families
-    included, pay nothing."""
+def test_swarm_sentinel_holds_90_percent_and_the_retired_families_pay_nothing():
+    """Swarm Sentinel holds 0.90 and Swarm Test Field v2 0.10; the five families Sentinel replaced, both rescue
+    families included, and the first Swarm Test Field pay nothing."""
     shares = {
         family_id: get_challenge_family_definition(family_id)["emission_allocation"]
         for family_id in list_registered_challenge_families()
     }
     for family_id in (
         "cf_autopilot", "cf_swarm_autopilot", "cf_interceptor_office", "cf_search_and_rescue", "cf_swarm_sar",
+        "cf_test_field",
     ):
         assert shares[family_id] == 0.0
-    assert shares[FAMILY_ID] == pytest.approx(0.95)
-    assert shares["cf_test_field"] == pytest.approx(0.05)
+    assert shares[FAMILY_ID] == pytest.approx(0.90)
+    assert shares["cf_test_field_v2"] == pytest.approx(0.10)
     paying = [
         share for family_id, share in shares.items()
         if get_challenge_family_definition(family_id)["emissions_state"] != "archived"
@@ -178,10 +179,10 @@ def test_swarm_sentinel_holds_95_percent_and_the_retired_families_pay_nothing():
 
 
 def test_every_other_family_still_steps_once_per_decision():
-    """Only the patrol families, Sentinel and the Test Field that flies its drone, hold a decision over several control
-    steps, so no other family's flight changes."""
+    """Only the patrol families, Sentinel and the two Test Fields that fly its drone, hold a decision over several
+    control steps, so no other family's flight changes."""
     for family_id in list_registered_challenge_families():
-        expected = DECISION_STEPS if family_id in (FAMILY_ID, "cf_test_field") else 1
+        expected = DECISION_STEPS if family_id in (FAMILY_ID, "cf_test_field", "cf_test_field_v2") else 1
         assert get_challenge_family(family_id).decision_steps == expected
 
 

@@ -125,7 +125,7 @@ def aim(env: Any, ep: SolarEpisode, asked: ZoomRequest) -> tuple[camera.View, fl
     seen = ep.zoom["seen"]
     origin = np.asarray(seen.eye, dtype=float)
     ray = box_ray(seen, asked.box)
-    point = _first_hit(env, origin, ray)
+    point = _first_hit(env, origin, ray, camera.far_plane_m(ep))
     eye, _forward, camera_up = airframe.camera_pose(env, ep.camera["tilt_deg"])
     if point is None:
         forward, reach_m = ray, math.inf
@@ -143,14 +143,15 @@ def aim(env: Any, ep: SolarEpisode, asked: ZoomRequest) -> tuple[camera.View, fl
     shot = camera.View(feed="colour", eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=width,
                        height=height,
                        vertical_fov_deg=camera.vertical_fov_deg(LENS_DIAGONAL_FOV_DEG[asked.lens], width, height),
-                       sees=not dark or _night_scene(ep, dark) or ep.zoom["night_vision"], step=ep.step)
+                       sees=not dark or _night_scene(ep, dark) or ep.zoom["night_vision"], step=ep.step,
+                       far_m=camera.far_plane_m(ep))
     return shot, reach_m
 
 
-def _first_hit(env: Any, origin: np.ndarray, ray: np.ndarray) -> Optional[np.ndarray]:
+def _first_hit(env: Any, origin: np.ndarray, ray: np.ndarray, reach_m: float = camera.FAR_M) -> Optional[np.ndarray]:
     """Where a ray first meets anything but the aircraft within the camera's range, or None."""
     aircraft = int(env.DRONE_IDS[0])
-    end = origin + ray * camera.FAR_M
+    end = origin + ray * reach_m
     start = origin
     for _ in range(8):
         uid, _link, _fraction, position, _normal = p.rayTest(start.tolist(), end.tolist(),

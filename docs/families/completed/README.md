@@ -10,7 +10,8 @@ These challenge families are completed: they take no submissions, are not scored
 | [Office Interceptor](interceptor_office.md) | `cf_interceptor_office` | Office (challenge type 7) | 30% | Swarm Sentinel took its place |
 | [Search and Rescue](search_and_rescue.md) | `cf_search_and_rescue` | City, Open, Mountain, Village, Warehouse, Forest | 5% | Swarm Sentinel took its slice |
 | [Swarm Search and Rescue](swarm_sar.md) | `cf_swarm_sar` | City, Open, Mountain, Village, Forest | 10% | Swarm Sentinel took its slice |
+| [Swarm Test Field](test_field.md) | `cf_test_field` | Test site (challenge type 9) | 5% | Swarm Test Field v2 took its place |
 
-Their slices went to Swarm Sentinel, which now carries 95% of emissions; Swarm Test Field carries the other 5%. No live family flies the city, open, mountain, village, warehouse, forest or office maps (challenge types 1 to 7); Swarm Sentinel flies the solar park (challenge type 8) and Swarm Test Field the real test field (challenge type 9).
+Their slices went to Swarm Sentinel and Swarm Test Field v2: Swarm Sentinel now carries 90% of emissions and Swarm Test Field v2 the other 10%. No live family flies the city, open, mountain, village, warehouse, forest or office maps (challenge types 1 to 7); Swarm Sentinel flies the solar park (challenge type 8) and Swarm Test Field v2 flies real fields cut from the ground of Andorra (challenge type 10).
 
-The live families are [Swarm Sentinel](../solar_patrol.md) and [Swarm Test Field](../test_field.md).
+The live families are [Swarm Sentinel](../solar_patrol.md) and [Swarm Test Field v2](../test_field_v2.md).

@@ -71,6 +71,7 @@ CHECK_RAM_MB = 3000.0                  # memory one reference flight is counted 
 BACKGROUND_NICENESS = 19               # flights judging ahead yield every core the scoring wants
 PILOT_MODULE = "swarm.challenge_families.solar_patrol.reference_pilot"
 POLL_S = 0.5                           # how often a busy flight's kept verdict is looked for
+RETIRE_WAIT_S = 120.0                  # how long a process let end for its memory may take before it is stopped
 # One BLAS and OpenMP thread in every reference flight, as in the validator image, whatever the host sets.
 THREAD_CAPS = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
@@ -107,6 +108,17 @@ def candidates(seed: int) -> Iterator[int]:
         yield int.from_bytes(digest[:width], "big")
 
 
+def _rss_mb(pid: int) -> Optional[float]:
+    """A running process's resident memory in MiB, or None where it cannot be read."""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return float(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _total_ram_mb() -> float:
     """The machine's memory in MiB, or infinity where it cannot be read, so the cores alone decide."""
     try:
@@ -118,13 +130,14 @@ def _total_ram_mb() -> float:
     return float("inf")
 
 
-def workers() -> int:
+def workers(check_ram_mb: float = CHECK_RAM_MB) -> int:
     """How many reference flights run side by side: the machine's setting, else a share of its cores, never more
-    than a share of its memory holds, since each open family judges its seeds at the same time as the others."""
+    than a share of its memory holds, since each open family judges its seeds at the same time as the others.
+    Another family counts a flight at its own memory."""
     if os.environ.get(WORKERS_ENV):
         return max(1, int(os.environ[WORKERS_ENV]))
     by_cores = (os.cpu_count() or 1) // CPU_SHARE
-    by_memory = _total_ram_mb() / RAM_SHARE // CHECK_RAM_MB
+    by_memory = _total_ram_mb() / RAM_SHARE // check_ram_mb
     return max(1, int(min(by_cores, by_memory)))
 
 
@@ -190,15 +203,17 @@ def prepare(seeds: Iterable[int], workers: int, *, niceness: int = 0) -> Dict[in
 class Flights:
     """Reference flights in processes of their own, at most workers at a time. Each process judges the seeds it is
     handed one after another and keeps their verdicts, so only its first world is built cold. Another family flies
-    its own pilot module and reads its own kept verdicts."""
+    its own pilot module and reads its own kept verdicts, and may bound a process's memory: one that has grown past
+    retire_rss_mb when it finishes a seed ends, and a fresh one takes the next."""
 
     def __init__(self, workers: int, niceness: int = 0, pilot: Optional[str] = None,
-                 verdict: Optional[Callable[[int], Optional[Verdict]]] = None):
+                 verdict: Optional[Callable[[int], Optional[Verdict]]] = None, retire_rss_mb: Optional[float] = None):
         """No process yet: one starts, at that niceness, when a seed finds every running one busy."""
         self.workers = max(1, int(workers))
         self.niceness = int(niceness)
         self.pilot = pilot
         self.verdict = verdict
+        self.retire_rss_mb = retire_rss_mb
         self.runs: Dict[subprocess.Popen, Optional[int]] = {}   # each process and the seed it is judging
         self.logs: Dict[subprocess.Popen, IO[bytes]] = {}
 
@@ -229,12 +244,35 @@ class Flights:
         self.logs[run].seek(0)
         return self.logs[run].read().decode("utf-8", "replace")[-2000:]
 
+    def _retire(self, run: subprocess.Popen) -> None:
+        """Let an idle process end and forget it; one that ends with an error fails the preparation. One that does
+        not end in time is stopped: its verdicts are kept already, so nothing of it is still wanted."""
+        run.stdin.close()
+        try:
+            code = run.wait(timeout=RETIRE_WAIT_S)
+        except subprocess.TimeoutExpired:
+            run.kill()
+            run.wait()
+            code = 0
+        if code != 0:
+            raise SeedCheckError(f"a seed-check process ended with code {code}:\n{self._tail(run)}")
+        self.logs.pop(run).close()
+        del self.runs[run]
+
     def fly(self, seeds: List[int]) -> None:
         """Hand the seeds not being judged yet to free processes, then wait until a seed being judged has its
         verdict. A process that ends while it still holds a seed fails the preparation."""
         for run, seed in self.runs.items():
             if seed is not None and self.cached(seed) is not None:
                 self.runs[run] = None
+        if self.retire_rss_mb is not None:
+            retired = [run for run, seed in self.runs.items() if seed is None and run.poll() is None
+                       and (_rss_mb(run.pid) or 0.0) >= self.retire_rss_mb]
+            for run in retired:
+                self._retire(run)
+            if retired:
+                # Another preparation may have kept a verdict while a process was ending: such a seed needs no flight.
+                seeds = [seed for seed in seeds if self.cached(seed) is None]
         flying = set(self.runs.values())
         for seed in dict.fromkeys(seeds):
             if seed in flying:

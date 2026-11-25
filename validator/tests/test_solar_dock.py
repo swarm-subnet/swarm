@@ -290,6 +290,28 @@ def test_each_seed_has_its_own_spot_and_keeps_it(world):
     assert spots.std(axis=0).min() > 10.0
 
 
+def test_without_spots_the_dock_is_drawn_as_it_always_was(world):
+    """With no spots given, a seed's dock stands exactly where the search put it before spots could be given."""
+    pinned = [(12.114367145618239, 18.28255913157352), (83.5912048923649, 22.63907353100454),
+              (46.97583901434545, 62.22014485128242)]
+    assert [tuple(spot) for spot in _spots(world, _ground(world), seeds=range(3))] == pinned
+
+
+def test_given_spots_are_the_only_ones_tried_each_against_every_check(world):
+    """With spots given the dock stands on one of them, never on one too near the fence, by a crown or on a body, and
+    the seeds spread over every good one; with no good one left the seed fails."""
+    terrain = _ground(world)
+    _box(world, [70.0, 70.0, 1.0], [1.0, 1.0, 1.0])
+    crown = np.array([[50.0, 50.0, 2.0]])
+    good = [(30.5, 30.5), (60.5, 40.5), (40.5, 65.5)]
+    bad = [(5.5, 50.5), (50.5, 50.5), (70.5, 70.5)]              # near the fence, by the crown, on the box
+    spots = np.array(bad + good)
+    found = {dock.find_site(world, seed, _SQUARE, terrain, crown, spots=spots) for seed in range(24)}
+    assert found == set(good)
+    with pytest.raises(dock.NoDockGround):
+        dock.find_site(world, 0, _SQUARE, terrain, crown, spots=np.array(bad))
+
+
 def test_a_park_with_no_room_says_so(world):
     """When nothing inside the fence is open, the seed fails loudly instead of standing the dock anywhere."""
     with pytest.raises(dock.NoDockGround, match="no open ground"):

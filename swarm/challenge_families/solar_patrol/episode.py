@@ -64,6 +64,7 @@ class SolarEpisode:
     height_limit_m: float = HEIGHT_LIMIT_M           # above the dock: the aircraft stops rising there
     patrol_height_m: float = PATROL_HEIGHT_M         # above the dock: where the take-off ends and a far return flies
     white_balance: Optional[tuple] = None            # (sun elevation, red, green, blue gain) rows; None draws as is
+    far_m: Optional[float] = None                    # the cameras' far plane, metres; None keeps the camera's own
 
     park: Any = None
     dock: Any = None

@@ -53,21 +53,28 @@ chmod +x miner/src/scripts/setup.sh
 source miner_env/bin/activate
 ```
 
+Swarm Test Field v2 flies real areas that are fetched beside `swarm-worlds` once the requirements are installed. `setup.sh` runs the fetch for you. If you install by hand, run it once yourself (about 2.6 GB to download, 5 GB on disk) and check it with the second command:
+
+```bash
+python -m swarm_worlds.areas
+python -m swarm_worlds.areas check
+```
+
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
 ---
 
 ## Challenge Families
 
-Swarm runs **two active challenge families**: Swarm Sentinel carries 95% of the emission and Swarm Test Field 5%. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed, with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey.
+Swarm runs **two active challenge families**: Swarm Sentinel carries 90% of the emission and Swarm Test Field v2 10%. Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue, Swarm Search and Rescue and the first Swarm Test Field are completed, with archived emissions. Each family is its own competition: its own queue, its own champion lineage, and its own slice of subnet emissions. One hotkey holds **one model in one family**; to compete in another family, register another hotkey. A hotkey that already holds a model in the first Swarm Test Field cannot enter Swarm Test Field v2.
 
 | Family | ID | Drones | Maps | Emission slice | Guide |
 |--------|----|--------|------|----------------|-------|
-| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 95% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
-| Swarm Test Field | `cf_test_field` | 1 | The company's real test field in Andorra (one fixed site) | 5% | [families/test_field.md](../../docs/families/test_field.md) |
+| Swarm Sentinel | `cf_solar_patrol` | 1 | Solar park (one fixed site, shifted per seed) | 90% | [families/solar_patrol.md](../../docs/families/solar_patrol.md) |
+| Swarm Test Field v2 | `cf_test_field_v2` | 1 | Each seed draws its own field, cut from real ground in Andorra | 10% | [families/test_field_v2.md](../../docs/families/test_field_v2.md) |
 | Interceptor | `cf_interceptor` | 1 (vs. a validator-flown target) | Open | 0% (completed; historical 30%) | [families/completed/interceptor.md](../../docs/families/completed/interceptor.md) |
 
-The two active slices add up to the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md), [Search and Rescue](../../docs/families/completed/search_and_rescue.md), [Swarm Search and Rescue](../../docs/families/completed/swarm_sar.md). The slice still burns if the family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
+The two active slices add up to the whole pool. The [completed families'](../../docs/families/completed/README.md) guides stay online for reference: [Autopilot](../../docs/families/completed/autopilot.md), [Swarm Autopilot](../../docs/families/completed/swarm_autopilot.md), [Office Interceptor](../../docs/families/completed/interceptor_office.md), [Search and Rescue](../../docs/families/completed/search_and_rescue.md), [Swarm Search and Rescue](../../docs/families/completed/swarm_sar.md), [Swarm Test Field](../../docs/families/completed/test_field.md). The slice still burns if the family stops paying out: no kings, or archived. How a slice is split among a family's kings is covered in [Emissions](#emissions-king-of-the-hill).
 
 <p align="right">(<a href="#miner-top">back to top</a>)</p>
 
@@ -104,7 +111,7 @@ mkdir -p my_agent/
 cp miner/src/submission_template/sentinel_drone_agent.py my_agent/drone_agent.py
 ```
 
-For Swarm Test Field, copy `miner/src/submission_template/test_field_drone_agent.py` instead and use `--family-id cf_test_field` below.
+For Swarm Test Field v2, copy `miner/src/submission_template/test_field_v2_drone_agent.py` instead and use `--family-id cf_test_field_v2` below.
 
 Test it with the family ID:
 
@@ -204,6 +211,8 @@ Or with [pixi](https://pixi.prefix.dev), which installs the exact set recorded i
 pixi install --locked
 pixi run swarm <command>
 ```
+
+A CLI install made this way also needs the real areas for Swarm Test Field v2: run `python -m swarm_worlds.areas` once (see [Installation](#installation)).
 
 ### Check Environment
 
@@ -354,7 +363,7 @@ Your archive is never public while it competes. It travels from your machine to 
 - **Took the crown**: the model is published, so that everyone can fork and improve it. The download opens on its leaderboard page, and the code and weights are pushed to the [champions repository](https://github.com/swarm-subnet/swarm-champions) under `<family>/<crown date>_uid-<uid>_<hash>/`, with the archive attached to a GitHub Release. Dethroned champions stay published.
 - **Took the crown in Swarm Sentinel**: the model stays in the vault, like a model that did not win. No download, no champions repository. The crown, the score and the payout work exactly as in every other family.
 
-Download the newest published champion for a family with `swarm champion --family-id cf_test_field`. Without a family, the command selects the highest-scoring champion across each family's newest release. Downloads use the public GitHub Releases API and verify `submission.zip` against the release body's `Archive SHA-256` value. Matching cached archives are reused. Set `GITHUB_TOKEN` if GitHub rate limits your requests. Benchmarking without `--model` uses the same release downloads.
+Download the newest published champion for a family with `swarm champion --family-id cf_test_field_v2`. Without a family, the command selects the highest-scoring champion across each family's newest release. Downloads use the public GitHub Releases API and verify `submission.zip` against the release body's `Archive SHA-256` value. Matching cached archives are reused. Set `GITHUB_TOKEN` if GitHub rate limits your requests. Benchmarking without `--model` uses the same release downloads.
 
 The backend API is private. Miners use only its health check and signed archive upload; browse live data on [swarm124.com](https://swarm124.com). A rejected commitment is reported by the upload response and is not retried.
 
@@ -376,7 +385,7 @@ Across the epoch, every missed intruder or false alarm then turns 5 of the model
 
 A seed scores **0** when the drone never takes off, or comes closer than 5 m to an intruder inside the fence while out of the dock.
 
-Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (2,000 seeds for Swarm Sentinel and 1,000 for Swarm Test Field, both after the ×5 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
+Your **model score** is the mean of the eligible recorded seed scores across the family's seed range (2,000 seeds for Swarm Sentinel and 1,000 for Swarm Test Field v2, both after the ×5 rule), stitched together from whichever validators ran each seed (the earliest accepted report per seed counts, so re-runs never double-count). Deterministic environment failures and validator-infrastructure failures satisfy coverage but are excluded from the mean.
 
 Every validator flies the same seeds, so seed index N is the same mission wherever it ran and every model in an epoch is measured on the same worlds. The seeds stay secret while the epoch runs and the key behind them is published once it closes, so you can rebuild the exact maps afterwards and check your own scores.
 
@@ -396,7 +405,7 @@ A new champion is published within minutes of its crowning, except in Swarm Sent
 
 ## Emissions: King of the Hill
 
-Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last crowned kings: 10 in Swarm Sentinel, 3 in Swarm Test Field, 5 in every other family**. A seat's share is set first by its rank in the window — the reigning champion holds the full weight and every step back keeps **70%** of the seat above it — and fine-tuned by how much that king improved on the score it beat. Being dethroned doesn't stop your earnings. Only a full window of newer crownings (ten in Swarm Sentinel, three in Swarm Test Field, five elsewhere) pushing you out does.
+Emissions are **not** winner-take-all, and there is no single global leaderboard payout. Each family runs its own King-of-the-Hill lineage: the family's emission slice is split across its **last crowned kings: 10 in Swarm Sentinel, 3 in Swarm Test Field v2, 5 in every other family**. A seat's share is set first by its rank in the window: the reigning champion holds the full weight and every step back keeps **70%** of the seat above it, and fine-tuned by how much that king improved on the score it beat. Being dethroned doesn't stop your earnings. Only a full window of newer crownings (ten in Swarm Sentinel, three in Swarm Test Field v2, five elsewhere) pushing you out does.
 
 The practical consequences:
 
@@ -426,7 +435,7 @@ A transient timeout or RPC-transport failure is retried once for that seed, subj
 
 ### Epoch Rotation
 
-Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds. In Swarm Sentinel and Swarm Test Field a validator does not build the world from the 32-bit list seed: it draws it from a 128-bit world seed that only the same key gives, so a model cannot find which seed it is flying by trying them all. Once the key is published those worlds rebuild too. Your local benchmark is unchanged: it builds each world from the seed you give it.
+Epochs run for **14 days** from epoch 19 onward, anchored Monday 16:00 UTC (epochs 1–18 were 7 days). Every validator derives the same seeds per family per epoch from a shared epoch key, so the whole network flies the same maps. The key is published **after** the epoch ends, so anyone can rebuild that epoch's seeds. In Swarm Sentinel and Swarm Test Field v2 a validator does not build the world from the 32-bit list seed: it draws it from a 128-bit world seed that only the same key gives, so a model cannot find which seed it is flying by trying them all. Once the key is published those worlds rebuild too. Your local benchmark is unchanged: it builds each world from the seed you give it.
 
 At rollover, pending models keep their queue position, discard partial results, and restart evaluation on the new epoch's seeds. Every champion is also queued for re-evaluation. For the final **1.5 hours** of an epoch the scanner stops registering new commitments; `swarm model submit` computes that window locally from the shared epoch schedule, refuses to commit, and tells you when it reopens. Keep your system clock accurate.
 

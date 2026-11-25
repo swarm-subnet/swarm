@@ -104,12 +104,13 @@ The policy reads a depth image and its own flight state 50 times a second and an
 
 ## Challenge Families
 
-The benchmark runs **two open challenge families**: Swarm Sentinel carries 95% of the emission and Swarm Test Field 5%. Each family is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
+The benchmark runs **two open challenge families**: Swarm Sentinel carries 90% of the emission and Swarm Test Field v2 10%. Each family is its own competition with its own champion, its own leaderboard lineage, and its own slice of subnet emissions. One repo enters exactly one of them: every hotkey competes in a single family.
 
 | Family | ID | Mission | Emissions |
 |--------|----|---------|:--------:|
-| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 95% |
-| [Swarm Test Field](https://github.com/swarm-subnet/swarm/blob/main/docs/families/test_field.md) | `cf_test_field` | Fly the real test field from its dock, report where every person stands, keep 1 m inside its edge, land back in the dock | 5% |
+| [Swarm Sentinel](https://github.com/swarm-subnet/swarm/blob/main/docs/families/solar_patrol.md) | `cf_solar_patrol` | Patrol a solar park from its dock by day and night, report every intruder, land back in the dock | 90% |
+| [Swarm Test Field v2](https://github.com/swarm-subnet/swarm/blob/main/docs/families/test_field_v2.md) | `cf_test_field_v2` | Fly a field drawn from the seed, from its dock, report where every person, goat, dog and grown boar stands, keep 1 m inside its edge, land back in the dock | 10% |
+| [Swarm Test Field](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/test_field.md) | `cf_test_field` | Fly one fixed field from its dock, count and report the people on it | Completed |
 | [Swarm SAR](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/swarm_sar.md) | `cf_swarm_sar` | 2–8 drones sweep together; one confirmed hover wins for the team | Completed |
 | [Search and Rescue](https://github.com/swarm-subnet/swarm/blob/main/docs/families/completed/search_and_rescue.md) | `cf_search_and_rescue` | Find a person, hold a steady 2–4 m hover overhead, never touch them | Completed |
 
@@ -127,11 +128,11 @@ Each guide spells out the full contract: observation layout, action bounds, maps
 seed score = 0.45 × success + 0.45 × time + 0.10 × safety
 ```
 
-Swarm Sentinel and Swarm Test Field are the exceptions: **0.70 × detection + 0.20 × coverage + 0.10 × flight** per seed, and every missed person or false alarm turns 5 of the model's best seeds to 0, as does every edge trip on the Test Field. Their guides have the details.
+Swarm Sentinel and Swarm Test Field v2 are the exceptions. Sentinel scores **0.70 × detection + 0.20 × coverage + 0.10 × flight** per seed. Test Field v2 scores **0.50 × people + 0.20 × animals + 0.20 × coverage + 0.10 × flight**, and on a seed with no animal to report the animals term follows the people term. In both, every missed person or false alarm turns 5 of the model's best seeds to 0, as does every edge trip on Test Field v2. Their guides have the details.
 
 Every submission runs the **family's full benchmark** (1,000 seeds, 2,000 for Swarm Sentinel) and is ranked by its **mean score across them**. Seeds rotate every 14-day epoch (Monday 16:00 UTC) and champions are re-evaluated on the fresh set. To take a crown, a challenger must beat the champion by the family's improvement floor: **+0.015** while the champion is at or below 0.5, easing to **+0.005** as it nears 1.0.
 
-Each family's emission slice is split among its **last champions: 10 in Swarm Sentinel, 3 in Swarm Test Field, 5 in every other family**, weighted by how much each one raised the family's best score. Full spec in [King of the Hill](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
+Each family's emission slice is split among its **last champions: 10 in Swarm Sentinel, 3 in Swarm Test Field v2, 5 in every other family**, weighted by how much each one raised the family's best score. Full spec in [King of the Hill](https://github.com/swarm-subnet/swarm/blob/main/docs/king_of_the_hill.md).
 
 ## Build Your Own Entry
 

@@ -37,6 +37,7 @@ from .solar_patrol import SolarPatrolChallengeFamily
 from .swarm_autopilot import SwarmAutopilotChallengeFamily
 from .swarm_sar import SwarmSarChallengeFamily
 from .test_field import TestFieldChallengeFamily
+from .test_field_v2 import TestFieldV2ChallengeFamily
 
 DEFAULT_RUNTIME_FAMILY_ID = "cf_autopilot"
 
@@ -50,6 +51,7 @@ _REGISTERED_FAMILIES: dict[str, ChallengeFamilyRuntime] = {
     "cf_interceptor_office": OfficeInterceptorChallengeFamily(),
     "cf_solar_patrol": SolarPatrolChallengeFamily(),
     "cf_test_field": TestFieldChallengeFamily(),
+    "cf_test_field_v2": TestFieldV2ChallengeFamily(),
 }
 
 

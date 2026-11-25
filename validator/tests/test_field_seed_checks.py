@@ -67,6 +67,15 @@ def _fly_with(monkeypatch, seeds_passing):
     return flown
 
 
+def test_default_fixture_bypasses_first_field_seed_check(monkeypatch):
+    """A first-field flight keeps the requested seed without consulting its verdict cache."""
+    monkeypatch.setattr(seed_checks, "replacement", lambda seed: pytest.fail("looked up a verdict"))
+    task = SimpleNamespace(map_seed=13)
+
+    assert seed_checks.approve(task) is task
+    assert seed_checks.prepare([13, 14], workers=1) == {13: 13, 14: 14}
+
+
 def test_the_candidates_are_the_fields_own():
     """A seed's candidates start with the seed, never change, and differ from Sentinel's chain for the same seed."""
     chain = list(candidates(7))

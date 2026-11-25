@@ -204,6 +204,20 @@ def test_the_view_is_the_wide_lens_where_the_frame_was_taken(scene):
     assert forward[2] == pytest.approx(-math.sin(math.radians(30.0)), abs=1e-6)
 
 
+def test_frames_draw_to_the_cameras_far_plane_unless_the_patrol_sets_its_own(scene):
+    """A patrol that sets no far plane draws to FAR_M; one that sets its own draws to it, in the view and in the
+    projection the renderer is given."""
+    env, ep = scene
+    camera.capture(env, ep)
+    assert ep.far_m is None and camera.view(ep).far_m == camera.FAR_M
+    ep.far_m = 40000.0
+    camera.capture(env, ep)
+    shot = camera.view(ep)
+    _view, projection = shot.matrices()
+    assert shot.far_m == 40000.0
+    assert projection[10] == pytest.approx((40000.0 + camera.NEAR_M) / (camera.NEAR_M - 40000.0))
+
+
 def test_one_feed_at_a_time(scene):
     """The picked feed carries the frame and the other image is zero."""
     env, ep = scene

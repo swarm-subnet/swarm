@@ -304,13 +304,31 @@ def _each_as_itself(seeds: Any, workers: int, *, niceness: int = 0) -> dict:
 
 @pytest.fixture(autouse=True)
 def _seed_checks_pass_every_seed(monkeypatch):
-    """Both patrol families fly every seed as it is unless a test asks for its seed checks: a check is a whole
-    reference patrol, and the other tests fly the seed they name."""
-    for name in ("swarm.challenge_families.solar_patrol.seed_checks", "swarm.challenge_families.test_field.seed_checks"):
+    """Fly each patrol seed as requested unless the test restores its reference seed checks."""
+    for name in (
+        "swarm.challenge_families.solar_patrol.seed_checks",
+        "swarm.challenge_families.test_field.seed_checks",
+        "swarm.challenge_families.test_field_v2.seed_checks",
+    ):
         seed_checks = sys.modules.get(name)
         if seed_checks is not None:
             monkeypatch.setattr(seed_checks, "approve", _as_it_is)
             monkeypatch.setattr(seed_checks, "prepare", _each_as_itself)
+
+
+@pytest.fixture(autouse=True)
+def _field_people_stand_in(request, tmp_path_factory, monkeypatch):
+    """Give every Test Field test the people package and the everyday motion library: the installed ones, or stand-ins
+    made from Sentinel's bodies and moves when the installed swarm-worlds predates them."""
+    if not os.path.basename(str(request.node.fspath)).startswith("test_field_v2_"):
+        return
+    from swarm.challenge_families.solar_patrol import intruders, theft_moves
+    maps = __import__("swarm_worlds").maps_dir()
+    if not all(os.path.isfile(os.path.join(maps, folder, leaf)) for folder, leaf in
+               ((intruders.ASSET_DIR, "intruders.json"), (theft_moves.ASSET_DIR, "motions.json"))):
+        return
+    from validator.tests import field_v2_stand_in
+    field_v2_stand_in.use_people(tmp_path_factory.getbasetemp() / "stand_in_people", monkeypatch)
 
 
 @pytest.fixture(autouse=True)

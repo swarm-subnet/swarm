@@ -45,8 +45,7 @@ from swarm.core.sandbox_lockdown import lockdown_permission
 from swarm.core.submission_policy import validate_submission_zip
 from swarm.domain_model import (
     CHALLENGE_FAMILY_IDS,
-    CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
-    CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
+    CHALLENGE_TYPE_IDS,
     DEFAULT_CLI_FAMILY_ID,
     OPEN_CHALLENGE_FAMILY_IDS,
     get_challenge_family_definition,
@@ -59,6 +58,7 @@ from swarm.policy_interface import (
     smoke_test_policy_package,
     verify_policy_package_contract,
 )
+from swarm.seed_selection import MAP_TYPE_HELP, family_for_type, seed_file_family
 
 # The submission module pulls in bittensor, which parses sys.argv at import unless told not to;
 # the swarm CLI owns its arguments, so the flag is set for that import and then put back.
@@ -144,6 +144,7 @@ BENCH_GROUP_ORDER = [
     "type7_office",
     "type8_solar",
     "type9_testsite",
+    "type10_testfield",
 ]
 BENCH_GROUP_TO_TYPE = {
     "type1_city": 1,
@@ -155,6 +156,7 @@ BENCH_GROUP_TO_TYPE = {
     "type7_office": 7,
     "type8_solar": 8,
     "type9_testsite": 9,
+    "type10_testfield": 10,
 }
 TYPE_LABELS = {
     1: "city",
@@ -166,6 +168,7 @@ TYPE_LABELS = {
     7: "office",
     8: "solar",
     9: "testsite",
+    10: "testfield",
 }
 
 
@@ -594,6 +597,8 @@ def _infer_benchmark_type_from_seed(seed: int, family_id: str = DEFAULT_CLI_FAMI
         return 8
     if family_id == "cf_test_field":
         return 9
+    if family_id == "cf_test_field_v2":
+        return 10
     from swarm.constants import SIM_DT
     from swarm.validator.task_gen import random_task
 
@@ -645,29 +650,12 @@ def _print_failed_visualize_rows(summary_json: Path, failed_rows: Sequence[dict[
     print("Re-run with `swarm visualize --summary-json <path> --failed-index N` to inspect one.")
 
 
-def _family_for_type(challenge_type: int, family_id: Optional[str]) -> str:
-    """The family named, or else the one that flies this map type: the default when it does, otherwise the first that does."""
-    if family_id is not None:
-        return family_id
-    environment = CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE.get(int(challenge_type))
-    flyers = [family for family, environments in CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES.items() if environment in environments]
-    return DEFAULT_CLI_FAMILY_ID if DEFAULT_CLI_FAMILY_ID in flyers or not flyers else flyers[0]
-
-
-def _seed_file_family(seed_file: Path, family_id: Optional[str]) -> str:
-    """The family named, or else the one a seed file's envelope was saved for, or else the default."""
-    if family_id is not None:
-        return family_id
-    saved = json.loads(Path(seed_file).read_text())
-    return str(saved.get("family_id") or DEFAULT_CLI_FAMILY_ID) if isinstance(saved, dict) else DEFAULT_CLI_FAMILY_ID
-
-
 def _resolve_visualize_target(args: argparse.Namespace) -> Optional[VisualizeTarget]:
     """The one map the viewer should open, with the family that flies it when the flags name none."""
     target = _resolve_visualize_map(args)
     if target is None:
         return None
-    return replace(target, family_id=_family_for_type(target.challenge_type, target.family_id))
+    return replace(target, family_id=family_for_type(target.challenge_type, target.family_id))
 
 
 def _resolve_visualize_map(args: argparse.Namespace) -> Optional[VisualizeTarget]:
@@ -717,7 +705,7 @@ def _resolve_visualize_map(args: argparse.Namespace) -> Optional[VisualizeTarget
             )
         return VisualizeTarget(challenge_type=int(args.type), seed=None, family_id=args.family_id)
 
-    chosen_family = _seed_file_family(Path(args.seed_file), args.family_id) if args.seed_file is not None else args.family_id
+    chosen_family = seed_file_family(Path(args.seed_file), args.family_id) if args.seed_file is not None else args.family_id
     inferred_type: int | None = None
     inferred_note: str | None = None
     if args.summary_json is not None:
@@ -808,9 +796,9 @@ def _cmd_visualize(args: argparse.Namespace) -> int:
 def _build_video_argv(args: argparse.Namespace) -> list[str]:
     """Turn the flags into argv for validator.scripts.generate_video, for one seed or a whole seed file."""
     if args.seed_file is not None:
-        family_id = _seed_file_family(Path(args.seed_file), args.family_id)
+        family_id = seed_file_family(Path(args.seed_file), args.family_id)
     else:
-        family_id = _family_for_type(int(args.type), args.family_id)
+        family_id = family_for_type(int(args.type), args.family_id)
     argv = ["--model", str(args.model), "--family-id", family_id]
     if args.seed_file is not None:
         argv.extend(["--seed-file", str(args.seed_file)])
@@ -1601,8 +1589,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site).",
+        choices=CHALLENGE_TYPE_IDS,
+        help=MAP_TYPE_HELP,
     )
     visualize_parser.add_argument(
         "--family-id",
@@ -1731,8 +1719,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site).",
+        choices=CHALLENGE_TYPE_IDS,
+        help=MAP_TYPE_HELP,
     )
     video_parser.add_argument(
         "--seed-file",

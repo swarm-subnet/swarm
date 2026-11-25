@@ -64,6 +64,33 @@ _MISTAKE_TEXT = {
 }
 
 
+# False alarms a family counts apart by kind, each with its seed-table column and its line under the false alarms.
+_FALSE_ALARM_KINDS = {
+    "animal_reports": ("OnAnimal", "On animals"),
+    "outside_reports": ("Outside", "On people outside"),
+    "repeat_reports": ("Repeat", "Repeats"),
+}
+
+# What a family counts of the animals it asks for, each with its seed-table column and its summary line. They cost
+# only their own seed's score and never enter the cross-seed rule.
+_ANIMAL_COUNTS = {
+    "animals": ("Animals", "Animals to report"),
+    "valid_animal_reports": ("AnimalOK", "Valid animal reports"),
+    "wrong_animal_reports": ("AnimalBad", "Failed animal reports"),
+}
+
+
+def _seed_counts(result: Any, names: Dict[str, Tuple[str, str]]) -> Dict[str, int]:
+    """The named counts a seed's result metrics carry, only those it has."""
+    metrics = getattr(result, "metrics", None)
+    if not isinstance(metrics, dict):
+        return {}
+    counts = {key: metrics.get(key) for key in names}
+    return {
+        key: max(0, value) for key, value in counts.items() if isinstance(value, int) and not isinstance(value, bool)
+    }
+
+
 def _seed_mistake_counts(result: Any, fields: Tuple[str, ...]) -> Dict[str, Optional[int]]:
     """A seed's mistake counts from its result metrics, all None when its family counts none of them."""
     metrics = getattr(result, "metrics", None)
@@ -183,7 +210,8 @@ def _print_results(
     """Print the benchmark tables and return the record that is written as JSON.
 
     One line per seed, with its missed threats and false alarms when the family
-    counts them, the cross-seed rule when the family has one, the run summary,
+    counts them, the kinds of false alarm it counts apart and its animal reports,
+    the cross-seed rule when the family has one, the run summary,
     the scheduler RAM model, the per-group observations, the slowest seeds and
     an extrapolation to 1,000 seeds.
     """
@@ -234,15 +262,27 @@ def _print_results(
                 "estimated_resource_cost": _resource_cost_dict_for_group(group),
                 "wall_per_sim_ratio": (wall / sim_time) if sim_time > 0.0 else 0.0,
                 **_seed_mistake_counts(result, mistake_fields),
+                **_seed_counts(result, _FALSE_ALARM_KINDS),
+                **_seed_counts(result, _ANIMAL_COUNTS),
             }
         )
 
     show_mistakes = any(
         row["missed_threats"] is not None for rows in group_results.values() for row in rows
     )
+    kinds = [
+        kind for kind in _FALSE_ALARM_KINDS
+        if show_mistakes and any(kind in row for rows in group_results.values() for row in rows)
+    ]
+    animal_counts = [
+        key for key in _ANIMAL_COUNTS
+        if show_mistakes and any(key in row for rows in group_results.values() for row in rows)
+    ]
     columns = [_mistake_text(field)[0] for field in mistake_fields] if show_mistakes else []
-    mistake_header = "".join(f" {column}" for column in columns)
-    mistake_rule = "".join(f" {'-' * len(column)}" for column in columns)
+    kind_columns = [_FALSE_ALARM_KINDS[kind][0] for kind in kinds] + [_ANIMAL_COUNTS[key][0] for key in animal_counts]
+    kinds = kinds + animal_counts
+    mistake_header = "".join(f" {column}" for column in columns + kind_columns)
+    mistake_rule = "".join(f" {'-' * len(column)}" for column in columns + kind_columns)
 
     print()
     print(f"  {'Group':<18} {'Seed':>8} {'Score':>7} {'OK?':>5} {'SimT':>7} {'WallT':>7}{mistake_header}")
@@ -255,7 +295,7 @@ def _print_results(
             ok = "Y" if row["success"] else "N"
             mistakes = "".join(
                 f" {_count_cell(row[field]):>{len(column)}}" for field, column in zip(mistake_fields, columns)
-            )
+            ) + "".join(f" {_count_cell(row.get(kind)):>{len(column)}}" for kind, column in zip(kinds, kind_columns))
             print(
                 f"  {group:<18} {row['seed']:>8} {row['score']:>7.4f} {ok:>5} "
                 f"{row['sim_time']:>6.2f}s {row['wall_time']:>6.1f}s{mistakes}"
@@ -277,14 +317,24 @@ def _print_results(
     seeds_per_mistake = _seeds_zeroed_per_mistake(family_id) if show_mistakes else 0
     penalty = _cross_seed_penalty(all_rows, seeds_per_mistake, mistake_fields) if seeds_per_mistake else None
     if penalty is not None:
+        penalty.update({kind: sum(int(row.get(kind) or 0) for row in all_rows) for kind in kinds})
+        alarm_kinds = [kind for kind in kinds if kind in _FALSE_ALARM_KINDS]
         print(f"  Cross-seed rule: every {_rule_sentence(mistake_fields)} sets {seeds_per_mistake} of the best seeds to 0")
         for field in mistake_fields:
             print(f"    {_mistake_text(field)[1] + ':':<27}{penalty[field]}")
+            if field == "false_alarms":
+                for kind in alarm_kinds:
+                    print(f"      {_FALSE_ALARM_KINDS[kind][1] + ':':<25}{penalty[kind]}")
         print(f"    Seeds set to 0:            {penalty['seeds_zeroed']}/{len(all_rows)}")
         print(f"    Mean of seed scores:       {penalty['mean_score']:.4f}")
         print(f"    Score after the rule:      {penalty['penalised_score']:.4f}")
         print("    The leaderboard applies the same rule across all of the epoch's seeds.")
         print()
+        if animal_counts:
+            print("  Animals, scored inside each seed and never part of the rule above:")
+            for key in animal_counts:
+                print(f"    {_ANIMAL_COUNTS[key][1] + ':':<27}{penalty[key]}")
+            print()
 
     all_seed_walls =[float(row["wall_time"]) for row in all_rows if float(row["wall_time"]) > 0.0]
     all_sim_times = [float(row["sim_time"]) for row in all_rows]

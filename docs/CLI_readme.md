@@ -41,7 +41,8 @@ Family-aware commands (`swarm benchmark`, `swarm model package`, `swarm visualiz
 | Family ID | Environment types |
 | --- | --- |
 | `cf_solar_patrol` | Solar (type 8) |
-| `cf_test_field` | Test site (type 9) |
+| `cf_test_field_v2` | Test field (type 10) |
+| `cf_test_field` (completed) | Test site (type 9) |
 | `cf_search_and_rescue` (completed) | City, Open, Mountain, Village, Warehouse, Forest |
 | `cf_swarm_sar` (completed) | City, Open, Mountain, Village, Forest |
 

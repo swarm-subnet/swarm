@@ -2,13 +2,15 @@
 
 # Swarm Test Field
 
+**Completed.** Swarm Test Field takes no submissions, is not scored and pays nothing: Swarm Test Field v2 took its place. It carried 5% of subnet emissions until then. This page describes the family as it ran, for reference, and its champions stay published in the [champions repository](https://github.com/swarm-subnet/swarm-champions). The live family is [Swarm Test Field v2](../test_field_v2.md); see [all completed families](README.md).
+
 Fly the company's real drone test field from its dock: take off, count the people on the field, report where each one is, and land back in the dock without ever coming within 1 m of the field's edge.
 
 ---
 
 A DJI Matrice 4TD sits in its DJI Dock 3 on the test field in Santa Coloma, Andorra. Your model presses take-off, and the dock opens and lifts the drone to 9.5 m. From there your model flies: it looks over the field with a colour camera, a thermal camera and two zoom lenses, and reports each person it finds with a box on the image it saw them in and the spot where they stand. Then it presses return home, and the dock flies the drone back and lands it. The field has no fence: its edge is an invisible line, and the drone must stay more than 1 m inside it from take-off to landing. It never flies higher than 10 m above the dock, so the tree crowns that hang over the field are solid obstacles.
 
-The drone, the dock, the controls, the cameras, the sensor errors and the link delay are the same as in [Swarm Sentinel](solar_patrol.md). The field is a real place, and every rule here can be flown on it with the real drone.
+The drone, the dock, the controls, the cameras, the sensor errors and the link delay are the same as in [Swarm Sentinel](../solar_patrol.md). The field is a real place, and every rule here can be flown on it with the real drone.
 
 | | |
 |---|---|
@@ -17,7 +19,7 @@ The drone, the dock, the controls, the cameras, the sensor errors and the link d
 | Drones | 1 |
 | Decision rate | 10 Hz (one `act()` every 0.1 s); physics and the flight controller run at 50 Hz |
 | Episode horizon | 180 s (up to 1,800 `act()` calls) |
-| Emission allocation | 0.05 of subnet emissions (per-family [King of the Hill](../king_of_the_hill.md)) |
+| Emission allocation | 0.05 of subnet emissions (per-family [King of the Hill](../../king_of_the_hill.md)) |
 | Benchmark | 1,000 seeds per epoch, one field, scored with the cross-seed ×5 rule |
 | Champion | Published: every crowned model is open source, downloadable from its leaderboard page and in the [champions repository](https://github.com/swarm-subnet/swarm-champions), unlike Swarm Sentinel's |
 
@@ -112,7 +114,7 @@ Your program stays alive for the whole patrol and is reset between seeds, so it 
 
 ## State vector layout
 
-The layout is [Sentinel's](solar_patrol.md#state-vector-layout), index for index. Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed stands it. Axes are east, north and up, in metres. Every height in the state is measured **above the dock**; the scoring rules measure height **above the ground straight under the drone**, and the field slopes about 9 % down to the east and 6 % down to the south, so the two differ.
+The layout is [Sentinel's](../solar_patrol.md#state-vector-layout), index for index. Positions count from the dock: the dock is always at 0, 0, 0, wherever the seed stands it. Axes are east, north and up, in metres. Every height in the state is measured **above the dock**; the scoring rules measure height **above the ground straight under the drone**, and the field slopes about 9 % down to the east and 6 % down to the south, so the two differ.
 
 Two values mean something of their own here:
 
@@ -129,7 +131,7 @@ Two values mean something of their own here:
 
 ## Site map layout
 
-The layout is [Sentinel's](solar_patrol.md#site-map-layout), in metres from this seed's dock.
+The layout is [Sentinel's](../solar_patrol.md#site-map-layout), in metres from this seed's dock.
 
 | Index | Field | Meaning |
 |---|---|---|
@@ -158,7 +160,7 @@ On the real field, use the dock's own latitude and longitude in place of the ori
 
 ## Actions
 
-One `act()` returns **26 values**. The first 24 are [Sentinel's](solar_patrol.md#actions), in the same order with the same meaning; two follow them:
+One `act()` returns **26 values**. The first 24 are [Sentinel's](../solar_patrol.md#actions), in the same order with the same meaning; two follow them:
 
 | # | Value | What it does |
 |---|---|---|
@@ -178,7 +180,7 @@ Values are clipped to their bounds. An action with any NaN or infinite value, or
 
 ## Cameras and sensors
 
-All of [Sentinel's](solar_patrol.md#cameras-and-sensors): the wide colour camera, the thermal camera, the 3× and 7× zoom lenses, the laser rangefinder, the downward sensors, the wind readings, the position error and the link delay, with the same limits: 80 zooms and 20 reports per patrol. People are warm in the thermal camera, as Sentinel's are.
+All of [Sentinel's](../solar_patrol.md#cameras-and-sensors): the wide colour camera, the thermal camera, the 3× and 7× zoom lenses, the laser rangefinder, the downward sensors, the wind readings, the position error and the link delay, with the same limits: 80 zooms and 20 reports per patrol. People are warm in the thermal camera, as Sentinel's are.
 
 <p align="right">(<a href="#test-field-top">back to top</a>)</p>
 
@@ -186,7 +188,7 @@ All of [Sentinel's](solar_patrol.md#cameras-and-sensors): the wide colour camera
 
 ## The patrol
 
-One episode is one patrol and one seed, with Sentinel's flight phases: the dock takes the drone up to 9.5 m above it, the model flies, and `return_home` hands it back to the dock to fly home and land. See [Sentinel's patrol](solar_patrol.md#the-patrol) for how take-off, return home, landing and cancel work.
+One episode is one patrol and one seed, with Sentinel's flight phases: the dock takes the drone up to 9.5 m above it, the model flies, and `return_home` hands it back to the dock to fly home and land. See [Sentinel's patrol](../solar_patrol.md#the-patrol) for how take-off, return home, landing and cancel work.
 
 **The 10 m ceiling.** The drone never rises more than 10 m above the dock: like the real dock's height limit, its climb slows and stops there, whether your model, the dock's take-off or its return home is climbing. A climb held at full stick stops within about 0.15 m of the line. The take-off ends 9.5 m above the dock, half a metre under it. Return home follows Sentinel's three cases, except that a return pressed more than 50 m from the dock climbs to 9.5 m, not 20 m; nearer, it keeps its height. The ceiling counts from the dock, as on the real aircraft, not from the ground under the drone: the field rises and falls about 6 m from one end to the other, so over its low end the drone can be more than 10 m above the ground, and over its high end only a few metres above it. There, passing within 5 m of a person, measured in 3D to a 1.8 m tall person, is easy to do: keep your distance across the ground. The flight term's height half, full up to 22 m above the ground, can no longer be lost.
 
@@ -229,7 +231,7 @@ The 180 s are planned as 15 s for take-off, 30 s to visit and report the people,
 seed = 0.70 · detection + 0.20 · coverage + 0.10 · flight
 ```
 
-The terms are [Sentinel's](solar_patrol.md#per-seed), with the people on the field as the threats:
+The terms are [Sentinel's](../solar_patrol.md#per-seed), with the people on the field as the threats:
 
 - **Detection**, with people on the field: valid reports ÷ (people + false alarms). On an empty field it is the coverage ÷ (1 + false alarms).
 - **Coverage**: the share of the field searched, in 2 m cells inside the field's edge and outside every crown circle (no camera above a crown sees the ground under it), seen from 20 m or lower above the ground under the camera, sharp enough that a person would be about 6 pixels across.
@@ -246,7 +248,7 @@ A report that fails is a false alarm; a wrong spot has its own verdict, `wrong_p
 
 ### Across the epoch: the ×5 rule
 
-After every seed is scored on its own, **each missed person, each false alarm and each edge trip turns 5 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. It is [Sentinel's rule](solar_patrol.md#across-the-epoch-the-5-rule) with one more mistake: a patrol the edge rule ends scores 0 on its own seed and also counts once against the rest (`edge_trips` in the seed's results). A collision, a tree crown included, stays a 0 for its own seed only. A false alarm is any report that fails: a wrong box, a spot more than 2 m off, a person reported twice. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every person on the field as missed, the ones it already reported included, from its very first decision.
+After every seed is scored on its own, **each missed person, each false alarm and each edge trip turns 5 of the model's best seeds to 0**, and the score is the mean over all the seeds, the zeroed ones included. It never goes below 0. It is [Sentinel's rule](../solar_patrol.md#across-the-epoch-the-5-rule) with one more mistake: a patrol the edge rule ends scores 0 on its own seed and also counts once against the rest (`edge_trips` in the seed's results). A collision, a tree crown included, stays a 0 for its own seed only. A false alarm is any report that fails: a wrong box, a spot more than 2 m off, a person reported twice. A seed your model abandons, by failing on slow-act strikes or by its process exiting, scores 0 and counts every person on the field as missed, the ones it already reported included, from its very first decision.
 
 Over 1,000 seeds, for a model whose seeds average 0.970 and whose best seeds score 1.00:
 
@@ -266,7 +268,7 @@ A model that never reports, or reports everything, ends at 0 on any epoch with p
 
 ## Runtime limits
 
-As in [Sentinel](solar_patrol.md#runtime-limits): the same container, timeouts, slow-act strikes and 500 ms of baseline-equivalent compute per camera frame, shared by the five decisions of that frame.
+As in [Sentinel](../solar_patrol.md#runtime-limits): the same container, timeouts, slow-act strikes and 500 ms of baseline-equivalent compute per camera frame, shared by the five decisions of that frame.
 
 <p align="right">(<a href="#test-field-top">back to top</a>)</p>
 
