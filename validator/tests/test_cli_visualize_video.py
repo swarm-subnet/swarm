@@ -181,6 +181,104 @@ def test_solar_parsers_accept_type_eight():
     assert generate_video._build_parser().parse_args(["--model", "x.zip", "--type", "8"]).type == 8
 
 
+@pytest.mark.parametrize(
+    "map_type,family_id",
+    [(9, "cf_test_field"), (10, "cf_test_field_v2")],
+)
+def test_field_commands_parse_with_their_outdoor_profile(map_type, family_id):
+    """Both command layers accept each field, and the visualizer gives it outdoor settings."""
+    selection = ["--seed", "1002", "--type", str(map_type), "--family-id", family_id]
+    video = ["--model", "Submission/submission.zip", *selection, "--backend", "local"]
+    parser = cli.build_parser()
+    assert parser.parse_args(["visualize", *selection]).type == map_type
+    assert parser.parse_args(["video", *video]).type == map_type
+    viewer_args = visualize_map._build_parser().parse_args(selection)
+    assert viewer_args.type == map_type
+    assert generate_video._build_parser().parse_args(video).type == map_type
+    assert visualize_map._resolve_visual_profile(viewer_args) == visualize_map._default_visual_profile(8)
+
+
+@pytest.mark.parametrize(
+    "map_type,family_id,other_family",
+    [(9, "cf_test_field", "cf_test_field_v2"), (10, "cf_test_field_v2", "cf_test_field")],
+)
+def test_field_visualizer_infers_the_family(map_type, family_id, other_family, monkeypatch):
+    """The wrapper and direct viewer both select the field's runtime and reject an explicit mismatch."""
+    built = []
+
+    def stop_before_opening(task, prefer_gpu):
+        """Stop the viewer before it opens a window."""
+        raise RuntimeError("viewer reached")
+
+    def build_field(*, sim_dt, seed, family_id):
+        """Record the family before any world is built."""
+        built.append((seed, family_id))
+
+    monkeypatch.setattr(visualize_map, "_build_visualizer_env", stop_before_opening)
+    monkeypatch.setattr(visualize_map, "_ensure_local_ansible_temp", lambda: None)
+    monkeypatch.setattr("swarm.challenge_families.office_interceptor.use_plain_appearance", lambda enabled: None)
+    monkeypatch.setattr(challenge_families, "build_random_task", build_field)
+    selection = ["--seed", "1002", "--type", str(map_type)]
+    assert cli._resolve_visualize_target(cli.build_parser().parse_args(["visualize", *selection])).family_id == family_id
+    with pytest.raises(RuntimeError, match="viewer reached"):
+        visualize_map.main(selection)
+    with pytest.raises(ValueError, match=f"{other_family} never flies type {map_type}"):
+        visualize_map.main([*selection, "--family-id", other_family])
+    assert built == [(1002, family_id)]
+
+
+@pytest.mark.parametrize(
+    "map_type,family_id,group,other_family",
+    [
+        (9, "cf_test_field", "type9_testsite", "cf_test_field_v2"),
+        (10, "cf_test_field_v2", "type10_testfield", "cf_test_field"),
+    ],
+)
+def test_field_commands_use_the_type_or_seed_file_family(
+    map_type, family_id, group, other_family, tmp_path, monkeypatch, capsys,
+):
+    """Video infers the field from its type or seed file, and the visualizer wrapper honors the file tag."""
+    model = tmp_path / "model.zip"
+    model.touch()
+    seed_file = tmp_path / "seeds.json"
+    seed_file.write_text(json.dumps({
+        "schema_version": "challenge_family_seed_file.v1",
+        "family_id": family_id,
+        "type_seeds": {group: [1002]},
+    }))
+    filmed = []
+
+    def build_field(*, sim_dt, seed, family_id):
+        """Stand in for a field's world builder."""
+        return None
+
+    def record_flight(**kwargs):
+        """Check the task selector and record the requested seed, type and family."""
+        seed, challenge_type, selected_family = (kwargs[key] for key in ("seed", "challenge_type", "family_id"))
+        generate_video.build_task(seed, challenge_type, family_id=selected_family)
+        filmed.append((seed, challenge_type, selected_family))
+        return []
+
+    monkeypatch.setattr(challenge_families, "build_random_task", build_field)
+    monkeypatch.setattr(generate_video, "record_flight", record_flight)
+    selection = ["--seed", "1002", "--type", str(map_type)]
+    for flags in (selection, ["--seed-file", str(seed_file)]):
+        argv = ["--model", str(model), "--backend", "local", *flags]
+        assert cli.main(["video", *argv]) == 0
+        generate_video.main(argv)
+    assert filmed == [(1002, map_type, family_id)] * 4
+    viewer_args = cli.build_parser().parse_args(["visualize", "--seed", "1002", "--seed-file", str(seed_file)])
+    target = cli._resolve_visualize_target(viewer_args)
+    assert (target.challenge_type, target.family_id) == (map_type, family_id)
+
+    argv = ["--model", str(model), "--backend", "local", "--family-id", other_family]
+    with pytest.raises(SystemExit, match="1"):
+        generate_video.main([*argv, *selection])
+    assert f"{other_family} never flies type {map_type}" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="Seed file family_id mismatch"):
+        generate_video.main([*argv, "--seed-file", str(seed_file)])
+
+
 def test_visualize_without_a_family_opens_the_one_that_flies_the_map(tmp_path, monkeypatch):
     """With no family named, map 8 and a failed type-8 seed open Swarm Sentinel; an open map opens its first flyer."""
     opened = []

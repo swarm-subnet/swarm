@@ -73,14 +73,13 @@ def _env(monkeypatch, daylight=True, raycast=True, sky_from_sun=True, sun=None, 
     return env
 
 
-def test_no_family_uses_the_daylight_model_today():
-    """Every registered family keeps its light and its pixels, but Solar Patrol and the Test Field, which opt in to the
-    daylight model on an engine that has it."""
+def test_patrol_families_use_daylight_on_a_supported_engine():
+    """Only patrol families opt in to daylight, and only when the engine supports it."""
     assert ChallengeFamilyRuntime.daylight is False
+    supported = all(hasattr(p, flag) for flag in ("ER_SWARM_SKY_SUN", "ER_SWARM_RAYCAST", "ER_SWARM_DAYLIGHT"))
     for family_id in list_registered_challenge_families():
-        if family_id in (SOLAR_FAMILY_ID, "cf_test_field"):
-            continue
-        assert not get_challenge_family(family_id).daylight, family_id
+        patrol = family_id in (SOLAR_FAMILY_ID, "cf_test_field", "cf_test_field_v2")
+        assert get_challenge_family(family_id).daylight == (patrol and supported), family_id
 
 
 def test_render_kwargs_carry_the_sun_and_the_film_settings():

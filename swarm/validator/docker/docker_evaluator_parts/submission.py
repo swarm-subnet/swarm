@@ -27,6 +27,8 @@ import numpy as np
 from swarm.constants import DOCKER_PIP_WHITELIST
 from swarm.core.observation.frozen import is_frozen
 
+_ZERO_PEEK_BYTES = 4096
+
 
 def _normalize_package_name(name: str) -> str:
     """PEP 503 form of a requirement: runs of dash, underscore and dot collapse to one dash, lowercased."""
@@ -92,9 +94,11 @@ def _validate_requirements(self, requirements_path: Path, uid: int) -> bool:
 
 
 def _all_zero_bits(arr):
-    """True only when every byte is zero, so a -0.0 payload still counts as data."""
+    """True only when every byte is zero, so a -0.0 payload still counts as data. A payload's first bytes are read
+    first: an image with data almost always shows it there, and then the rest is never read."""
     if arr.flags["C_CONTIGUOUS"]:
-        return not arr.view(np.uint8).any()
+        raw = arr.reshape(-1).view(np.uint8)
+        return not raw[:_ZERO_PEEK_BYTES].any() and not raw.any()
     return not arr.any() and not np.signbit(arr).any()
 
 

@@ -56,11 +56,10 @@ def _every_family_class(cls=ChallengeFamilyRuntime):
 
 
 def test_every_family_defaults_to_tiny_renderer():
-    """No family opts into the ray caster on its own; the switch is explicit per family, and only Swarm Sentinel and the
-    Test Field that flies its cameras declare it, taking the ray caster exactly when the installed engine has one."""
+    """Patrol runtimes explicitly select ray casting when the engine supports it."""
     assert ChallengeFamilyRuntime.render_backend == "tiny"
     declared = {family.__name__ for family in _every_family_class() if "render_backend" in vars(family)}
-    assert declared == {"SolarPatrolChallengeFamily", "TestFieldChallengeFamily"}
+    assert declared == {"SolarPatrolChallengeFamily", "TestFieldChallengeFamily", "TestFieldV2ChallengeFamily"}
     for family in _every_family_class():
         want = ("raycast" if hasattr(p, "ER_SWARM_RAYCAST") else "tiny") if family.__name__ in declared else "tiny"
         assert family.render_backend == want, family.__name__

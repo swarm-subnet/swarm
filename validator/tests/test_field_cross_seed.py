@@ -100,9 +100,10 @@ def test_the_fields_mistake_counts_come_from_its_registry_entry():
 
 
 def test_a_family_without_the_key_counts_missed_threats_and_false_alarms():
-    """Sentinel and every other family carry no list and keep the default pair, as does an unknown id."""
+    """Sentinel and every other family but Swarm Test Field v2 carry no list and keep the default pair, as does an
+    unknown id."""
     for family_id in list_registered_challenge_families():
-        if family_id != FAMILY_ID:
+        if family_id not in (FAMILY_ID, "cf_test_field_v2"):
             assert "seed_mistake_fields" not in get_challenge_family_definition(family_id)
             assert family_seed_mistake_fields(family_id) == ("missed_threats", "false_alarms")
     assert family_seed_mistake_fields(None) == family_seed_mistake_fields("cf_unknown") == ("missed_threats", "false_alarms")

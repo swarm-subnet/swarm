@@ -32,7 +32,7 @@ its centre against the wind, as RTK and the pad's markers hold the real one. Onc
 from __future__ import annotations
 
 import math
-from typing import Any, Optional, Tuple
+from typing import Any, Iterator, Optional, Tuple
 
 import numpy as np
 import pybullet as p
@@ -141,21 +141,35 @@ def _slope_deg(ground: np.ndarray, spot: np.ndarray) -> float:
     return math.degrees(math.atan(math.hypot(a, b)))
 
 
+def _candidates(rng: np.random.Generator, fence: np.ndarray, margin_m: float,
+                given: Optional[np.ndarray]) -> Iterator[np.ndarray]:
+    """Batches of spots to try: the given ones, every one once in the seed's order, or SITE_BATCHES drawn over the
+    fence's box when none are given."""
+    if given is not None:
+        order = np.asarray(given, dtype=float).reshape(-1, 2)[rng.permutation(len(given))]
+        for start in range(0, len(order), SITE_BATCH):
+            yield order[start:start + SITE_BATCH]
+        return
+    low, high = fence.min(axis=0) + margin_m, fence.max(axis=0) - margin_m
+    for _ in range(SITE_BATCHES):
+        yield rng.uniform(low, high, size=(SITE_BATCH, 2))
+
+
 def find_site(cli: int, seed: int, fence: np.ndarray, terrain_uids: frozenset, passable: np.ndarray,
-              margin_m: float = FENCE_MARGIN_M, max_slope_deg: float = MAX_SLOPE_DEG) -> Tuple[float, float]:
+              margin_m: float = FENCE_MARGIN_M, max_slope_deg: float = MAX_SLOPE_DEG,
+              spots: Optional[np.ndarray] = None) -> Tuple[float, float]:
     """A spot for the dock drawn from the seed's own stream: margin_m inside the fence, CLEAR_M from every body
-    standing and from every passable outline, on ground no steeper than max_slope_deg.
+    standing and from every passable outline, on ground no steeper than max_slope_deg. With spots given, only those
+    are tried, in the seed's order, each against every check.
 
     Only the terrain may meet the rays dropped around the spot, so the check reads whatever the world holds this
     seed, wherever the park put it, and the column the drone climbs through is clear with it.
     """
     rng = np.random.default_rng([SITE_SEED_STREAM, int(seed)])
-    low, high = fence.min(axis=0) + margin_m, fence.max(axis=0) - margin_m
-    for _ in range(SITE_BATCHES):
-        spots = rng.uniform(low, high, size=(SITE_BATCH, 2))
-        spots = spots[_inside(fence, spots)]
-        spots = spots[_edge_distance(fence, spots) >= margin_m]
-        for spot in spots:
+    for batch in _candidates(rng, fence, margin_m, spots):
+        batch = batch[_inside(fence, batch)]
+        batch = batch[_edge_distance(fence, batch) >= margin_m]
+        for spot in batch:
             if np.any(np.hypot(*(passable[:, :2] - spot).T) < passable[:, 2] + CLEAR_M):
                 continue
             if _ground(cli, spot, _COARSE, terrain_uids) is None:

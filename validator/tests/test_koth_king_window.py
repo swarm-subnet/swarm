@@ -70,15 +70,14 @@ def test_sentinel_window_is_ten_and_every_other_family_keeps_five():
     assert koth.king_window("cf_not_registered") == koth.WINDOW_SIZE
 
 
-def test_only_sentinel_sets_its_own_window():
-    """Sentinel and the Test Field set their own windows; every other registered family is left on the shared
-    window, so its payout is unchanged."""
+def test_patrol_families_set_their_own_windows():
+    """Sentinel and both field families declare their own payout windows."""
     windows = {
         family["family_id"]: family["king_window"]
         for family in list_challenge_family_definitions()
         if "king_window" in family
     }
-    assert windows == {SENTINEL: 10, "cf_test_field": 3}
+    assert windows == {SENTINEL: 10, "cf_test_field": 3, "cf_test_field_v2": 3}
 
 
 def test_family_window_reads_zero_when_the_registry_sets_none():

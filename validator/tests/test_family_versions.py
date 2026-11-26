@@ -93,9 +93,26 @@ def _reset(live, **overrides):
 
 
 def test_bundled_registry_is_the_reset(live):
-    """The shipped registry restarts all eight families at 1.0.0 from their live labels."""
+    """The shipped registry restarts the eight families it had at 1.0.0 from their live labels; Swarm Test Field v2,
+    added since, was never live under an old label and has none to restart."""
+    del live['challenge_families']['cf_test_field_v2']
     validate_release(load_challenge_family_registry(), '6.1.0', live, '6.0.1.1')
     _validate_registry(load_challenge_family_registry())
+
+
+def test_bundled_registry_adds_swarm_test_field_v2_without_touching_a_label():
+    """Against the registry of release 6.1.0, the shipped one adds one family at 1.0.0 with no reset and changes no
+    other family's label, so no model of another family is evaluated again."""
+    shipped = load_challenge_family_registry()
+    before = copy.deepcopy(shipped)
+    del before['challenge_families']['cf_test_field_v2']
+    before['entity_types']['challenge_family']['ids'].remove('cf_test_field_v2')
+    validate_release(shipped, '6.2.0', before, '6.1.0')
+    validate_release(shipped, '6.1.0.1', before, '6.1.0')
+    added = shipped['challenge_families']['cf_test_field_v2']
+    assert added['benchmark_version'] == '1.0.0' and 'benchmark_version_reset' not in added
+    assert all(entry['benchmark_version'] == before['challenge_families'][family]['benchmark_version']
+               for family, entry in shipped['challenge_families'].items() if family in before['challenge_families'])
 
 
 def test_declared_reset_lowers_labels_in_a_release(live):

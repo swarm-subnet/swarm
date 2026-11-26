@@ -58,12 +58,13 @@ Divergence matters: the backend derives `CHALLENGE_FAMILY_IDS`, `FAMILY_STATES`,
 
 ### Current registry state
 
-Eight families: `cf_solar_patrol` and `cf_test_field` are `family_state='active'` and `emissions_state='active'`; the other six are completed, all with archived emissions:
+Nine families: `cf_solar_patrol` and `cf_test_field_v2` are `family_state='active'` and `emissions_state='active'`; the other seven (the first Swarm Test Field, `cf_test_field`, among them) are completed, all with archived emissions:
 
 | Family | `emission_allocation` |
 |--------|----------------------|
-| `cf_solar_patrol` | 0.95 |
-| `cf_test_field` | 0.05 |
+| `cf_solar_patrol` | 0.90 |
+| `cf_test_field_v2` | 0.10 |
+| `cf_test_field` | 0.00 (completed, historical 0.05) |
 | `cf_swarm_sar` | 0.00 (completed, historical 0.10) |
 | `cf_search_and_rescue` | 0.00 (completed, historical 0.05) |
 | `cf_interceptor` | 0.00 (historical 0.30) |
@@ -71,7 +72,7 @@ Eight families: `cf_solar_patrol` and `cf_test_field` are `family_state='active'
 | `cf_swarm_autopilot` | 0.00 (completed, historical 0.20) |
 | `cf_autopilot` | 0.00 (completed, historical 0.15) |
 
-Swarm Sentinel's 0.95 and Swarm Test Field's 0.05 sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Any burn now comes from a family that is itself not payable: no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first. Registry sync never rewrites `emission_allocation` on a row that already exists, so a new split also needs a backend migration to reach a provisioned database.
+Swarm Sentinel's 0.90 and Swarm Test Field v2's 0.10 sum to 1.00: the pool is fully allocated, so nothing burns for being unclaimed. Until Test Field v2 crowns its first king, Swarm Sentinel holds its 0.10 too. Any burn now comes from a family that is itself not payable: no kings, or archived. There is no headroom left, so raising one family through `POST /admin/families/{id}` is rejected unless another is lowered first. Registry sync never rewrites `emission_allocation` on a row that already exists, so a new split also needs a backend migration to reach a provisioned database.
 
 State enums: `family_state` ∈ {incubating, active, completed, archived}; `emissions_state` ∈ {incubating, active, saturated, archived, regression}; `visibility` ∈ {public, private}.
 
@@ -119,7 +120,7 @@ Validators send their full `swarm.__version__`. The backend dependency `require_
 
 ### Benchmark version: `X-Benchmark-Version`
 
-Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `6.1.0`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
+Validators send `BENCHMARK_VERSION` (the first 3 components of `swarm.__version__`, currently `6.2.0`). The backend fetches the official version from GitHub raw `swarm/__init__.py` on branch `SWARM_VERSION_REF` (env, default `main`), overridable wholesale via `SWARM_VERSION_URL`, cached 900 s. A submission counts as coming from an old validator only when its reported version parses **below** the official one: a *missing* header is accepted, not dropped. Old-validator seed scores are silently dropped (`recorded=0`).
 
 When a release raises a family's `benchmark_version`, the version-transition job (checked every 5 minutes) restarts only that family: its pending models start over and its champions are queued for re-evaluation. A release that raises no family label re-evaluates nothing. This means **merging the release to `main` (or whatever `SWARM_VERSION_REF` points at) is the cutover trigger**: the backend picks it up in up to about 20 minutes (the 15-minute cache TTL plus the next 5-minute transition-job tick), without a deploy. See [Family benchmark releases](#family-benchmark-releases).
 
@@ -280,14 +281,17 @@ re-evaluates nobody. A `benchmark_version` above `to` is also a scoring change a
 re-evaluates that family as usual. The declaration may stay in the registry
 afterwards: once it no longer names the live label, it is ignored.
 
-The `1.0.0` reset restarts all eight families from their release-derived labels
-(`cf_solar_patrol` from `6.0.0`, `cf_test_field` from `6.0.1`, the others from `5.1.6`). Deploy the backend that
+The `1.0.0` reset restarts the eight families that existed then from their release-derived labels
+(`cf_solar_patrol` from `6.0.0`, `cf_test_field` from `6.0.1`, the others from `5.1.6`).
+`cf_test_field_v2` is a new entry: it starts at `1.0.0` with no reset, and the completed
+`cf_test_field` keeps its label. Deploy the backend that
 understands resets before the release carrying them reaches `main`: an older
 backend refuses that release and keeps the old labels while updated validators
 report `1.0.0`, so no family gets work. Merge the reset release at the start of an
 epoch, so the epoch it lands in holds the least live work. The Swarm Sentinel
-and Swarm Test Field seed-check caches are filed per label, so each validator
-re-checks the seeds of both once after the reset; the verdicts are unchanged.
+seed-check cache is filed per label, so each validator re-checks Sentinel's seeds
+once after the reset; the verdicts are unchanged. Swarm Test Field v2 has no earlier
+label, so its seeds are checked once from scratch.
 
 Seed integers remain keyed by epoch and family. A benchmark bump does not rotate
 stored seeds. New files carry the local family's version; existing files retain

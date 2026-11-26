@@ -22,6 +22,8 @@ The seed picks how high the sun stands and which way it faces, and the hour that
 there is read back off the arc. The height sets its colour and strength: white and strong at
 the noon peak, orange and weak near the horizon. A family that also sets ``night_share`` hands
 that share of its seeds to the moon instead: a cool, weak light from high up under a dark sky.
+A family that also names a night stream draws that coin on the stream, never on the sun's own
+draws, so a seed that stays a day seed keeps the sun it had with no night at all.
 Every value is rounded to fixed decimals so each validator hands the renderer the same numbers.
 """
 
@@ -31,6 +33,8 @@ import math
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 from swarm.constants import (
     DAYLIGHT_AMBIENT,
@@ -171,20 +175,33 @@ def _moon(rng: random.Random, azimuth_deg: float) -> SunLight:
     )
 
 
-def seeded_sun(seed: int, night_share: float = 0.0) -> SunLight:
-    """The light for a seed: a sun on the day arc, or with the given share a moon instead.
+def own_night(seed: int, night_share: float, night_stream: int) -> bool:
+    """Whether a seed is a night, from a coin drawn on a stream of its own with the given share."""
+    return night_share > 0.0 and float(np.random.default_rng([int(night_stream), int(seed)]).random()) < night_share
+
+
+def seeded_sun(seed: int, night_share: float = 0.0, min_elevation_deg: float = SUN_MIN_ELEVATION_DEG,
+               night_stream: Optional[int] = None) -> SunLight:
+    """The light for a seed: a sun on the day arc no lower than `min_elevation_deg`, or with the given share a moon
+    instead, the coin drawn on `night_stream` when one is given.
 
     The sun's height is drawn directly, not its hour, so a low golden sun is as likely as
     noon; the hour is then read back off the arc. The heading is drawn before the day or
-    night coin, so a seed keeps its heading either way."""
+    night coin, so a seed keeps its heading either way, and its day or night with any floor.
+    A coin on its own stream leaves every day seed the sun a share of 0 gives it."""
     if not 0.0 <= night_share <= 1.0:
         raise ValueError(f"night_share must be between 0 and 1, got {night_share}")
+    peak = max_elevation_deg()
+    if not 0.0 <= min_elevation_deg < peak:
+        raise ValueError(f"min_elevation_deg must be from 0 to under the {peak:.1f} degree peak, got {min_elevation_deg}")
     rng = random.Random(int(seed) ^ SUN_SEED_OFFSET)
     azimuth_deg = rng.uniform(0.0, 360.0)
-    if night_share > 0.0 and rng.random() < night_share:
+    if night_stream is not None:
+        if own_night(seed, night_share, night_stream):
+            return _moon(rng, azimuth_deg)
+    elif night_share > 0.0 and rng.random() < night_share:
         return _moon(rng, azimuth_deg)
-    peak = max_elevation_deg()
-    elevation_deg = rng.uniform(SUN_MIN_ELEVATION_DEG, peak)
+    elevation_deg = rng.uniform(min_elevation_deg, peak)
     hour = _hour_for_elevation(elevation_deg, rng.random() < 0.5)
 
     # Air mass thins the sun near the horizon; the sky dims with it.
@@ -261,9 +278,10 @@ def sky_render_kwargs(sun: Optional[SunLight]) -> Optional[Dict[str, Any]]:
     return {"skyHorizonColor": list(horizon), "skyZenithColor": list(zenith)}
 
 
-def apply_seeded_sun(env: Any, seed: int, night_share: float = 0.0) -> SunLight:
-    """Light an environment with the seed's sun, or its moon, and return it."""
-    sun = seeded_sun(seed, night_share)
+def apply_seeded_sun(env: Any, seed: int, night_share: float = 0.0,
+                     min_elevation_deg: float = SUN_MIN_ELEVATION_DEG, night_stream: Optional[int] = None) -> SunLight:
+    """Light an environment with the seed's sun, no lower than `min_elevation_deg`, or its moon, and return it."""
+    sun = seeded_sun(seed, night_share, min_elevation_deg, night_stream)
     env._sun = sun
     env._light_direction = list(sun.direction)
     env._light_color = list(sun.color)
@@ -277,6 +295,7 @@ __all__: List[str] = [
     "daylight_hours",
     "daylight_render_kwargs",
     "max_elevation_deg",
+    "own_night",
     "seeded_sun",
     "sky_render_kwargs",
     "sun_color",

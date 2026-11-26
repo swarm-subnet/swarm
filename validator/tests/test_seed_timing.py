@@ -222,13 +222,14 @@ def test_a_family_step_budget_judges_each_act(monkeypatch, budget_sec, acts_expe
     [
         (5, (0.0, 0.2, 0.05), 3),
         (5, (0.0, 0.2, 0.25), 4),
-        (2, (0.0, 0.35, 0.35), 3),
+        (2, (0.0, 0.25, 0.25), 3),
     ],
     ids=["window-fits", "window-spent", "next-window-refills"],
 )
 def test_acts_in_one_window_share_its_budget(monkeypatch, window_acts, delays, acts_expected):
     """Under 400 ms per window, each act() gets what the window has left: 200 + 250 ms in one window is struck and
-    asked again, while 350 ms in the next window starts from a full budget."""
+    asked again, while 250 ms in each of two windows, 500 ms together, fits because the second window starts from a
+    full budget."""
     steps: list = []
 
     def _step(_action):

@@ -198,3 +198,18 @@ def test_pose_moves_the_thief_where_the_engine_can(client):
         assert np.isin(mask, thief.bodies).sum() > 50
     else:
         assert thief.moving is False
+
+
+def test_a_sized_body_is_the_build_scaled_with_its_feet_on_the_place(client):
+    """A size scales every vertex of the posed build about the place, the lowest point still on it; size 1 poses the
+    pinned bytes, so a body with no size is drawn as before."""
+    dress = intruders.outfit(np.random.default_rng(5))
+    plain = intruders.Intruder(dress, STANDING, client)
+    taller = intruders.Intruder(dress, STANDING, client, size=1.04)
+    frame = _moved(9)
+    base, big = plain.vertices(*frame), taller.vertices(*frame)
+    place = np.array(frame[2])
+    assert np.isclose(big[:, 2].min(), place[2])
+    assert np.allclose(big - place, (base - place) * 1.04, atol=1e-9)
+    assert np.ptp(big[:, 2]) == pytest.approx(np.ptp(base[:, 2]) * 1.04)
+    assert np.array_equal(intruders.Intruder(dress, STANDING, client, size=1.0).vertices(*frame), base)

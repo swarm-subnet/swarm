@@ -58,7 +58,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 # Light enough to import at argument-parsing time; it pulls in neither bittensor nor pybullet.
-from swarm.domain_model import CHALLENGE_FAMILY_IDS, DEFAULT_CLI_FAMILY_ID  # noqa: E402
+from swarm.domain_model import CHALLENGE_FAMILY_IDS, CHALLENGE_TYPE_IDS  # noqa: E402
+from swarm.seed_selection import MAP_TYPE_HELP, family_for_type  # noqa: E402
 
 _FOLLOW_CAMERA_FOV = 45.0
 
@@ -89,15 +90,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         required=True,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
-        help="Challenge type (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site).",
+        choices=CHALLENGE_TYPE_IDS,
+        help=MAP_TYPE_HELP,
     )
     parser.add_argument(
         "--family-id",
         type=str,
-        default=DEFAULT_CLI_FAMILY_ID,
+        default=None,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help=f"Challenge family whose world-building logic to use (default: {DEFAULT_CLI_FAMILY_ID}).",
+        help="Challenge family whose world-building logic to use (default: inferred from the map type).",
     )
     parser.add_argument(
         "--randomize-appearance",
@@ -269,13 +270,14 @@ def _compute_render_size(width: int, height: int, scale: float) -> Tuple[int, in
 
 def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
     """The stock render settings for a map type; the office draws closer and sharper than the rest."""
+    outdoor = _MapVisualProfile(
+        render_scale=0.65,
+        render_distance=100.0,
+        render_fps=20.0,
+        sim_fps=20.0,
+    )
     profiles = {
-        1: _MapVisualProfile(
-            render_scale=0.65,
-            render_distance=100.0,
-            render_fps=20.0,
-            sim_fps=20.0,
-        ),
+        1: outdoor,
         2: _MapVisualProfile(
             render_scale=0.72,
             render_distance=100.0,
@@ -300,12 +302,7 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
             render_fps=20.0,
             sim_fps=20.0,
         ),
-        6: _MapVisualProfile(
-            render_scale=0.65,
-            render_distance=100.0,
-            render_fps=20.0,
-            sim_fps=20.0,
-        ),
+        6: outdoor,
         # The office is one 18 m room, so it renders close and sharp instead of
         # paying for the 100 m draw distance the outdoor maps need.
         7: _MapVisualProfile(
@@ -314,12 +311,9 @@ def _default_visual_profile(challenge_type: int) -> _MapVisualProfile:
             render_fps=20.0,
             sim_fps=20.0,
         ),
-        8: _MapVisualProfile(
-            render_scale=0.65,
-            render_distance=100.0,
-            render_fps=20.0,
-            sim_fps=20.0,
-        ),
+        8: outdoor,
+        9: outdoor,
+        10: outdoor,
     }
     return profiles[int(challenge_type)]
 
@@ -888,6 +882,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     EGL plugin and the environment are torn down on the way out.
     """
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
+    args.family_id = family_for_type(args.type, args.family_id)
     adapter_name = _prepare_gpu_env(args.gpu)
 
     import pybullet as p

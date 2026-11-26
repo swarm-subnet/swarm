@@ -140,13 +140,19 @@ class View:
     step: int
     # Per pixel, the body id plus (link index + 1) << 24, or -1 where nothing was hit; set once the frame is drawn.
     objects: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
+    far_m: float = FAR_M                # the far plane, metres
 
     def matrices(self) -> Tuple[tuple, tuple]:
         """The renderer's view and projection matrices of this frame."""
         target = [e + f for e, f in zip(self.eye, self.forward)]
         view = p.computeViewMatrix(list(self.eye), target, list(self.up))
-        projection = p.computeProjectionMatrixFOV(self.vertical_fov_deg, self.width / self.height, NEAR_M, FAR_M)
+        projection = p.computeProjectionMatrixFOV(self.vertical_fov_deg, self.width / self.height, NEAR_M, self.far_m)
         return view, projection
+
+
+def far_plane_m(ep: SolarEpisode) -> float:
+    """How far the patrol's cameras draw: the episode's own far plane when it sets one, else FAR_M."""
+    return FAR_M if ep.far_m is None else float(ep.far_m)
 
 
 def vertical_fov_deg(diagonal_deg: float, width: int, height: int) -> float:
@@ -208,7 +214,7 @@ def aim(env: Any, ep: SolarEpisode) -> View:
     eye, forward, up = airframe.camera_pose(env, cam["tilt_deg"])
     return View(feed=feed, eye=_floats(eye), forward=_floats(forward), up=_floats(up), width=int(width),
                 height=int(height), vertical_fov_deg=vertical_fov_deg(diagonal, width, height),
-                sees=cam["thermal"] or not night(env) or _night_scene(cam, env), step=ep.step)
+                sees=cam["thermal"] or not night(env) or _night_scene(cam, env), step=ep.step, far_m=far_plane_m(ep))
 
 
 def _night_scene(cam: dict, env: Any) -> bool:

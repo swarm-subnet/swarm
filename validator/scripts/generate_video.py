@@ -73,9 +73,10 @@ if str(_REPO_ROOT) not in sys.path:
 from swarm.domain_model import (  # noqa: E402
     CHALLENGE_FAMILY_IDS,
     CHALLENGE_FAMILY_TO_ENVIRONMENT_TYPES,
+    CHALLENGE_TYPE_IDS,
     CHALLENGE_TYPE_TO_ENVIRONMENT_TYPE,
-    DEFAULT_CLI_FAMILY_ID,
 )
+from swarm.seed_selection import MAP_TYPE_HELP, family_for_type, seed_file_family  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Action log I/O
@@ -85,7 +86,7 @@ from swarm.domain_model import (  # noqa: E402
 def _action_log_path(directory: Path, seed: int, challenge_type: int) -> Path:
     """Location of the recorded-action JSON for one seed, named after its map label."""
     label = {1: "city", 2: "open", 3: "mountain", 4: "village", 5: "warehouse", 6: "forest", 7: "office", 8: "solar",
-             9: "testsite"}.get(
+             9: "testsite", 10: "testfield"}.get(
         challenge_type, f"type{challenge_type}"
     )
     return Path(directory) / f"seed{seed}_{label}_actions.json"
@@ -123,6 +124,7 @@ TYPE_LABELS: Dict[int, str] = {
     7: "office",
     8: "solar",
     9: "testsite",
+    10: "testfield",
 }
 BENCH_GROUP_ORDER: List[str] = [
     "type1_city",
@@ -134,6 +136,7 @@ BENCH_GROUP_ORDER: List[str] = [
     "type7_office",
     "type8_solar",
     "type9_testsite",
+    "type10_testfield",
 ]
 BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type1_city": 1,
@@ -145,6 +148,7 @@ BENCH_GROUP_TO_TYPE: Dict[str, int] = {
     "type7_office": 7,
     "type8_solar": 8,
     "type9_testsite": 9,
+    "type10_testfield": 10,
 }
 
 # --- output defaults ---
@@ -261,7 +265,7 @@ def build_task(seed: int, challenge_type: int, family_id: str = "cf_autopilot"):
         raise ValueError(f"{family_id} never flies type {int(challenge_type)} ({environment}); it flies {', '.join(flown)}")
     from swarm.constants import SIM_DT
 
-    if family_id in ("cf_solar_patrol", "cf_test_field"):
+    if family_id in ("cf_solar_patrol", "cf_test_field", "cf_test_field_v2"):
         from swarm.challenge_families import build_random_task
 
         return build_random_task(sim_dt=SIM_DT, seed=int(seed), family_id=family_id)
@@ -468,8 +472,15 @@ class _CameraBase:
         self._fov = fov
         self.solar_env = None
 
+    def _prepare_capture(self, eye) -> None:
+        """Set Test Field v2 grass for this recording camera's eye."""
+        runtime = getattr(self.solar_env, "family_runtime", None)
+        if getattr(runtime, "family_id", None) == "cf_test_field_v2":
+            runtime.show_video_grass(self.solar_env, eye)
+
     def _shoot(self, eye, target, up=(0, 0, 1), far: float = 500.0) -> np.ndarray:
         """Render from eye towards target: through the patrol's own colour camera on a Sentinel env, else TinyRenderer."""
+        self._prepare_capture(eye)
         if self.solar_env is not None:
             return _solar_frame(self.solar_env, eye, target, up, self._w, self._h, self._fov)
         return _render_rgb(self._cli, self._view(eye, target, up), self._proj(far=far), self._w, self._h)
@@ -526,6 +537,7 @@ class DepthCamera(_CameraBase):
         view = self._view(eye, tgt, up)
         proj = self._proj(near=self._near, far=self._far)
 
+        self._prepare_capture(eye)
         depth_m = _render_depth(
             self._cli,
             view,
@@ -1110,7 +1122,7 @@ def _agent_action(agent, obs, env, n_drones, act_dim, act_lo, act_hi, velocity_t
     act = np.asarray(raw, dtype=np.float32)
     act = act.reshape(n_drones, act_dim) if n_drones > 1 else act.flatten()
     act = np.clip(act, act_lo, act_hi)
-    if getattr(env, "ACT_TYPE", None) == velocity_type and getattr(env.task, "family_id", "") not in ("cf_solar_patrol", "cf_test_field"):
+    if getattr(env, "ACT_TYPE", None) == velocity_type and getattr(env.task, "family_id", "") not in ("cf_solar_patrol", "cf_test_field", "cf_test_field_v2"):
         speed = act[..., :3]
         norm = np.maximum(np.linalg.norm(speed, axis=-1, keepdims=True), 1e-6)
         speed *= np.minimum(1.0, float(speed_limit) / norm)
@@ -1410,9 +1422,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type",
         type=int,
         default=None,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        choices=CHALLENGE_TYPE_IDS,
         metavar="TYPE",
-        help="challenge type  (1=City 2=Open 3=Mountain 4=Village 5=Warehouse 6=Forest 7=Office (completed) 8=Solar 9=Test site)",
+        help=MAP_TYPE_HELP,
     )
     req.add_argument(
         "--seed-file",
@@ -1424,9 +1436,9 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument(
         "--family-id",
         type=str,
-        default=DEFAULT_CLI_FAMILY_ID,
+        default=None,
         choices=sorted(CHALLENGE_FAMILY_IDS),
-        help=f"challenge family to fly  (default: {DEFAULT_CLI_FAMILY_ID})",
+        help="challenge family to fly (default: inferred from the map type or seed file)",
     )
 
     vid = ap.add_argument_group("video options")
@@ -1558,15 +1570,17 @@ def _resolve_modes(raw_mode: str) -> List[str]:
     return modes
 
 
-def _resolve_jobs(args: argparse.Namespace) -> List[VideoJob]:
-    """Turn the parsed arguments into the seeds to fly, from a seed file or from --seed with --type."""
+def _resolve_jobs(args: argparse.Namespace) -> tuple[str, List[VideoJob]]:
+    """Resolve the family and seeds to fly from a seed file or an explicit seed and map type."""
     if args.seed_file is not None:
         if args.seed is not None or args.type is not None:
             raise ValueError("--seed-file cannot be combined with --seed or --type")
-        return _load_seed_jobs(args.seed_file, family_id=args.family_id)
+        family_id = seed_file_family(args.seed_file, args.family_id)
+        return family_id, _load_seed_jobs(args.seed_file, family_id=family_id)
     if args.seed is None or args.type is None:
         raise ValueError("Provide either --seed-file, or both --seed and --type")
-    return [VideoJob(seed=int(args.seed), challenge_type=int(args.type))]
+    family_id = family_for_type(args.type, args.family_id)
+    return family_id, [VideoJob(seed=args.seed, challenge_type=args.type)]
 
 
 def _expected_output_paths(
@@ -1602,7 +1616,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         )
 
     modes = _resolve_modes(args.mode)
-    jobs = _resolve_jobs(args)
+    family_id, jobs = _resolve_jobs(args)
     out_dir = args.out or (_SCRIPT_DIR / "videos")
     expected_paths = _expected_output_paths(out_dir, jobs, modes)
 
@@ -1660,7 +1674,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     challenge_type=job.challenge_type,
                     modes=modes,
                     out_dir=out_dir,
-                    family_id=args.family_id,
+                    family_id=family_id,
                     width=args.width,
                     height=args.height,
                     fps=args.fps,
@@ -1679,7 +1693,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     challenge_type=job.challenge_type,
                     modes=modes,
                     out_dir=out_dir,
-                    family_id=args.family_id,
+                    family_id=family_id,
                     width=args.width,
                     height=args.height,
                     fps=args.fps,

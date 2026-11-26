@@ -70,6 +70,14 @@ install_python_reqs() {
   success_msg "Dependencies installed."
 }
 
+fetch_real_areas() {
+  # Swarm Test Field v2 flies real areas that are fetched beside swarm-worlds, about 2.6 GB the first time.
+  echo -e "\e[34m[INFO]\e[0m Fetching the real areas Swarm Test Field v2 flies..."
+  python -m swarm_worlds.areas \
+    || handle_error "Failed to fetch the real areas; run 'python -m swarm_worlds.areas' again"
+  success_msg "Real areas in place."
+}
+
 install_modules() {
   echo -e "\e[34m[INFO]\e[0m Installing current package in editable mode..."
   uv pip install -e . --no-deps \
@@ -83,6 +91,7 @@ main() {
   create_activate_venv
   upgrade_setuptools
   install_python_reqs
+  fetch_real_areas
   install_modules
   success_msg "Setup completed successfully."
   echo -e "\e[33m[INFO]\e[0m Virtual environment: $(pwd)/validator_env"
