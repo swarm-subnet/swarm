@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import resource
 import sys
 import threading
 import time
@@ -313,6 +314,81 @@ def test_flights_judge_seed_after_seed_in_their_own_processes(kept, monkeypatch,
     assert all(judged) and len({verdict.end_reason for verdict in judged}) == 2 < len(judged)
 
 
+def test_a_flight_past_its_memory_bound_ends_after_its_seed_and_a_fresh_one_takes_the_next(kept, monkeypatch, tmp_path):
+    """With a memory bound every process has passed, each seed is judged by a process of its own; with none, the
+    one process judges them all."""
+    (tmp_path / "fake_pilot.py").write_text(_FAKE_PILOT)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "fake_pilot")
+    judged_by = {}
+    for bound, seeds in ((0.0, (11, 13, 15)), (None, (17, 19, 21))):
+        with seed_checks.Flights(1, retire_rss_mb=bound) as flights:
+            for seed in seeds:
+                flights.fly([seed])
+        judged_by[bound] = {seed_checks.cached(seed).end_reason for seed in seeds}
+    assert len(judged_by[0.0]) == 3 and len(judged_by[None]) == 1
+
+
+def test_a_flight_ended_for_its_memory_that_exits_with_an_error_stops_the_preparation(kept, monkeypatch, tmp_path):
+    """A process let end for its memory that exits with an error fails the preparation, as at the end of one."""
+    (tmp_path / "crash_pilot.py").write_text(_FAKE_PILOT + "sys.exit(3)\n")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "crash_pilot")
+    with pytest.raises(SeedCheckError, match="ended with code 3"):
+        with seed_checks.Flights(1, retire_rss_mb=0.0) as flights:
+            flights.fly([11])
+            flights.fly([13])
+    # The error came from letting the first process end, before the next seed was handed to anyone.
+    assert seed_checks.cached(11) is not None and seed_checks.cached(13) is None
+
+
+def test_a_flight_ended_for_its_memory_that_will_not_end_is_stopped_and_the_next_seed_still_flies(kept, monkeypatch, tmp_path):
+    """A process that ignores the end of its seeds is stopped after the wait, and a fresh one judges the next seed."""
+    (tmp_path / "deaf_pilot.py").write_text(_FAKE_PILOT.replace("import sys\n", "import sys\nimport time\n") + "time.sleep(600)\n")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "deaf_pilot")
+    monkeypatch.setattr(seed_checks, "RETIRE_WAIT_S", 0.3)
+    flights = seed_checks.Flights(1, retire_rss_mb=0.0)
+    try:
+        flights.fly([11])
+        first = next(iter(flights.runs))
+        flights.fly([13])
+        assert first.returncode is not None and first not in flights.runs and len(flights.runs) == 1
+        assert seed_checks.cached(11).end_reason != seed_checks.cached(13).end_reason
+    finally:
+        for run in flights.runs:
+            run.kill()
+            run.wait()
+            flights.logs[run].close()
+
+
+def test_a_seed_judged_elsewhere_while_a_process_ended_is_not_flown_again(kept, monkeypatch, tmp_path):
+    """A verdict another preparation kept while a process was let end spares that seed its flight."""
+    (tmp_path / "fake_pilot.py").write_text(_FAKE_PILOT)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]))
+    monkeypatch.setattr(seed_checks, "PILOT_MODULE", "fake_pilot")
+    with seed_checks.Flights(1, retire_rss_mb=0.0) as flights:
+        flights.fly([11])
+        ended = flights._retire
+
+        def end_and_publish(run):
+            """End the process as usual, and keep seed 13's verdict as another preparation would meanwhile."""
+            ended(run)
+            seed_checks.keep(Verdict(seed=13, passed=True, reason="", end_reason="elsewhere"))
+
+        monkeypatch.setattr(flights, "_retire", end_and_publish)
+        flights.fly([13])
+        assert not flights.runs and seed_checks.cached(13).end_reason == "elsewhere"
+
+
+def test_a_process_memory_is_read_in_mebibytes_and_an_absent_one_is_none():
+    """The resident memory of a running process is read in MiB, never above its own peak; a process that does not
+    exist has none."""
+    peak_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    assert 0.2 * peak_mb < seed_checks._rss_mb(os.getpid()) <= 1.02 * peak_mb
+    assert seed_checks._rss_mb(2**22 + 1) is None
+
+
 def test_reference_flights_run_on_one_blas_thread_whatever_the_host_sets(kept, monkeypatch, tmp_path):
     """A real flight process sees one BLAS and one OpenMP thread, as in the validator image, over the host's eight."""
     (tmp_path / "threads_pilot.py").write_text(_FAKE_PILOT.replace(
@@ -558,11 +634,10 @@ def test_the_scored_seed_count_is_read_from_the_registry():
 
 @pytest.mark.asyncio
 async def test_the_scored_seeds_are_judged_once_in_the_background_highest_first(monkeypatch):
-    """Swarm Sentinel judges ahead: its 2,000 scored seeds, once, in a worker thread at the lowest priority, highest
-    first; once they are all judged the validator remembers it and starts nothing more. The Test Field also judges
-    ahead where its map is installed, so it is left out here."""
+    """Swarm Sentinel judges the 2,000 scored seeds once, in descending order in a low-priority worker."""
     runtime = require_runtime_family(FAMILY_ID)
     monkeypatch.setattr(require_runtime_family("cf_test_field"), "prepares_seeds", False)
+    monkeypatch.setattr(require_runtime_family("cf_test_field_v2"), "prepares_seeds", False)
     judged, started = set(), []
 
     def prepare_seeds(seeds, *, background=False):

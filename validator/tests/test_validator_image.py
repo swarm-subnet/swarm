@@ -233,13 +233,14 @@ def test_main_builds_one_image_per_commit_and_the_publish_tags_it() -> None:
 
 def test_a_publish_without_a_tested_image_still_tests_before_it_pushes() -> None:
     """Proves the fallback keeps the old guarantee: with no tested image to reuse, the image is built, the suite
-    runs inside it, and only then is it pushed."""
+    runs inside it, and only then is it pushed; the disk is freed first, under the same guard."""
     publish = WORKFLOW.read_text()
     guard = "steps.tested.outputs.found != 'true'"
-    build, tests, push = (publish.index(name) for name in (
-        "- name: Build for the test run", "- name: Run the validator tests inside the image", "- name: Push"))
-    assert build < tests < push
-    assert publish.count(guard) == 3
+    free, build, tests, push = (publish.index(name) for name in (
+        "- name: Free disk space", "- name: Build for the test run", "- name: Run the validator tests inside the image",
+        "- name: Push"))
+    assert free < build < tests < push
+    assert publish.count(guard) == 4
 
 
 def test_the_update_script_finds_the_checkout_from_its_copy(tmp_path: Path) -> None:

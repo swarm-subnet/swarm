@@ -230,12 +230,17 @@ class ChallengeFamilyRuntime:
     seeded_sun: bool = False
     # Share of seeds the moon lights instead of the sun, 0 to 1; only read with seeded_sun.
     night_share: float = 0.0
+    # With night_share: the night coin's own stream, so a day seed keeps the sun a share of 0 gives it; None draws
+    # the coin on the sun's own stream.
+    night_stream: Optional[int] = None
     # With seeded_sun: the renderer computes the sky from that sun (ER_SWARM_SKY_SUN), and
     # seeds a cloud layer into it; off keeps the family's sky_colors or the white background.
     sky_from_sun: bool = False
     sky_clouds: bool = False
     # With raycast, seeded_sun and sky_from_sun: colour frames use ER_SWARM_DAYLIGHT under a sky photo turned to the seed's sun; night keeps the moon.
     daylight: bool = False
+    # A family flying real areas: the light their textures were matched under (swarm.core.maps.andorra.rendering).
+    area_light: bool = False
     # Depth camera backend: "tiny" is TinyRenderer, "raycast" the Embree ray caster in the same wheel.
     render_backend: str = "tiny"
     # Drone physics mode, a gym_pybullet_drones Physics value: "pyb" is rotor thrust only,

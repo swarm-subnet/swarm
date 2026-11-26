@@ -156,6 +156,21 @@ def test_a_zoom_frame_smooths_every_edge(monkeypatch):
     assert wide & p.ER_SWARM_EDGE_OUTLINE and wide & p.ER_EDGE_ANTIALIAS and not wide & p.ER_SWARM_CREASE_FILL
 
 
+def test_a_zoom_ray_reaches_as_far_as_the_patrol_draws():
+    """The point a box names is found within the cameras' far plane: a wall 3 km away lies past today's reach and
+    inside a 40 km one."""
+    cli = p.connect(p.DIRECT)
+    try:
+        wall = p.createCollisionShape(p.GEOM_BOX, halfExtents=[50.0, 1.0, 50.0], physicsClientId=cli)
+        p.createMultiBody(0, wall, -1, [0.0, 3000.0, 20.0], physicsClientId=cli)
+        env = SimpleNamespace(CLIENT=cli, DRONE_IDS=[-2])
+        origin, ray = np.array([0.0, 0.0, 20.0]), np.array([0.0, 1.0, 0.0])
+        assert zoom._first_hit(env, origin, ray) is None
+        assert zoom._first_hit(env, origin, ray, 40000.0)[1] == pytest.approx(2999.0)
+    finally:
+        p.disconnect(cli)
+
+
 def test_a_box_turns_into_the_ray_through_its_centre():
     """The centre of the frame looks straight ahead, and each edge half the lens's angle off it, top up and left left."""
     seen = _view(vertical_fov_deg=40.0)

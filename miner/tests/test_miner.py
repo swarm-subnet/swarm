@@ -716,6 +716,8 @@ def test_submit_private_end_to_end_against_a_fake_backend(monkeypatch, tmp_path)
     logs = {"info": [], "error": []}
     monkeypatch.setattr(miner, "httpx", backend)
     monkeypatch.setattr(miner.time, "sleep", lambda seconds: None)
+    # The flow reads the real clock: without this it is refused in the 90 minutes before an epoch ends.
+    monkeypatch.setattr(miner, "_submission_window", lambda now: {"open": True, "reopens_in_seconds": 0})
     monkeypatch.setattr(miner.bt, "logging", SimpleNamespace(
         info=lambda m, *_a, **_k: logs["info"].append(m), warning=lambda *_a, **_k: None,
         error=lambda m, *_a, **_k: logs["error"].append(m), set_debug=lambda *_a, **_k: None,

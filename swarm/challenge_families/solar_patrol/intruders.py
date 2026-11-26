@@ -253,11 +253,12 @@ def outfit(rng: np.random.Generator) -> Dict[str, Any]:
 class Intruder:
     """One dressed thief in the scene: a visual body per colour piece, posed frame by frame."""
 
-    def __init__(self, dress: Dict[str, Any], first: tuple, client: int = 0):
+    def __init__(self, dress: Dict[str, Any], first: tuple, client: int = 0, size: float = 1.0):
         """Fit every piece to the build, hide the covered skin, stack the weights, and create the visual bodies in the
-        first frame: (local rotations xyzw, root, place, yaw), the pose an engine without mesh rewriting keeps."""
+        first frame: (local rotations xyzw, root, place, yaw), the pose an engine without mesh rewriting keeps. size
+        scales the whole posed body on top of its build; at 1 every vertex is the build's own."""
         cat = catalogue()
-        self.cat, self.client, self.dress = cat, client, dress
+        self.cat, self.client, self.dress, self.size = cat, client, dress, float(size)
         self.build = cat.builds.index(dress["build"])
         body_yup = cat.build_verts[self.build]
         body_zup = _to_zup(body_yup)
@@ -359,7 +360,8 @@ class Intruder:
         return len(self.rest)
 
     def vertices(self, local_xyzw: np.ndarray, root: np.ndarray, place: Sequence[float], yaw: float) -> np.ndarray:
-        """Every drawn vertex for one move frame, turned by yaw and standing with its lowest point on place (x, y, z)."""
+        """Every drawn vertex for one move frame at the body's size, turned by yaw and standing with its lowest point on
+        place (x, y, z)."""
         world = self.cat.world(self.build, _quat_to_mat(np.asarray(local_xyzw, dtype=np.float64)),
                                np.asarray(root, dtype=np.float64))
         joint = _product(world[self.bones], self.inv_bind[self.bones])[:, :3].reshape(len(self.bones), 12)
@@ -367,6 +369,8 @@ class Intruder:
         for bones, weights in self.slots:
             blended[:len(bones)] += joint[bones] * weights
         v = _to_zup(_apply(blended.reshape(-1, 3, 4), self.rest)[self.unsort])
+        if self.size != 1.0:
+            v = v * self.size
         c, s = math.cos(yaw), math.sin(yaw)
         x, y = v[:, 0] * c - v[:, 1] * s, v[:, 0] * s + v[:, 1] * c
         return np.stack([x + place[0], y + place[1], v[:, 2] - v[:, 2].min() + place[2]], 1)

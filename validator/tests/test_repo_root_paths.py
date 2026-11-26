@@ -51,6 +51,7 @@ EXPECTED: dict[str, list[str]] = {
     "scripts/cross_machine_check.py": ["REPO_ROOT"],
     "scripts/dump_depth_frame.py": ["REPO_ROOT"],
     "scripts/field_reference_models.py": ["REPO_ROOT"],
+    "scripts/field_v2_reference_models.py": ["REPO_ROOT"],
     "scripts/gen_family_io_tables.py": ["REPO_ROOT"],
     "scripts/generate_video.py": ["REPO_ROOT", "validator/scripts"],
     "scripts/health/check_current_epoch_weights.py": ["REPO_ROOT"],

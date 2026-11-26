@@ -69,6 +69,8 @@ _GROUP_RAM_ESTIMATES_MB = {
     "type8_solar": 3100.0,
     # A Test Field patrol peaked at 2,949 MiB over 700 patrols; about 10% on top.
     "type9_testsite": 3250.0,
+    # A Test Field v2 worker is replaced once it passes 3,300 MiB, so a patrol never holds more.
+    "type10_testfield": 3300.0,
 }
 # On an engine without the byte stream look a patrol peaked at 3,344 MB over 100 runs; about 10% on top.
 _SOLAR_RAM_ON_OLDER_ENGINE_MB = 3700.0

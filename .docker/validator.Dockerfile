@@ -68,6 +68,10 @@ WORKDIR /opt/swarm-validator
 COPY validator/requirements.txt /tmp/validator-requirements.txt
 RUN uv pip install --system --no-cache -r /tmp/validator-requirements.txt
 
+# The base image already holds the real areas of the worlds release it was built with; this fetches only what a
+# base built before a worlds release still lacks.
+RUN python -m swarm_worlds.areas
+
 COPY . /opt/swarm-validator
 
 # The package itself is installed without resolving the root requirements a second time.

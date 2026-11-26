@@ -13,9 +13,9 @@ At a high level, the repo supports two main workflows:
 
 Core benchmark assumptions:
 
-- Models receive camera images (depth and RGB for the rescue families; colour, thermal and zoom for Swarm Sentinel and Swarm Test Field) plus a state vector, and both also get a site map of their site.
-- Models output flight commands per the family contract: 6 components for the rescue families, 24 for Swarm Sentinel (sticks, gimbal, camera and zoom controls, reports and the dock's buttons), and Sentinel's 24 plus a reported position for Swarm Test Field.
-- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the solar park Swarm Sentinel patrols and the real test field Swarm Test Field flies.
+- Models receive camera images (depth and RGB for the rescue families; colour, thermal and zoom for Swarm Sentinel and Swarm Test Field v2) plus a state vector, and both also get a site map of their site.
+- Models output flight commands per the family contract: 6 components for the rescue families, 24 for Swarm Sentinel (sticks, gimbal, camera and zoom controls, reports and the dock's buttons), and Sentinel's 24 plus a reported position for Swarm Test Field v2.
+- Evaluation runs across procedurally generated environments such as city, mountain, village, warehouse, forest, and open terrain, plus the solar park Swarm Sentinel patrols and the real fields Swarm Test Field v2 flies.
 
 ## Primary Entrypoints
 

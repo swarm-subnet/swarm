@@ -31,14 +31,14 @@ def _env_for_sun(monkeypatch, sun, sky_from_sun=True, sky_clouds=False, seed=77)
     return env
 
 
-def test_no_family_paints_a_sky_today():
-    """Every registered family keeps the white background, so existing pixels are untouched; only Swarm Sentinel and
-    the Test Field light their sky from the sun, and only when the installed engine can."""
+def test_patrol_families_use_the_sun_sky_on_a_supported_engine():
+    """Patrol families light the sky from the sun when supported, and other families keep the default sky."""
     for family_id in list_registered_challenge_families():
         family = get_challenge_family(family_id)
         assert family.sky_colors(task=None) is None
         assert not family.sky_clouds, family_id
-        assert family.sky_from_sun == (family_id in ("cf_solar_patrol", "cf_test_field") and hasattr(p, "ER_SWARM_SKY_SUN")), family_id
+        patrol = family_id in ("cf_solar_patrol", "cf_test_field", "cf_test_field_v2")
+        assert family.sky_from_sun == (patrol and hasattr(p, "ER_SWARM_SKY_SUN")), family_id
 
 
 def test_base_runtime_defaults_to_no_sky():

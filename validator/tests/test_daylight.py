@@ -28,6 +28,7 @@ import pytest
 from swarm.challenge_families.base import ChallengeFamilyRuntime
 from swarm.challenge_families.solar_patrol.family import SolarPatrolChallengeFamily
 from swarm.challenge_families.test_field.family import TestFieldChallengeFamily
+from swarm.challenge_families.test_field_v2.family import TestFieldV2ChallengeFamily
 from swarm.constants import (
     MOON_AMBIENT_RANGE,
     MOON_COLOR,
@@ -43,6 +44,7 @@ from swarm.core.daylight import (
     apply_seeded_sun,
     daylight_hours,
     max_elevation_deg,
+    own_night,
     seeded_sun,
     sky_render_kwargs,
     sun_color,
@@ -127,15 +129,18 @@ def test_apply_seeded_sun_lights_the_env():
 
 
 def test_families_are_off_by_default():
-    """No family opts in unless it says so, so today's families keep today's light and no night; Solar Patrol flies
-    its seeds by day and by night, and the Test Field by day under a seeded sun."""
+    """Seeded daylight and nights are opt-in, with a separate night stream for Test Field v2."""
     assert ChallengeFamilyRuntime.seeded_sun is False
-    assert ChallengeFamilyRuntime.night_share == 0.0
+    assert ChallengeFamilyRuntime.night_share == 0.0 and ChallengeFamilyRuntime.night_stream is None
     for cls in ChallengeFamilyRuntime.__subclasses__():
         if cls is SolarPatrolChallengeFamily:
+            assert cls.night_stream is None
             continue
         if cls is TestFieldChallengeFamily:
-            assert cls.seeded_sun is True and cls.night_share == 0.0
+            assert cls.seeded_sun is True and cls.night_share == 0.0 and cls.night_stream is None
+            continue
+        if cls is TestFieldV2ChallengeFamily:
+            assert cls.seeded_sun is True and cls.night_share == 0.4 and cls.night_stream is not None
             continue
         assert cls.seeded_sun is False, cls.__name__
         assert cls.night_share == 0.0, cls.__name__
@@ -242,3 +247,31 @@ def test_apply_seeded_sun_passes_the_night_share():
     assert moon.night is True and env._sun == moon
     assert env._light_direction == list(moon.direction)
     assert env._light_color == list(MOON_COLOR)
+
+
+def test_a_night_coin_on_its_own_stream_leaves_every_day_seed_its_sun():
+    """With a stream named, a seed that stays a day seed keeps the sun a share of 0 gives it, a night seed gets the
+    moon, about the share of seeds are nights, and the coin reads a seed past 64 bits whole."""
+    seeds = range(2000)
+    nights = [s for s in seeds if own_night(s, 0.2, 0x4E17)]
+    assert 0.17 < len(nights) / len(seeds) < 0.23
+    for s in seeds:
+        sun = seeded_sun(s, 0.2, night_stream=0x4E17)
+        assert sun.night == (s in nights)
+        if not sun.night:
+            assert sun == seeded_sun(s)
+    assert sum(seeded_sun(s, 0.2) != seeded_sun(s) for s in seeds if s not in nights) > 1000
+    wide = [own_night(2 ** 100 + s, 0.2, 0x4E17) for s in range(64)]
+    assert wide != [own_night(s, 0.2, 0x4E17) for s in range(64)] and not own_night(5, 0.0, 0x4E17)
+
+
+def test_the_env_draws_its_night_on_the_familys_own_stream():
+    """The environment hands the family's night stream to the sun, so its night is the family's own coin."""
+    env = MovingDroneAviary.__new__(MovingDroneAviary)
+    for seed in range(40):
+        env.family_runtime = SimpleNamespace(seeded_sun=True, night_share=0.2, night_stream=0x4E17)
+        env._apply_seeded_sun(seed)
+        assert env._sun == seeded_sun(seed, 0.2, night_stream=0x4E17)
+        env.family_runtime = SimpleNamespace(seeded_sun=True, night_share=0.2)
+        env._apply_seeded_sun(seed)
+        assert env._sun == seeded_sun(seed, 0.2)

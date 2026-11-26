@@ -6,15 +6,15 @@ Run `swarm doctor` after installation to verify your environment is ready.
 
 ## 🎯 What You Evaluate
 
-Swarm runs **two active challenge families**, Swarm Sentinel and Swarm Test Field; Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue and Swarm Search and Rescue are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
+Swarm runs **two active challenge families**, Swarm Sentinel and Swarm Test Field v2; Interceptor, Autopilot, Swarm Autopilot, Office Interceptor, Search and Rescue, Swarm Search and Rescue and the first Swarm Test Field are completed. Evaluation is family-scoped: every task the backend hands you names one family, and the validator builds that family's environment, maps, and seeds from the task metadata; you never pick a family yourself.
 
 | Family | ID | Mission | Emissions |
 |--------|-----|---------|-----------|
-| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 95% |
-| [Swarm Test Field](../../docs/families/test_field.md) | `cf_test_field` | One drone flies the company's real test field from its dock, reports where every person stands, keeps 1 m inside the field's edge and lands back in the dock | 5% |
+| [Swarm Sentinel](../../docs/families/solar_patrol.md) | `cf_solar_patrol` | One drone patrols a solar park from its dock by day and by night, reports intruders and lands back in the dock | 90% |
+| [Swarm Test Field v2](../../docs/families/test_field_v2.md) | `cf_test_field_v2` | One drone flies a real field drawn from the seed, from its dock, reports where every person, goat, dog and grown boar on it stands, keeps 1 m inside the field's edge and lands back in the dock | 10% |
 | [Interceptor](../../docs/families/completed/interceptor.md) | `cf_interceptor` | Completed open-terrain pursuit; winning solution preserved as open source | 0% (historical 30%) |
 
-Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB.
+Before the first Swarm Sentinel task of an epoch, the validator flies each of that epoch's Sentinel seeds once with a scripted reference pilot (the seed checks) and leaves Sentinel tasks to other validators until that is done; the verdicts are cached on disk. A Sentinel worker keeps about 2.8 GB of park caches between patrols and is recycled once it passes 3,200 MiB. Swarm Test Field v2's seeds are checked by its own reference pilot, in the background: a seed passes only if the pilot reports every person and every animal to report, with no false alarm and no failed animal report; a seed not judged yet is judged just before it flies. Every real area brings about 300 MB of pictures that the simulator keeps until its process ends, so a Test Field v2 worker is recycled once it passes 3,300 MiB (about every five seeds), a Test Field v2 check process ends once it passes 5,000 MiB and a fresh one takes the next seed, and the check pool counts each of its processes at 6,000 MiB: a 48 GB machine runs one.
 
 ## 🖥️ System Requirements
 
@@ -91,7 +91,11 @@ sudo systemctl status docker
 ## 📦 Installation
 
 The validator ships as a container image. Nothing is compiled on your machine and no
-Python environment is created, so a validator behaves the same on every host.
+Python environment is created, so a validator behaves the same on every host. The image
+carries the real areas Swarm Test Field v2 flies (about 5 GB on disk), so there is nothing
+to fetch. A validator run from a source install instead runs `python -m swarm_worlds.areas`
+once after the requirements are installed (about 2.6 GB to download; `python -m swarm_worlds.areas check`
+says what is missing), and a family whose areas are missing is refused.
 
 ### 1. Clone the repository
 
@@ -405,7 +409,7 @@ rebuilds anything it finds missing there on its next cycle.
    Per-seed and aggregate scores are submitted to the backend as they are computed.
 
 5. **Apply weights**
-   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last champions (10 in Swarm Sentinel, 3 in Swarm Test Field, 5 in the others) share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
+   Validators recompute the weight map locally from the per-family windows on every forward cycle and set it on-chain on the chain's epoch-length cadence. The weights come from per-family King of the Hill windows: each family's last champions (10 in Swarm Sentinel, 3 in Swarm Test Field v2, 5 in the others) share that family's emission slice; see [king_of_the_hill.md](../../docs/king_of_the_hill.md).
 
 6. **Caching**
    Results are cached by model hash + benchmark version + epoch. The same model is not re-evaluated within the same epoch unless a re-eval is explicitly queued (for example, a benchmark version bump).

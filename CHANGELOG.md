@@ -2,6 +2,17 @@
 
 Two numbers describe a release. `swarm/__init__.py` holds the release version: changing it makes validators update. Each challenge family's `benchmark_version` in the registry is that family's own benchmark label: raising it re-evaluates that family's champions, and nothing else does.
 
+## 6.2.0
+
+- Swarm Test Field v2 (`cf_test_field_v2`) launches as a task of its own, at `1.0.0`, with 10% of emissions. Each seed draws its own field, cut from real ground, 1,378 to 4,133 m², open or reaching into trees; two seeds in five are nights. Up to 10 people stand, crouch, kneel, sit or walk on it, alone or together, some under trees.
+- The model reports every person on the field and every goat, dog and grown boar that lives on it, as a person or as an animal, with a box and the spot within 1 m. A seed scores `0.50 people + 0.20 animals + 0.20 coverage + 0.10 flight`. Missed people, false alarms and edge trips turn 5 of the model's best seeds to 0; animals cost only their own seed.
+- People and animals outside the field, birds, piglets, rats and mice are there to be left alone. A seed holds at most six animals.
+- The first Swarm Test Field (`cf_test_field`) is completed: it takes no submissions and pays nothing, and its code, page and champion stay. Swarm Sentinel carries 90% of emissions.
+- The real areas are fetched beside `swarm-worlds`, one archive an area, each checked against its SHA-256: `python -m swarm_worlds.areas`. The validator image and the miner setup run it.
+- The thermal camera reads the ground of a real area against the field's own brightness, so tile edges and the grain of the ground photograph no longer show as heat. Swarm Sentinel's frames are unchanged.
+- The benchmark's result table lists each seed's animals to report and its valid and failed animal reports.
+- `swarm-bullet3` 2.0.0.7 and `swarm-worlds` v1.2.0.
+
 ## 6.1.0
 
 - Every family's benchmark version restarts at `1.0.0`: `cf_solar_patrol` from `6.0.0`, `cf_test_field` from `6.0.1`, the other six from `5.1.6`. It is a rename only: nobody is re-evaluated and no score changes. Work from earlier epochs keeps its old label, and the backend lists each reset on `/version`.

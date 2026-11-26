@@ -116,13 +116,13 @@ def _patrol(seed, pilot):
     return log
 
 
-def test_family_is_registered_open_at_five_percent_on_its_own_map_type():
-    """The family is registered, active and paid 5 % of emissions, with 1,000 seeds an epoch on the testsite map type 9
-    and Sentinel's ×5 rule across seeds."""
+def test_family_is_registered_completed_and_unpaid_on_its_own_map_type():
+    """The family is still registered and can be flown, but it is completed and paid nothing: Swarm Test Field v2
+    took its place. It keeps its 1,000 seeds, the testsite map type 9 and Sentinel's ×5 rule across seeds."""
     assert FAMILY_ID in list_registered_challenge_families()
     definition = get_challenge_family_definition(FAMILY_ID)
-    assert definition["family_state"] == "active" and definition["emissions_state"] == "active"
-    assert definition["emission_allocation"] == 0.05 and definition["benchmark_version"] == "1.0.0"
+    assert definition["family_state"] == "completed" and definition["emissions_state"] == "archived"
+    assert definition["emission_allocation"] == 0.0 and definition["benchmark_version"] == "1.0.0"
     assert definition["benchmark_version_reset"] == {"from": "6.0.1", "to": "1.0.0"}
     assert definition["display"] == {"label": "Swarm Test Field", "short_label": "Test Field", "slug": "swarm-test-field"}
     assert get_family_benchmark_seed_count(FAMILY_ID) == 1000

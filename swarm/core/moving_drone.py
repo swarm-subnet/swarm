@@ -101,6 +101,8 @@ from swarm.constants import (
 )
 from swarm.core.daylight import apply_seeded_sun, daylight_render_kwargs, sky_render_kwargs, sun_render_kwargs
 from swarm.core.env_builder.sar_types import BodyCategory
+from swarm.core.maps.andorra.rendering import SUN_MIN_ELEVATION_DEG as AREA_SUN_MIN_ELEVATION_DEG
+from swarm.core.maps.andorra.rendering import grade_daylight, graded_sky_path
 from swarm.core.observation import assemble, assemble_batch, observation_space, observation_vector_dim
 from swarm.core.sky_pack import load_sky_pack, pick_sky
 from swarm.core.wind import SeededWind
@@ -311,9 +313,7 @@ class MovingDroneAviary(BaseRLAviary):
             self._light_direction = [0, 0, 1]
         # Neutral light tint; the office family overwrites it per episode.
         self._light_color = [1.0, 1.0, 1.0]
-        self._sun = None
-        if getattr(self.family_runtime, "seeded_sun", False):
-            apply_seeded_sun(self, seed, getattr(self.family_runtime, "night_share", 0.0))
+        self._apply_seeded_sun(seed)
         self._apply_sun_sky(seed)
 
         if physics is None:
@@ -958,6 +958,16 @@ class MovingDroneAviary(BaseRLAviary):
         dep = np.reshape(dep, (h, w))
         return (np.reshape(rgb, (h, w, 4)) if office else None), dep, None
 
+    def _apply_seeded_sun(self, seed: int) -> None:
+        """Light the episode with the seed's sun or moon when the family opted in, the sun no lower than the
+        area light's floor for a family under it and the night coin on the family's own stream when it names one;
+        no sun otherwise."""
+        self._sun = None
+        if getattr(self.family_runtime, "seeded_sun", False):
+            floor = {"min_elevation_deg": AREA_SUN_MIN_ELEVATION_DEG} if self._area_light() else {}
+            apply_seeded_sun(self, seed, getattr(self.family_runtime, "night_share", 0.0),
+                             night_stream=getattr(self.family_runtime, "night_stream", None), **floor)
+
     def _apply_sun_sky(self, seed: int) -> None:
         """Ask the renderer for the sky of this seed's sun, and its clouds, when the family opted
         in and the seed is a daytime sun; a night seed and every other family keep their sky."""
@@ -993,16 +1003,25 @@ class MovingDroneAviary(BaseRLAviary):
         self._daylight_flags = functools.reduce(lambda a, b: a | b, (getattr(p, name) for name in needed))
         self._daylight_sky = pick_sky(seed, self._sun, load_sky_pack())
 
+    def _area_light(self) -> bool:
+        """Whether the family flies a real area and asks for the light its textures were matched under
+        (swarm.core.maps.andorra.rendering): a higher lowest sun, the graded daylight and the graded sky photo."""
+        return bool(getattr(getattr(self, "family_runtime", None), "area_light", False))
+
     def _daylight_kwargs(self, cli: int) -> dict:
         """getCameraImage arguments of a colour frame under the daylight model: the sun's strength and
-        the film settings, plus the seed's sky photo, loaded into the engine once per world."""
+        the film settings, plus the seed's sky photo, loaded into the engine once per world; graded for
+        a family under the area light."""
         if not self._daylight_flags:
             return {}
         kwargs = daylight_render_kwargs(self._sun)
+        if self._area_light():
+            grade_daylight(kwargs)
         if self._daylight_sky is not None:
             photo, yaw = self._daylight_sky
             if self._daylight_texture is None:
-                self._daylight_texture = p.loadTexture(photo.path, physicsClientId=cli)
+                path = graded_sky_path(photo.path) if self._area_light() else photo.path
+                self._daylight_texture = p.loadTexture(path, physicsClientId=cli)
             kwargs.update(skyTextureId=self._daylight_texture, skyYaw=yaw)
         return kwargs
 

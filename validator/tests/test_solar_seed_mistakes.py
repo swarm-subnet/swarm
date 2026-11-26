@@ -37,16 +37,16 @@ def test_an_abandoned_seed_without_intruders_misses_nothing():
 
 
 def test_every_other_family_keeps_nothing_from_a_stalled_seed():
-    """Only Solar Patrol and the Test Field answer for a stalled seed, so the other families' zero results are
+    """Only Solar Patrol and the two Test Fields answer for a stalled seed, so the other families' zero results are
     unchanged."""
     for family_id in list_registered_challenge_families():
-        if family_id not in (FAMILY_ID, "cf_test_field"):
+        if family_id not in (FAMILY_ID, "cf_test_field", "cf_test_field_v2"):
             assert get_challenge_family(family_id).stalled_rollout_metrics(None, {"collision": True}) == {}
 
 
-def test_the_registry_zeroes_five_seeds_per_mistake_for_solar_patrol_and_the_test_field_only():
-    """Solar Patrol's and the Test Field's registry entries carry the ×5 setting the backend reads; no other family has
-    one."""
+def test_the_registry_zeroes_five_seeds_per_mistake_for_solar_patrol_and_the_test_fields_only():
+    """Solar Patrol's and the two Test Fields' registry entries carry the ×5 setting the backend reads; no other family
+    has one."""
     for family_id in list_registered_challenge_families():
-        expected = 5 if family_id in (FAMILY_ID, "cf_test_field") else None
+        expected = 5 if family_id in (FAMILY_ID, "cf_test_field", "cf_test_field_v2") else None
         assert get_challenge_family_definition(family_id).get("seeds_zeroed_per_mistake") == expected

@@ -50,5 +50,10 @@ RUN uv pip install --system --no-cache -r /tmp/requirements.txt "setuptools<82"
 # as the host uid, so the worlds package has to be writable for that user.
 RUN chmod -R a+w "$(python -c 'import os, swarm_worlds; print(os.path.dirname(swarm_worlds.__file__))')"
 
+# The real areas Swarm Test Field v2 flies are too heavy to ship inside swarm-worlds: they are fetched beside it,
+# each archive checked against the SHA-256 the package lists. Nothing is written into them afterwards, and
+# fetched after the chmod they are stored in the image once.
+RUN python -m swarm_worlds.areas
+
 WORKDIR /app
 CMD ["pytest"]
